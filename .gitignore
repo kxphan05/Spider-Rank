@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Large/generated data artifacts
+data/catalog.jsonl
+data/catalog.jsonl.gz
+results.json
+*.pyc
+data/dense_index/
+
+# Local tool state, not project source
+.claude/
+logs/
