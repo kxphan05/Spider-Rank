@@ -15,6 +15,7 @@ data/catalog.jsonl.gz
 results.json
 *.pyc
 data/dense_index/
+model/
 
 # Local tool state, not project source
 .claude/
