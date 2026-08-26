@@ -43,13 +43,15 @@ All agent logic lives in `starter/`:
 2. **Disclosure extraction**: every customer message (including the first)
    is scanned for material/color (vocab match, negation-aware) and budget
    (`$` amount → price bucket) and stored in `SessionState.disclosed`.
-3. **Filter + rerank**: if anything's disclosed, the fused candidate pool is
-   filtered (drop only *confident* mismatches — a candidate whose extracted
-   attribute is known and disagrees; unknowns are kept, not penalized), then
-   survivors are re-ranked by pure dense cosine similarity to the
-   accumulated query text. A safety fallback discards the filter entirely if
-   too few candidates survive (protects against over-filtering wiping out
-   the true target).
+3. **Boost, don't filter**: if anything's disclosed, the fused candidate pool
+   is stably resorted by a categorical match score against
+   `AttributeIndex` — +1 per disclosed attribute where the candidate's
+   extracted value agrees, −1 where it's known and disagrees, 0 where it's
+   unextractable — so confident matches float to the front and confident
+   mismatches sink to the back, but nothing is ever dropped from the pool
+   (`Agent._boost_by_disclosed`). This replaced an earlier hard-equality
+   filter that eliminated candidates outright on disagreement; see
+   "Known open problems" below for why and what was measured.
 4. **Question selection**: entropy-based dynamic pick between `material`/
    `color` (whichever has higher value-diversity in the *current*,
    already-filtered candidate pool — recalculated fresh every turn, so it
@@ -74,9 +76,13 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.735   MRR: 0.359   MTTC: 5.62   Efficiency: 0.538
-TechnicalScore: 0.583
+HitRate@10: 0.755   MRR: 0.373   MTTC: 5.49   Efficiency: 0.551
+TechnicalScore: 0.600
 ```
+
+(Previous run, before the boost-not-eliminate fix described in "Known open
+problems" #1: HitRate 0.735 / MRR 0.359 / MTTC 5.62 / TechnicalScore 0.583 —
+every metric improved.)
 
 (Starter BM25-only baseline was HitRate 0.125 / MRR 0.068 / MTTC 9.81 per
 `docs/baseline_results.json`.)
@@ -114,35 +120,40 @@ Notable things confirmed empirically along the way, not just assumed:
 
 ## Known open problems / left to do
 
-1. **Hard-filter self-elimination (biggest open bug).** The filter step
-   (#3 above) hard-drops a candidate when its `AttributeIndex`-extracted
-   value disagrees with a disclosed value. Measured directly: 16.3% of
-   material disclosures and 37.0% of color disclosures disagree with
-   `AttributeIndex`'s own value for the *true* target product — meaning the
-   filter actively eliminates the correct answer in a meaningful fraction
-   of sessions. Root cause: `AttributeIndex` extracts one value per product
-   (first vocab hit in `title+features`) while disclosed text is scraped
-   from broader/different fields — two independently-built single-value
-   extractors over overlapping-but-different text don't always agree, even
-   about the true target. This is why the filter's introduction left
-   `TechnicalScore` roughly flat overall despite cutting MTTC (efficiency
-   gains were offset by MRR losses), and why `intent_override` regressed
-   hardest even before the override-clearing fix. **Proposed fix, not yet
-   built**: switch from hard elimination to a non-eliminating boost
-   (reorder matches to the front, never drop mismatches), and/or extract a
-   *set* of plausible values per product from all relevant text fields and
-   match on set-membership instead of equality.
+1. ~~**Hard-filter self-elimination.**~~ **Fixed.** The old filter step
+   hard-dropped a candidate when its `AttributeIndex`-extracted value
+   disagreed with a disclosed value. Measured directly: 16.3% of material
+   disclosures and 37.0% of color disclosures disagreed with
+   `AttributeIndex`'s own value for the *true* target product — the filter
+   was eliminating the correct answer in a meaningful fraction of sessions.
+   Root cause: `AttributeIndex` extracts one value per product (first vocab
+   hit in `title+features`) while disclosed text is scraped from a
+   different, noisier source (the customer's own phrasing) — two
+   independently-built single-value extractors over overlapping-but-
+   different text don't always agree, even about the true target.
+   Replaced with `Agent._boost_by_disclosed` (see architecture #3 above):
+   a stable resort by categorical match score, never eliminating anything.
+   Full-set result: HitRate 0.735→0.755, MRR 0.359→0.373, MTTC 5.62→5.49,
+   TechnicalScore 0.583→0.600 — every metric improved.
+   **A tempting alternative was tried and measured worse, kept here so it
+   isn't retried blindly**: reranking by cosine similarity between the raw
+   disclosed phrase (e.g. `"leather blue"`) and the same dense catalog
+   embeddings retrieval already uses, instead of the categorical match.
+   Swept on a fixed 60-sample subset (seed 7): TechnicalScore went 0.604
+   (boost weight 0, i.e. no filtering signal at all) → 0.546 (weight 1.5),
+   *monotonically worse* as the boost weight increased, and even at weight
+   0 it scored below the old hard-equality filter's 0.618 on the same
+   subset. A short disclosed phrase dotted against a full-product embedding
+   is too diluted a signal for this; exact vocab agreement, imperfect as it
+   is, is the stronger one on this catalog. The categorical
+   `_boost_by_disclosed` above scored 0.624 on that same subset.
 2. A user raised storing the catalog in a real SQL database with indexed
    attribute columns, using disclosed answers as `WHERE` clauses, and
-   clearing those clauses on intent override. Worth doing for the
-   override-clear semantics and (optionally) moving the filter earlier in
-   the pipeline as a real pre-query — but confirmed with the user that this
-   does **not** by itself fix problem #1: `WHERE material = 'nylon'` is the
-   same hard-equality operation as the Python filter, and inherits the same
-   disagreement rate unless the underlying matching semantics are fixed
-   first. At current catalog/pool scale (50k rows, ~30-item pools) the raw
-   speed argument for SQL over a Python list filter is close to a wash;
-   the value of that proposal is the override-clear semantics, not latency.
+   clearing those clauses on intent override. The override-clear-semantics
+   argument still stands, but it's no longer motivated by problem #1 (that's
+   fixed above without SQL) — at current catalog/pool scale (50k rows,
+   ~30-item pools) the raw speed argument for SQL over the Python resort is
+   close to a wash either way.
 3. Budget disclosure extraction (`extract_disclosed_value`) requires a
    literal `$` in the customer's text (`r"\$\s?(\d+...)"`)) — phrasings
    like "fifty dollars" or "around 50" without a dollar sign won't match.
@@ -177,13 +188,16 @@ Notable things confirmed empirically along the way, not just assumed:
   negative class in the evaluator's actual reply vocabulary, not just
   generic hand-written examples — semantically adjacent-but-opposite reply
   types need explicit coverage, they won't fall out for free.
-- The `_filter_by_disclosed` fallback threshold (`min_survivors`) was
-  originally compared against the *entropy pool size* (~30) rather than the
-  actual number of recommendations needed (`top_k`, e.g. 10) — meaning the
-  filter fell back to unfiltered results almost every time, since removing
-  a meaningful chunk of a 30-item pool is the whole point of filtering.
-  Fixed by threading the real `top_k` through as `min_survivors`
-  separately from the padded pool-size argument.
+- (Historical — `_filter_by_disclosed`/`min_survivors` no longer exist,
+  replaced by `_boost_by_disclosed`; kept for the general lesson.) The old
+  filter's fallback threshold (`min_survivors`) was originally compared
+  against the *entropy pool size* (~30) rather than the actual number of
+  recommendations needed (`top_k`, e.g. 10) — meaning the filter fell back
+  to unfiltered results almost every time, since removing a meaningful
+  chunk of a 30-item pool is the whole point of filtering. Fixed at the
+  time by threading the real `top_k` through separately from the padded
+  pool-size argument; the whole fallback-threshold mechanism became moot
+  once elimination itself was replaced with a non-eliminating resort.
 - Style/size/use_case/feature disclosures never populate `SessionState.disclosed`
   — there's no structural vocab/extractor for them (same limitation the
   original entropy design already had for question *selection*; it also

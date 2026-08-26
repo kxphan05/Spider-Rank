@@ -31,7 +31,7 @@ def load_embedding_model():
     from sentence_transformers import SentenceTransformer
 
     torch.set_num_threads(max(1, os.cpu_count() or 1))
-    return SentenceTransformer(DENSE_MODEL_NAME)
+    return SentenceTransformer(DENSE_MODEL_NAME, cache_folder="./model")
 
 
 class BM25Index:
