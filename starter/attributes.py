@@ -71,20 +71,48 @@ STRUCTURAL_ATTRIBUTES = ("material", "color")
 FILTERABLE_ATTRIBUTES = ("material", "color", "budget")
 
 
+def _vocab_matcher(vocab: tuple[str, ...]) -> tuple[re.Pattern[str], dict[str, int]]:
+    """One word-boundary alternation over `vocab`, plus vocab-priority ranks.
+
+    Longest-first in the alternation so "sterling silver" wins over a bare
+    "silver" at the same position; the returned rank map then restores the
+    original vocab order when picking among everything that matched, which is
+    the selection rule the per-word loop this replaced used.
+    """
+    ordered = sorted(vocab, key=len, reverse=True)
+    pattern = re.compile(r"\b(" + "|".join(re.escape(word) for word in ordered) + r")\b")
+    return pattern, {word: rank for rank, word in enumerate(vocab)}
+
+
+# Word-boundary matched, NOT substring matched. This is load-bearing: with a
+# bare `word in text` the catalog extractor read "red" out of "embroidered",
+# "tan" out of "titanium"/"instant", and "lace" out of "necklace". Measured
+# over the 50k catalog, that mislabeled 21.6% of products on color (10,824
+# products, 9,312 of them a value invented where no color word occurs at all)
+# and 4.7% on material. It also explains the disagreement recorded in
+# CLAUDE.md "Known open problems" #1 -- 16.3% of material and 37.0% of color
+# disclosures conflicting with the extractor's value for the *true target* --
+# because `extract_disclosed_value` below (the customer-text side) has always
+# used \b, so only the catalog side was loose. Two extractors over different
+# text will still disagree sometimes; they should not disagree because one of
+# them is matching inside unrelated words.
+_MATERIAL_RE, _MATERIAL_RANK = _vocab_matcher(MATERIALS)
+_COLOR_RE, _COLOR_RANK = _vocab_matcher(COLORS)
+
+
+def _first_vocab_match(text: str, pattern: re.Pattern[str], rank: dict[str, int]) -> str | None:
+    found = pattern.findall(text)
+    return min(found, key=lambda word: rank[word]) if found else None
+
+
 def _extract_material(product: dict) -> str | None:
     text = f"{field_text(product.get('title'))} {field_text(product.get('features'))}".lower()
-    for word in MATERIALS:
-        if word in text:
-            return word
-    return None
+    return _first_vocab_match(text, _MATERIAL_RE, _MATERIAL_RANK)
 
 
 def _extract_color(product: dict) -> str | None:
     text = f"{field_text(product.get('title'))} {field_text(product.get('features'))}".lower()
-    for word in COLORS:
-        if word in text:
-            return word
-    return None
+    return _first_vocab_match(text, _COLOR_RE, _COLOR_RANK)
 
 
 def _compute_price_buckets(prices: list[float], num_buckets: int = PRICE_BUCKET_COUNT) -> list[tuple[float, str]]:
