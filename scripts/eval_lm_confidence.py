@@ -33,10 +33,12 @@ from __future__ import annotations
 import argparse
 import collections
 import statistics
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import (  # noqa: E402
     catalog_index, coarse_category, initial_message, load_jsonl, materialize_hidden_fields,
@@ -51,8 +53,8 @@ BANDS = ((0.0, 0.6), (0.6, 0.75), (0.75, 0.85), (0.85, 0.95), (0.95, 1.01))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--catalog", default="data/catalog.jsonl")
-    parser.add_argument("--dataset", default="data/public_set.jsonl")
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--attribute", action="append", choices=sorted(VOCAB), default=None)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()

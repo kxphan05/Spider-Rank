@@ -87,6 +87,28 @@ MIN_ENTROPY_BROWSING = 0.30
 # third tunable knob isn't worth the added complexity here.
 DIVERSIFY_WINDOW = 20
 DIVERSIFY_PIN = 2
+
+@dataclass(frozen=True)
+class RoutingParams:
+    """Everything the buying/browsing label decides, resolved in one place.
+
+    The label used to be branched on separately in `_retrieve` (fusion
+    weights), `_next_attribute` (entropy threshold) and `respond`'s debug
+    log, which meant the log could report weights the retrieval step wasn't
+    actually using. Resolving once removes that drift by construction.
+    """
+
+    bm25_weight: float
+    dense_weight: float
+    min_entropy: float
+    diversify: bool
+
+
+def routing_params(intent_label: str) -> RoutingParams:
+    if intent_label == "buying":
+        return RoutingParams(BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, MIN_ENTROPY_BUYING, diversify=False)
+    return RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
+
 DIVERSIFY_LAMBDA = 0.5
 
 # Long-term profile carry-over (user_profile.py): a profile_key is a content
@@ -191,8 +213,9 @@ def _next_attribute(
     # session same as a genuine disclosure).
     excluded = set(state.asked_attributes) | detected_attributes(query)
 
-    min_entropy = MIN_ENTROPY_BUYING if intent_label == "buying" else MIN_ENTROPY_BROWSING
-    dynamic_pick = select_dynamic_attribute(candidate_pool, attribute_index, excluded, min_entropy=min_entropy)
+    dynamic_pick = select_dynamic_attribute(
+        candidate_pool, attribute_index, excluded, min_entropy=routing_params(intent_label).min_entropy
+    )
     if dynamic_pick is not None:
         return dynamic_pick
 
@@ -305,13 +328,11 @@ class Agent:
         query = _build_query(state)
 
         signal = self.intent_classifier.classify(query) if self.intent_classifier is not None else classify_intent(query)
+        routing = routing_params(signal.label)
         logger.debug(
             "respond(%s, turn=%s): intent=%s score=%+.2f bm25_w=%.2f dense_w=%.2f mmr=%s min_entropy=%.2f asked=%s",
             session_id, turn, signal.label, signal.score,
-            BUYING_BM25_WEIGHT if signal.label == "buying" else BROWSING_BM25_WEIGHT,
-            BUYING_DENSE_WEIGHT if signal.label == "buying" else BROWSING_DENSE_WEIGHT,
-            signal.label == "browsing",
-            MIN_ENTROPY_BUYING if signal.label == "buying" else MIN_ENTROPY_BROWSING,
+            routing.bm25_weight, routing.dense_weight, routing.diversify, routing.min_entropy,
             state.asked_attributes,
         )
 
@@ -330,7 +351,15 @@ class Agent:
         else:
             message = "Here are the closest matches I found so far."
 
-        assert attribute is None or attribute in ALLOWED_ATTRIBUTES
+        if attribute is not None and attribute not in ALLOWED_ATTRIBUTES:
+            # docs/agent_api_contract.json constrains ask_attribute to an
+            # enum; an out-of-enum value would invalidate the turn. An
+            # assert would be stripped under `python -O`, so this is a real
+            # check: drop the question rather than emit an invalid field.
+            logger.error("respond(%s, turn=%s): dropping out-of-enum ask_attribute %r",
+                         session_id, turn, attribute)
+            attribute = None
+            message = "Here are the closest matches I found so far."
         return {
             "message": message,
             "ask_attribute": attribute,
@@ -385,11 +414,8 @@ class Agent:
             except Exception:
                 logger.exception("dense search failed for query %r", query)
 
-        bm25_weight, dense_weight = (
-            (BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT) if intent_label == "buying"
-            else (BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT)
-        )
-        legs = [(bm25_ranked, bm25_weight), (dense_ranked, dense_weight)]
+        routing = routing_params(intent_label)
+        legs = [(bm25_ranked, routing.bm25_weight), (dense_ranked, routing.dense_weight)]
         rank_lists = [ranked for ranked, _ in legs if ranked]
         weights = [weight for ranked, weight in legs if ranked]
         if not rank_lists:
@@ -398,7 +424,7 @@ class Agent:
 
         candidates = self._boost_by_disclosed(fused, disclosed, inferred) if (disclosed or inferred) else fused
 
-        if intent_label == "browsing":
+        if routing.diversify:
             return self._diversify(candidates, top_k)
         return candidates
 

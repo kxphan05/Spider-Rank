@@ -153,7 +153,7 @@ class DenseIndex:
         known = [(cid, self._id_to_idx[cid]) for cid in candidate_ids if cid in self._id_to_idx]
         if not known:
             return list(candidate_ids)
-        known_ids, indices = zip(*known)
+        known_ids, indices = zip(*known, strict=True)
         scores = self.embeddings[list(indices)] @ query_vec
         order = np.argsort(-scores)
         ranked = [known_ids[i] for i in order]
@@ -185,7 +185,7 @@ class DenseIndex:
         known = [(cid, self._id_to_idx[cid]) for cid in candidate_ids if cid in self._id_to_idx]
         if not known:
             return [], np.empty((0, self.embeddings.shape[1]))
-        known_ids, indices = zip(*known)
+        known_ids, indices = zip(*known, strict=True)
         return list(known_ids), self.embeddings[list(indices)]
 
 
@@ -205,7 +205,7 @@ def reciprocal_rank_fusion(
     if len(weights) != len(rank_lists):
         raise ValueError(f"weights length {len(weights)} != rank_lists length {len(rank_lists)}")
     scores: dict[str, float] = {}
-    for rank_list, weight in zip(rank_lists, weights):
+    for rank_list, weight in zip(rank_lists, weights, strict=True):
         for rank, item_id in enumerate(rank_list, start=1):
             scores[item_id] = scores.get(item_id, 0.0) + weight / (k + rank)
     ranked = sorted(scores.items(), key=lambda pair: pair[1], reverse=True)

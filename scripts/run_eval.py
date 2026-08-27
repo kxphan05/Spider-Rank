@@ -16,6 +16,10 @@ It also prints a per-scenario breakdown table and, when
 docs/baseline_results.json is present, a diff against the weak-BM25 baseline
 -- neither of which the bare evaluator CLI prints.
 
+A tqdm progress bar over the samples is shown on stderr (a full 200-sample run
+takes a while and the bare evaluator prints nothing until it finishes); pass
+--no-progress to suppress it.
+
 Each run gets a fresh long-term user-profile store by default (--profile-store)
 so repeated runs are independent -- see the comment in main() for the measured
 reason.
@@ -37,7 +41,10 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import catalog_index, evaluate, load_jsonl  # noqa: E402
 from starter.agent import Agent  # noqa: E402
@@ -46,8 +53,8 @@ from starter.user_profile import STORE_PATH_ENV  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--catalog", default="data/catalog.jsonl")
-    parser.add_argument("--dataset", default="data/public_set.jsonl")
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--output", default="results.json")
     parser.add_argument("--baseline", default="docs/baseline_results.json")
     parser.add_argument("--limit", type=int, default=None, help="only run the first N samples (after --scenario/--seed)")
@@ -55,6 +62,7 @@ def parse_args() -> argparse.Namespace:
                          help="restrict to this scenario_type (repeatable): buying, browsing, intent_override, boundary")
     parser.add_argument("--seed", type=int, default=None, help="shuffle samples before --limit, for a random subset")
     parser.add_argument("--quiet", action="store_true", help="skip the per-scenario table and baseline diff")
+    parser.add_argument("--no-progress", action="store_true", help="suppress the tqdm progress bar")
     parser.add_argument(
         "--profile-store", default=None,
         help="long-term user-profile store path. Default: a fresh per-run temp file, so repeated "
@@ -62,6 +70,25 @@ def parse_args() -> argparse.Namespace:
              "persistent store, or any fixed path to accumulate history deliberately.",
     )
     return parser.parse_args()
+
+
+def with_progress(samples: list[dict], enabled: bool):
+    """Wrap `samples` in a tqdm bar for evaluate() to consume.
+
+    evaluate() only iterates its `samples` argument, so wrapping it here keeps
+    the evaluator itself untouched (this script's read-only-evaluator rule).
+    tqdm arrives transitively with sentence-transformers rather than as a
+    declared dependency, so a missing install degrades to no bar instead of
+    breaking the run.
+    """
+    if not enabled:
+        return samples
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        print("tqdm not installed; running without a progress bar", file=sys.stderr)
+        return samples
+    return tqdm(samples, desc="samples", unit="sample", file=sys.stderr)
 
 
 def print_scenario_table(scenario_metrics: dict[str, dict]) -> None:
@@ -126,8 +153,11 @@ def main() -> None:
     os.environ[STORE_PATH_ENV] = store_path
 
     print(f"loading agent + running {len(samples)} sample(s)...", file=sys.stderr)
+    agent = Agent(args.catalog)
     start = time.monotonic()
-    result = evaluate(Agent(args.catalog), samples, catalog_ids, categories, products)
+    result = evaluate(
+        agent, with_progress(samples, not args.no_progress), catalog_ids, categories, products
+    )
     elapsed = time.monotonic() - start
 
     Path(args.output).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

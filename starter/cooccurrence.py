@@ -97,7 +97,7 @@ class CooccurrenceIndex:
         self._support = evidence_support  # (evidence_attr, evidence_value) -> products with that value
 
     @classmethod
-    def build(cls, catalog_path: Path, attribute_index) -> "CooccurrenceIndex":
+    def build(cls, catalog_path: Path, attribute_index) -> CooccurrenceIndex:
         """Count co-occurrences across the catalog.
 
         `attribute_index` supplies material/color so the two indexes can never

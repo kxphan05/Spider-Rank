@@ -95,9 +95,55 @@ of it going stale.
    *below* chance), so there is no fourth strategy worth trying — see
    "Known open problems" #5.
 
+Code layout note: the buying/browsing label decides four things (BM25 weight,
+dense weight, entropy threshold, whether the MMR diversity re-rank runs). All
+four are resolved in one place, `routing_params()` in `agent.py` — previously
+the `intent_label == "buying"` conditional was written out separately in
+`_retrieve`, `_next_attribute` and `respond`'s debug log, which meant the log
+could report weights retrieval wasn't using. Add new intent-conditioned
+behaviour to `RoutingParams`, not as a fourth branch.
+
+Scripts share `scripts/_common.py`, which puts the repo root on `sys.path` as
+an import side effect and exports `DEFAULT_CATALOG` / `DEFAULT_DATASET` (both
+anchored to the repo root, so scripts run from any directory) and
+`isolate_profile_store()`. Import it before any `starter`/`evaluator` import.
+
+Lint gate (config in `pyproject.toml`, `evaluator/` excluded as
+organizer-provided): `uvx ruff check starter/ scripts/`.
+
+Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
+`--scenario`, `--seed`, and a tqdm progress bar on stderr, `--no-progress` to
+suppress). tqdm is imported defensively and comes in transitively with
+sentence-transformers, so the submitted dependency set is unchanged.
+
+Offline-asset setup: `uv run python3 scripts/fetch_assets.py` (the only step
+that needs network) then `uv run python3 scripts/preflight.py --strict` to
+verify the pipeline comes up whole with the network disabled. See "Known open
+problems" #15 -- the degrade is silent, so this check is not optional.
+
+Runtime disclosure: `uv run python3 scripts/measure_latency.py --limit 20`
+produces the latency/memory/token numbers in `docs/team_report.md` § 4.
+
 Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
 `disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
+
+Override diagnostics: `uv run python3 scripts/eval_override.py` — sweeps
+scoring rules for `EmbeddingOverrideDetector` against the simulator's own
+harvested override/continuation turns plus hand-written out-of-distribution
+pivots. Read-only and Agent-free. Run this before touching the detector; the
+measured table is in "Known open problems" #7.
+
+Intent diagnostics: `uv run python3 scripts/eval_intent.py` — sweeps scoring
+rules for `EmbeddingIntentClassifier` on turn-1, accumulated, and
+out-of-distribution pools, with the lexical fallback as a floor. Companion to
+`eval_override.py`; the measured table is in "Known open problems" #13.
+
+Intent-head diagnostics: `uv run python3 scripts/train_intent_head.py` — trains
+a logistic head on frozen bge-small embeddings and scores it against the
+centroid classifier on in-distribution, held-out-template, and
+out-of-distribution pools. Saving is opt-in; the measured verdict is "don't
+ship it" ("Known open problems" #12).
 
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
@@ -113,9 +159,16 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.745   MRR: 0.389   MTTC: 5.09   Efficiency: 0.591
-TechnicalScore: 0.607
+HitRate@10: 0.745   MRR: 0.3876   MTTC: 5.09   Efficiency: 0.591
+TechnicalScore: 0.6070
 ```
+
+(That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
+problems" #7, re-run on this HEAD. The centroid it replaced scored 0.6073 —
+the two are indistinguishable at this sample size, and #7 explains why the
+change was made on offline detector quality rather than on this number. An
+earlier revision of this block quoted the *centroid's* 0.388/0.6073 while
+labelling it k=4; the k=4 figures are the ones above.)
 
 (Previous run, before the `FALLBACK_ATTRIBUTE_ORDER` answerability reorder
 described in "Known open problems" #9: HitRate 0.740 / MRR 0.395 /
@@ -220,9 +273,102 @@ Notable things confirmed empirically along the way, not just assumed:
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
    attribute boost + MMR diversity, no learned/LLM reranker).
 
-7. **Both nearest-centroid classifiers are the weak link; a trained
-   classifier is the obvious next step.** Reported from manual REPL use and
-   reproduced directly: `"never mind, give me white shoes"` is **not**
+7. **Override detector: centroid replaced by a trimmed nearest-prototype
+   rule + lead-clause scoring. Detector measurably better, end-to-end score
+   flat (-0.0005).** The diagnosis below was confirmed and acted on; the
+   analysis is kept because it explains the fix.
+
+   New rule (`EmbeddingOverrideDetector`, `classifier.py`): score against the
+   mean of each class's `TOP_PROTOTYPES = 3` closest prototypes instead of the
+   class centroid, and evaluate both the full message and its lead clause
+   (`lead_clause()`), taking whichever leans more override. Swept in the new
+   `scripts/eval_override.py`, which harvests the simulator's own override and
+   continuation turns (30 positives / 1600 negatives over the 200 public
+   samples) plus 20 hand-written out-of-distribution probes:
+
+   ```
+   rule                    sim recall  sim FPR   probe recall  probe FPR
+   centroid (previous)          0.900    0.000          0.800      0.100
+   nearest prototype (k=1)      0.933    0.151          1.000      0.300
+   top3-mean                    0.933    0.007          1.000      0.100
+   top3-mean + lead clause      1.000    0.007          1.000      0.100   <- shipped
+   top4-mean + lead clause      0.933    0.001          1.000      0.100
+   top5-mean + lead clause      0.933    0.000          0.900      0.100
+   ```
+
+   Confirms the CLAUDE.md #7 prediction exactly: **k=1 (max) does fix every
+   terse pivot but raises the false-positive rate 20x** (0.000 -> 0.151, i.e.
+   241 of 1600 ordinary turns silently wiping session state). A small trimmed
+   mean gets max's shape-robustness without its fragility.
+
+   **Full 200-sample A/B, both legs on this HEAD:**
+
+   ```
+                 HitRate    MRR      MTTC    Technical
+   before         0.7450   0.3888   5.0900    0.6073
+   after          0.7450   0.3875   5.0950    0.6068   (-0.0005)
+   ```
+
+   Only **4 of 200 sessions changed**: one `intent_override` improved
+   (rank 9->6), and three regressed slightly (two `buying`, one `browsing`)
+   from false positives firing on the simulator's disclosure template
+   ("For that, what matters is: ..."), which is where all 12 remaining FPs
+   live. Kept anyway, on the same reasoning as #10: **the local simulator
+   cannot measure this at all.** `behavior_for()` emits exactly one override
+   string, `"Actually, ignore my earlier preference. What I need is: {X}."`,
+   which is near-verbatim `PROTOTYPE_OVERRIDE[0]` — so simulator recall was
+   already 0.900 by construction and there is no local headroom to win. The
+   probe column (0.800 -> 1.000) is the only evidence about phrasings the
+   hidden grader might use, and it is hand-picked. Treat -0.0005 as noise, not
+   as a cost.
+
+   **Resolved: `TOP_PROTOTYPES = 4` shipped.** Swept against the real class
+   (not a reimplementation) and A/B'd on the full set:
+
+   ```
+    k   sim recall   sim FPR      sim FP   probe recall   probe FPR
+    1        0.933    0.1512    242/1600          1.000       0.400
+    2        1.000    0.0156     25/1600          1.000       0.200
+    3        1.000    0.0075     12/1600          1.000       0.100
+    4        0.933    0.0013      2/1600          1.000       0.100   <- shipped
+    5        0.933    0.0000      0/1600          0.900       0.100
+   12        0.900    0.0000      0/1600          0.900       0.100   (= centroid)
+
+                 HitRate    MRR      MTTC    Technical
+   centroid       0.7450   0.3888   5.0900    0.6073
+   k=3            0.7450   0.3875   5.0950    0.6068
+   k=4            0.7450   0.3876   5.0900    0.6070
+   ```
+
+   k=4 keeps the entire out-of-distribution gain (probe recall 1.000, vs the
+   centroid's 0.800) while cutting false positives 12 -> 2 of 1600. Per-sample
+   it changes **2 of 200 sessions** against the centroid (k=3 changed 4): one
+   `intent_override` improves rank 9->6, one `buying` regresses rank 2->5. The
+   two overrides k=4 loses are both the pathological template case where
+   `new_value` is 180 characters of verbatim catalog copy.
+
+   All three legs are within ±0.0005 TechnicalScore, which is **below this
+   benchmark's resolution** — 200 samples cannot separate them, and the
+   end-to-end numbers should not be read as evidence either way. The decision
+   rests on the offline table, where k=4 dominates the centroid on both recall
+   columns at a cost of 2 false positives in 1600 turns. The centroid baseline
+   was re-run and reproduced 0.6073 exactly, so the legs are deterministic and
+   comparable.
+
+   Applied to `EmbeddingIntentClassifier` too? **No — measured and rejected,
+   see #13.** Two corrections to what this section used to claim about that
+   classifier. Its output is *not* "a continuous score feeding fusion
+   weights": `signal.score` is referenced nowhere but a log line
+   (`agent.py:310`), and every consumer — fusion weights, the MMR re-rank, the
+   entropy threshold, `_next_attribute` — branches on `signal.label`. It is a
+   binary decision, same as this one. And it does not in fact share the
+   thin-margin problem in any way that produces errors: it scores 0.988 on
+   turn-1 intent. The *trained* route for it was also tried and rejected — #12.
+
+   Original analysis follows.
+
+   Reported from manual REPL use and
+   reproduced directly: `"never mind, give me white shoes"` was **not**
    detected as an intent override — `EmbeddingOverrideDetector.is_override`
    returns `False` (override centroid 0.6836 vs continuation centroid
    0.7171, margin −0.034), so `disclosed`/`asked_attributes` are never
@@ -440,6 +586,155 @@ Notable things confirmed empirically along the way, not just assumed:
       low-leverage. If it is kept, the higher-leverage use is predicting
       *which attribute the customer can answer* (see #9's answerability
       marginals) rather than nudging the candidate resort.
+
+12. **Trained intent-classifier head: built, measured, rejected.** The
+    "train a real classifier" option floated in #7 was implemented for the
+    buying-vs-browsing classifier — a logistic-regression head on *frozen*
+    bge-small embeddings (`scripts/train_intent_head.py`). Note the encoder is
+    never touched: TODO.md 4.3 puts "training or full-parameter fine-tuning of
+    base foundational LLMs" out of scope, while "designing highly sensitive
+    intent-detection modules to split traffic into Buying and Browsing tracks"
+    is explicitly *in* scope, so a head over frozen embeddings is the only
+    version of this idea that is allowed at all.
+
+    **It is worse than the zero-shot centroid it would replace:**
+
+    ```
+    pool                        head    centroid
+    in-distribution 5-fold CV   0.984      0.778   <- memorization, ignore
+    train turn1 -> test accum   0.521      0.708   <- chance
+    out-of-distribution probes  0.812      1.000
+    ```
+
+    The in-distribution number is the trap: the simulator has exactly two
+    turn-1 templates (`"...A key requirement is: {c}."` vs `"...but I'm still
+    exploring."`), so 0.984 is the head learning `"still exploring"`. Three
+    checks confirm that reading. **A regularization sweep is flat at chance**
+    on the held-out surface form across C = 0.001 … 10 (0.537 / 0.521 / 0.519
+    / 0.521 / 0.523), so the transfer failure is the data, not a
+    hyperparameter. **OOD accuracy *rises* with C** (0.688 -> 0.812), i.e. the
+    more it overfits the templates the better it scores out of distribution —
+    the opposite of a generalization story, and a sign the 16-probe trend is
+    noise. And **the control settles it**: training on the 20 hand-written
+    `PROTOTYPE_*` utterances alone, with no simulator text at all, reaches OOD
+    1.000 while 640 labelled simulator turns drag it to 0.812.
+
+    So the labels are real but the *surface forms* are two templates, and
+    supervised training on them destroys exactly the zero-shot generalization
+    the prototype design was chosen for (`classifier.py:6`). **Do not ship a
+    head trained on local simulator text**, and do not read a high
+    in-distribution CV score as progress. The script is kept as a diagnostic
+    with saving opt-in (`--save`); re-run it only if the hidden set's phrasing
+    turns out more varied than the local templates, which is the one condition
+    that would change the answer.
+
+    The unsupervised alternative (the trimmed-prototype rule from #7) was then
+    tried as well, and also rejected — #13.
+
+13. **Trimmed-prototype rule does *not* transfer to the intent classifier.**
+    #7's fix for the override detector was swept for `EmbeddingIntentClassifier`
+    in the new `scripts/eval_intent.py`. Every variant is worse, and not
+    marginally:
+
+    ```
+    rule                    turn-1   accumulated   OOD probe
+    lexical (fallback)       1.000         0.773       1.000
+    centroid (current)       0.988         0.708       1.000   <- unchanged
+    top1-mean                0.781         0.608       0.938
+    top4-mean                0.769         0.588       0.938
+    top10-mean (= centroid)  0.831         0.704       0.938
+    ```
+
+    Why it transferred to one classifier and not the other: the override
+    prototypes had a specific *shape* pathology — all twelve are long
+    two-clause sentences that name the discarded prior statement, so the mean
+    encoded that sentence form and terse pivots fell outside it. The
+    buying/browsing prototypes have no such common form; they are varied
+    single utterances whose mean direction *is* the signal, so trimming to the
+    top-k throws away the averaging that makes the centroid robust. **The
+    lesson is that "centroids are fragile" is not a general truth about this
+    codebase's classifiers — it was a fact about one prototype set.** Check the
+    prototype set's shape before assuming the fix generalizes.
+
+    **There is also no headroom to chase here.** The centroid is at 0.988 on
+    turn-1, its only two errors being buying sessions whose hard constraint is
+    contentless ("A key requirement is: Imported."). And per #4, the thing the
+    label feeds — dual-track routing — was itself measured net flat on the
+    full set (0.600 -> 0.601). A perfect intent label is worth approximately
+    nothing; do not spend more on this classifier.
+
+    Two measurement caveats worth carrying forward, both instances of the #12
+    trap. **The lexical fallback's 1.000 on turn-1 is template memorization**:
+    `\bkey\s+requirement\b` and `\bstill\s+(?:exploring|...)\b` in
+    `BUYING_PHRASES`/`BROWSING_PHRASES` match the simulator's two templates
+    literally, so that number means nothing, exactly like #12's 0.984. **And
+    the OOD probe pool is partly circular** — the lexical rule scores 1.000
+    there by a degenerate path (every browsing probe registers 0/0 evidence
+    and falls through to the browsing tie-break, while every buying probe hits
+    attribute vocabulary), which is true because the probes were hand-written
+    to have exactly that property. The probes can falsify a rule but should
+    not be used to rank two rules that both pass.
+
+    The `accumulated` column is reported for shape only and is **not** an
+    accuracy: `scenario_type` is not valid ground truth once clarifying
+    answers land, because the classifier is deliberately built to drift
+    buying-ward as concrete attributes accumulate (`classifier.py:14`).
+
+14. **Component ablation: the dense leg is net-negative locally, and we
+    shipped it anyway.** Each embedding-dependent component was disabled
+    independently against the full 200-sample public set (scratch script;
+    reproduce by nulling `agent.dense` / `.intent_classifier` /
+    `.override_detector` / `.lm_scorer` after `Agent()` and calling
+    `evaluate()`):
+
+    ```
+    configuration            HitRate     MRR     MTTC   Technical      delta
+    as shipped                0.7450  0.3876    5.090     0.6070          --
+    - masked LM               0.7450  0.3841    5.085     0.6060     -0.0010
+    - both classifiers        0.7400  0.3728    5.070     0.6004     -0.0065
+    - dense retrieval         0.7450  0.4328    5.035     0.6216     +0.0147
+    - dense - masked LM       0.7450  0.4351    5.035     0.6223     +0.0154
+    - everything (offline)    0.7450  0.4289    5.025     0.6207     +0.0137
+    ```
+
+    **HitRate is identical to four decimals with and without dense.** The
+    dense leg finds nothing BM25 misses; its contribution to the fusion only
+    demotes correct items BM25 already ranked well (MRR 0.3876 -> 0.4328).
+    This is 20x the +-0.0005 noise floor, so it is not a sampling artifact.
+
+    **Do not act on this without reading the confound.** The local simulator
+    builds customer messages out of the target's own catalog fields:
+    **359 of 400 turn-1 hard constraints (89.7%) are verbatim substrings of
+    the target product's own text**, and the 41 that aren't are only
+    non-verbatim because `intent_card()` prefixes them with `"color: "`. So
+    effectively every local query is an exact-match query -- the best case
+    for BM25 and the worst case for the paraphrase robustness the dense leg
+    exists to provide (#4). If the hidden grader phrases customers the same
+    way, dropping dense is worth +0.015; if it paraphrases at all, dropping
+    it removes the only defense. The downside is asymmetric, so dense stays.
+    The measured-but-unshipped alternative is recorded here so a later
+    session doesn't rediscover it and assume it's free.
+
+    The intermediate option nobody has tried yet: **retune the RRF fusion
+    weights** rather than removing the leg. The current 2.0/1.0 and 1.25/1.5
+    were tuned when nobody had checked whether dense contributes at all;
+    pushing both tracks further BM25-ward should capture most of the +0.0143
+    while keeping paraphrase insurance.
+
+15. **The offline degrade is silent, and was never verified until now.**
+    With a cold HF cache and no network, `load_embedding_model()` raises
+    `OSError: We couldn't connect to 'https://huggingface.co'`, and
+    `Agent.__init__`'s degrade-don't-crash branches take dense retrieval,
+    *both* embedding classifiers and the masked LM dark at once -- while the
+    agent still starts and still returns 10 recommendations. `model/` (385MB)
+    and `data/dense_index/` (74MB) are both gitignored, and the bge-small
+    weight blob is 128MB, over GitHub's 100MB per-file limit, so they cannot
+    simply be committed. `docs/submission_rules.md` warns network access may
+    be disabled for official scoring. Two guards now ship:
+    `scripts/fetch_assets.py` (the only networked step in the project) and
+    `scripts/preflight.py --strict`, which loads the agent under
+    `HF_HUB_OFFLINE=1` and exits non-zero if any required component is dark.
+    **Run preflight before any scored run.**
 
 ## Blockers / mistakes already made (so they aren't repeated)
 

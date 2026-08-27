@@ -156,7 +156,7 @@ class AttributeIndex:
         self.price_buckets = price_buckets  # exposed for logging/debugging
 
     @classmethod
-    def build(cls, catalog_path: Path) -> "AttributeIndex":
+    def build(cls, catalog_path: Path) -> AttributeIndex:
         products: list[dict] = []
         prices: list[float] = []
         with catalog_path.open(encoding="utf-8") as handle:
