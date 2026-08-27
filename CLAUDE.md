@@ -36,10 +36,20 @@ All agent logic lives in `starter/`:
 
 ## Current architecture (as of last commit)
 
-1. **Retrieval**: BM25 (SQLite FTS5) + dense (bge-small cosine) run
-   independently over the full catalog, combined via weighted reciprocal
-   rank fusion (BM25 weighted 2.0, dense 1.0 — empirically tuned; equal
-   weights dropped MRR 0.450→0.385 on this catalog).
+1. **Retrieval, dual-track by buying/browsing intent**: BM25 (SQLite FTS5) +
+   dense (bge-small cosine) run independently over the full catalog,
+   combined via weighted reciprocal rank fusion — both tracks fuse the same
+   two legs, but the weights are intent-conditioned: buying keeps the
+   original BM25-heavy weighting (2.0/1.0 — empirically tuned; equal
+   weights dropped MRR 0.450→0.385 on this catalog) for precision on stated
+   hard constraints, browsing shifts toward dense (1.25/1.5) for broader
+   semantic/cross-category matches, then gets an MMR diversity re-rank
+   (`Agent._diversify`) on top of the fused+boosted pool before truncating
+   to `top_k` — pinning the top `DIVERSIFY_PIN=2` items and only
+   reordering within the top `DIVERSIFY_WINDOW=20`, so diversity can never
+   evict the best match(es). See "Known open problems" #4 for what was
+   tried and measured to get here (a hard filter-then-rerank buying track
+   was tried first and measured worse).
 2. **Disclosure extraction**: every customer message (including the first)
    is scanned for material/color (vocab match, negation-aware) and budget
    (`$` amount → price bucket) and stored in `SessionState.disclosed`.
@@ -57,7 +67,14 @@ All agent logic lives in `starter/`:
    already-filtered candidate pool — recalculated fresh every turn, so it
    naturally stops asking about an attribute once the pool has converged on
    it). Falls back to a fixed order (`style, size, use_case, feature,
-   budget`) once nothing structural clears the entropy threshold.
+   budget`) once nothing structural clears the entropy threshold. The
+   entropy threshold itself is also intent-conditioned: 0.10 for buying
+   (ask eagerly — locking a hard constraint is high-value), 0.30 for
+   browsing (ask less eagerly, bias toward recommending sooner). Measured
+   to have no effect on the 60-sample tuning subset's outcome (didn't
+   change which samples hit or when) — kept anyway since it's a direct,
+   costless implementation of the spec's "Proactive Guidance" bullet and
+   may matter on other slices/the hidden set.
 5. **Intent-override handling**: a nearest-centroid embedding classifier
    detects a mid-session "actually, ignore what I said" pivot (no
    structured signal for this exists in the agent API — confirmed against
@@ -76,11 +93,17 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.755   MRR: 0.373   MTTC: 5.49   Efficiency: 0.551
-TechnicalScore: 0.600
+HitRate@10: 0.755   MRR: 0.384   MTTC: 5.60   Efficiency: 0.540
+TechnicalScore: 0.601
 ```
 
-(Previous run, before the boost-not-eliminate fix described in "Known open
+(Previous run, before the dual-track buying/browsing routing described in
+"Known open problems" #4: HitRate 0.755 / MRR 0.373 / MTTC 5.49 /
+Efficiency 0.551 / TechnicalScore 0.600 — net roughly flat on the full set
+despite a clearer gain on the 60-sample tuning subset, see #4 for the
+honest breakdown.)
+
+(Before that, before the boost-not-eliminate fix described in "Known open
 problems" #1: HitRate 0.735 / MRR 0.359 / MTTC 5.62 / TechnicalScore 0.583 —
 every metric improved.)
 
@@ -158,16 +181,62 @@ Notable things confirmed empirically along the way, not just assumed:
    literal `$` in the customer's text (`r"\$\s?(\d+...)"`)) — phrasings
    like "fifty dollars" or "around 50" without a dollar sign won't match.
    Not yet widened.
-4. From the original spec gap analysis (`TODO.md` has the full competition
-   spec; this list is what's still missing against it): explicit
-   Buying-vs-Browsing dual-track routing isn't actually wired to different
-   retrieval behavior yet (the classifier exists and is computed every
-   turn, but nothing branches on its output); no cross-encoder or LLM
-   reranking stage (`4.2.I` mentions "LLM Semantic Ranking" — current
-   ranking is pure hybrid retrieval + attribute filter, no learned/LLM
-   reranker); `user_profile` passed into `reset()` is accepted but
-   completely unused (no personalization); no long-term user-profile
-   persistence across sessions (`4.2.III`'s "long-term user profiles").
+4. ~~**Buying-vs-Browsing dual-track routing not wired up.**~~ **Fixed.**
+   The classifier (`starter/classifier.py`) was already computed every turn
+   but only ever logged (`agent.py:174` in the pre-fix version) — confirmed
+   via `grep` that no other call site consumed its output. Now `signal.label`
+   is computed before retrieval and threads through to: (a) intent-
+   conditioned RRF fusion weights in `Agent._retrieve` (buying 2.0/1.0
+   BM25-heavy, browsing 1.25/1.5 dense-heavy), (b) an MMR diversity re-rank
+   (`Agent._diversify`, browsing-only) on top of the fused+boosted pool, and
+   (c) the entropy threshold in `_next_attribute` (architecture #4 above).
+   Full-set: HitRate 0.755→0.755 (flat), MRR 0.373→0.384 (up), MTTC
+   5.49→5.60 (slightly worse), TechnicalScore 0.600→0.601 (~flat) — net a
+   wash on the full 200-sample set despite a real gain on the 60-sample
+   seed-7 tuning subset (TechnicalScore 0.624→0.637, every metric up
+   there). Being honest about this rather than overselling it: the
+   subset-level gain didn't fully generalize, likely because the weights
+   were tuned on that subset. Kept anyway since it's a real, spec-required
+   architectural piece (TODO.md's "Dual-Track Routing" and "heterogeneous
+   retrieval routing (weights...)" bullets) with no full-set regression,
+   and is a more promising base for further tuning than the unwired
+   classifier it replaced.
+   **A more literal reading of the spec was tried first and measured worse,
+   kept here so it isn't retried blindly**: a hard filter-then-rerank
+   buying track (BM25 top-50 as a hard filter, `DenseIndex.rank_subset`
+   reranking only within that filtered set, dropping the full-catalog dense
+   leg entirely) — this is what "high-precision filter track... to lock
+   hard constraints" most literally suggests. Isolated on the 60-sample
+   subset: buying-only TechnicalScore contribution dropped from the
+   baseline's 0.6818/0.3315/6.09 (hit/MRR/MTTC) to 0.6364/0.3468/6.45 —
+   worse hit rate and MTTC. Root cause: BM25's top-`CANDIDATE_N` keyword
+   filter is lossy — it drops the true target whenever the target's
+   catalog text uses different words than the customer's phrasing, exactly
+   the case dense retrieval exists to catch, and discarding the dense leg
+   entirely for buying threw that recall away. It also weight-inverted
+   `browsing` to 1.0/2.0 with the same test batch, which alone dropped
+   browsing hit rate 0.870→0.826 and MTTC 3.96→4.52 (MRR did improve,
+   0.404→0.420) — kept as a data point on how far dense-heavy weighting can
+   be pushed before it costs more than it gives; 1.25/1.5 was chosen
+   instead as a smaller step in the same direction.
+   Also caught during this work, not before landing: the first `_diversify`
+   implementation was silently a no-op in every test above, because it was
+   being asked to pick `top_n` items from a pool of exactly `top_n` size
+   (both were the padded `ENTROPY_POOL_SIZE`-or-`top_k` pool length, not the
+   real per-turn recommendation count) — its own "nothing to trim" early
+   return fired every time. Fixed by threading the real `top_k` through
+   `Agent._retrieve` separately from the padded `pool_size`, so `_diversify`
+   reorders only the front `top_k` of the larger pool and appends the rest
+   unchanged (order doesn't matter for the entropy scoring downstream,
+   only the value distribution does). All the "browsing" numbers above are
+   post-fix, with MMR actually running.
+5. Remaining gaps from the original spec analysis (`TODO.md` has the full
+   competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
+   mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
+   attribute boost + MMR diversity, no learned/LLM reranker); `user_profile`
+   passed into `reset()` is accepted but completely unused (no
+   personalization); no long-term user-profile persistence across sessions
+   (`4.2.III`'s "long-term user profiles").
 
 ## Blockers / mistakes already made (so they aren't repeated)
 

@@ -176,6 +176,18 @@ class DenseIndex:
         top_idx = top_idx[np.argsort(-scores[top_idx])]
         return [self.ids[i] for i in top_idx]
 
+    def vectors_for(self, candidate_ids: list[str]) -> tuple[list[str], np.ndarray]:
+        """Return (known_ids, embeddings) for the ids present in the index,
+        preserving `candidate_ids` order. Ids not in the index are dropped
+        rather than erroring, same "skip what's missing" contract as
+        `rank_subset`'s known/missing split.
+        """
+        known = [(cid, self._id_to_idx[cid]) for cid in candidate_ids if cid in self._id_to_idx]
+        if not known:
+            return [], np.empty((0, self.embeddings.shape[1]))
+        known_ids, indices = zip(*known)
+        return list(known_ids), self.embeddings[list(indices)]
+
 
 def reciprocal_rank_fusion(
     rank_lists: list[list[str]], top_n: int, k: int = 60, weights: list[float] | None = None
