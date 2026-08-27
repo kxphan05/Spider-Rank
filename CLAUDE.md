@@ -100,6 +100,14 @@ Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
 suppress). tqdm is imported defensively and comes in transitively with
 sentence-transformers, so the submitted dependency set is unchanged.
 
+Offline-asset setup: `uv run python3 scripts/fetch_assets.py` (the only step
+that needs network) then `uv run python3 scripts/preflight.py --strict` to
+verify the pipeline comes up whole with the network disabled. See "Known open
+problems" #15 -- the degrade is silent, so this check is not optional.
+
+Runtime disclosure: `uv run python3 scripts/measure_latency.py --limit 20`
+produces the latency/memory/token numbers in `docs/team_report.md` § 4.
+
 Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
 `disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
@@ -653,6 +661,62 @@ Notable things confirmed empirically along the way, not just assumed:
     accuracy: `scenario_type` is not valid ground truth once clarifying
     answers land, because the classifier is deliberately built to drift
     buying-ward as concrete attributes accumulate (`classifier.py:14`).
+
+14. **Component ablation: the dense leg is net-negative locally, and we
+    shipped it anyway.** Each embedding-dependent component was disabled
+    independently against the full 200-sample public set (scratch script;
+    reproduce by nulling `agent.dense` / `.intent_classifier` /
+    `.override_detector` / `.lm_scorer` after `Agent()` and calling
+    `evaluate()`):
+
+    ```
+    configuration            HitRate     MRR     MTTC   Technical      delta
+    as shipped                0.7450  0.3888    5.090     0.6073          --
+    - masked LM               0.7450  0.3841    5.085     0.6060     -0.0013
+    - both classifiers        0.7400  0.3728    5.070     0.6004     -0.0069
+    - dense retrieval         0.7450  0.4328    5.035     0.6216     +0.0143
+    - dense - masked LM       0.7450  0.4351    5.035     0.6223     +0.0150
+    - everything (offline)    0.7450  0.4289    5.025     0.6207     +0.0134
+    ```
+
+    **HitRate is identical to four decimals with and without dense.** The
+    dense leg finds nothing BM25 misses; its contribution to the fusion only
+    demotes correct items BM25 already ranked well (MRR 0.3888 -> 0.4328).
+    This is 20x the +-0.0005 noise floor, so it is not a sampling artifact.
+
+    **Do not act on this without reading the confound.** The local simulator
+    builds customer messages out of the target's own catalog fields:
+    **359 of 400 turn-1 hard constraints (89.7%) are verbatim substrings of
+    the target product's own text**, and the 41 that aren't are only
+    non-verbatim because `intent_card()` prefixes them with `"color: "`. So
+    effectively every local query is an exact-match query -- the best case
+    for BM25 and the worst case for the paraphrase robustness the dense leg
+    exists to provide (#4). If the hidden grader phrases customers the same
+    way, dropping dense is worth +0.015; if it paraphrases at all, dropping
+    it removes the only defense. The downside is asymmetric, so dense stays.
+    The measured-but-unshipped alternative is recorded here so a later
+    session doesn't rediscover it and assume it's free.
+
+    The intermediate option nobody has tried yet: **retune the RRF fusion
+    weights** rather than removing the leg. The current 2.0/1.0 and 1.25/1.5
+    were tuned when nobody had checked whether dense contributes at all;
+    pushing both tracks further BM25-ward should capture most of the +0.0143
+    while keeping paraphrase insurance.
+
+15. **The offline degrade is silent, and was never verified until now.**
+    With a cold HF cache and no network, `load_embedding_model()` raises
+    `OSError: We couldn't connect to 'https://huggingface.co'`, and
+    `Agent.__init__`'s degrade-don't-crash branches take dense retrieval,
+    *both* embedding classifiers and the masked LM dark at once -- while the
+    agent still starts and still returns 10 recommendations. `model/` (385MB)
+    and `data/dense_index/` (74MB) are both gitignored, and the bge-small
+    weight blob is 128MB, over GitHub's 100MB per-file limit, so they cannot
+    simply be committed. `docs/submission_rules.md` warns network access may
+    be disabled for official scoring. Two guards now ship:
+    `scripts/fetch_assets.py` (the only networked step in the project) and
+    `scripts/preflight.py --strict`, which loads the agent under
+    `HF_HUB_OFFLINE=1` and exits non-zero if any required component is dark.
+    **Run preflight before any scored run.**
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
