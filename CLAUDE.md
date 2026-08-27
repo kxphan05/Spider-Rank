@@ -110,6 +110,12 @@ harvested override/continuation turns plus hand-written out-of-distribution
 pivots. Read-only and Agent-free. Run this before touching the detector; the
 measured table is in "Known open problems" #7.
 
+Intent-head diagnostics: `uv run python3 scripts/train_intent_head.py` — trains
+a logistic head on frozen bge-small embeddings and scores it against the
+centroid classifier on in-distribution, held-out-template, and
+out-of-distribution pools. Saving is opt-in; the measured verdict is "don't
+ship it" ("Known open problems" #12).
+
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
 departure from the null, profile field→scenario_type, profile-key
@@ -322,7 +328,8 @@ Notable things confirmed empirically along the way, not just assumed:
    `EmbeddingIntentClassifier`, which shares the mechanism and the thin-margin
    problem. Its output is a continuous score feeding fusion weights rather
    than a binary state-wipe, so it needs its own measurement
-   (`scripts/eval_classifier.py` + full set) before changing.
+   (`scripts/eval_classifier.py` + full set) before changing. The *trained*
+   route for it was tried and rejected — see #12.
 
    Original analysis follows.
 
@@ -545,6 +552,51 @@ Notable things confirmed empirically along the way, not just assumed:
       low-leverage. If it is kept, the higher-leverage use is predicting
       *which attribute the customer can answer* (see #9's answerability
       marginals) rather than nudging the candidate resort.
+
+12. **Trained intent-classifier head: built, measured, rejected.** The
+    "train a real classifier" option floated in #7 was implemented for the
+    buying-vs-browsing classifier — a logistic-regression head on *frozen*
+    bge-small embeddings (`scripts/train_intent_head.py`). Note the encoder is
+    never touched: TODO.md 4.3 puts "training or full-parameter fine-tuning of
+    base foundational LLMs" out of scope, while "designing highly sensitive
+    intent-detection modules to split traffic into Buying and Browsing tracks"
+    is explicitly *in* scope, so a head over frozen embeddings is the only
+    version of this idea that is allowed at all.
+
+    **It is worse than the zero-shot centroid it would replace:**
+
+    ```
+    pool                        head    centroid
+    in-distribution 5-fold CV   0.984      0.778   <- memorization, ignore
+    train turn1 -> test accum   0.521      0.708   <- chance
+    out-of-distribution probes  0.812      1.000
+    ```
+
+    The in-distribution number is the trap: the simulator has exactly two
+    turn-1 templates (`"...A key requirement is: {c}."` vs `"...but I'm still
+    exploring."`), so 0.984 is the head learning `"still exploring"`. Three
+    checks confirm that reading. **A regularization sweep is flat at chance**
+    on the held-out surface form across C = 0.001 … 10 (0.537 / 0.521 / 0.519
+    / 0.521 / 0.523), so the transfer failure is the data, not a
+    hyperparameter. **OOD accuracy *rises* with C** (0.688 -> 0.812), i.e. the
+    more it overfits the templates the better it scores out of distribution —
+    the opposite of a generalization story, and a sign the 16-probe trend is
+    noise. And **the control settles it**: training on the 20 hand-written
+    `PROTOTYPE_*` utterances alone, with no simulator text at all, reaches OOD
+    1.000 while 640 labelled simulator turns drag it to 0.812.
+
+    So the labels are real but the *surface forms* are two templates, and
+    supervised training on them destroys exactly the zero-shot generalization
+    the prototype design was chosen for (`classifier.py:6`). **Do not ship a
+    head trained on local simulator text**, and do not read a high
+    in-distribution CV score as progress. The script is kept as a diagnostic
+    with saving opt-in (`--save`); re-run it only if the hidden set's phrasing
+    turns out more varied than the local templates, which is the one condition
+    that would change the answer.
+
+    Not tried: an unsupervised improvement to the same classifier (the
+    trimmed-prototype rule from #7, which *did* work for the override
+    detector) — that stays the open option, and needs no labels.
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
