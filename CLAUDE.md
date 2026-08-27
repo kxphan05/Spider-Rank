@@ -101,12 +101,24 @@ All agent logic lives in `starter/`:
    for three different uses of it that were each tried and measured to
    regress the full public set, and why. The store still runs (fully
    exercised, correctly populated — 125 distinct keys / 30 seen more than
-   once across the 200-sample public set) with zero net effect on scoring
-   while a viable way to use it is worked out.
+   once across the 200-sample public set) with zero net effect on scoring.
+   Its inertness is now a measured conclusion rather than a pending TODO:
+   `scripts/eval_profile_signal.py` shows the `user_profile` dict carries no
+   signal to act on in the first place (same-key sessions' targets agree
+   *below* chance), so there is no fourth strategy worth trying — see
+   "Known open problems" #5.
 
 Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
 `disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
+
+Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
+whether `user_profile` carries any usable signal at all (tag→answerable-bucket
+departure from the null, profile field→scenario_type, profile-key
+collision→target similarity, and cross-run store contamination). Read-only and
+Agent-free, so it runs in seconds. Run this *before* wiring any new
+personalization idea up; on the public set every check is null, and the
+measured numbers are in "Known open problems" #5.
 
 ## Progress / what's been measured
 
@@ -305,11 +317,68 @@ Notable things confirmed empirically along the way, not just assumed:
    enough identity signal that using it for either ranking or question
    selection costs more than it gives, however the risk is hedged. Left as
    explicitly inert (`profile_hint` populated, never read) rather than
-   shipped with a measured regression — this may be worth revisiting if the
-   hidden grader's profile generation turns out less collision-prone, or if
-   a differently-shaped signal (e.g. nudging `FALLBACK_ATTRIBUTE_ORDER` from
-   this *session's own* freshly-given `preference_tags`, which needs no
-   cross-session identity assumption at all) is tried instead.
+   shipped with a measured regression.
+
+   **Why all of the above failed, measured directly rather than inferred
+   from the A/B results** (`scripts/eval_profile_signal.py`, read-only, runs
+   in seconds — re-run it first if the hidden set's profiles look
+   different). The three experiments above each asked "does *this* way of
+   using the profile help?"; the script asks the prior question none of them
+   did — *is there any signal in `user_profile` to use?* Three independent
+   checks, all null on the 200-sample public set:
+   - **A shared `profile_key` does not mean a shared shopper.** This is the
+     load-bearing assumption behind the entire cross-session store. Of 125
+     distinct keys, 30 recur (105 sessions). Across the 409 within-key
+     target pairs, only **0.5%** share a `coarse_category` — against a
+     **1.2% ± 0.5%** random-pair baseline. Two sessions with an identical
+     profile hash are, if anything, *less* alike than two sessions picked at
+     random. That single number explains all three regressions at once: the
+     store was faithfully carrying forward values from sessions whose
+     targets are uncorrelated with the current one, so every carry is a coin
+     flip that can only cost.
+   - **A session's own `preference_tags` predict nothing about what it can
+     answer** — this was the one remaining idea logged here as promising,
+     because it needs no cross-session identity assumption. It has no
+     signal either. Comparing each (tag, bucket) cell against the null
+     Binomial(tag support, bucket marginal): across the 5 tags with n≥30,
+     **nothing exceeds 2σ and the largest departure is 1.8σ** over 30 cells,
+     i.e. exactly what noise produces. (Judge these by σ, not by lift — the
+     rare buckets have tiny marginals, so `use_case` shows lift 4.17 on a
+     single sample.) Root cause: the profile is generated from the
+     *reviewer's* history while the answerable buckets come from the
+     *target product's* feature text via `intent_card()` — two independent
+     sources, so there is no mechanism by which they could correlate.
+   - **No profile field predicts `scenario_type`** either (which would have
+     been a cheap, robust replacement for the thin-margin embedding intent
+     classifier in #7): every field's per-value distribution sits on the
+     0.40/0.40/0.15/0.05 marginal. `purchase_frequency` is the clearest
+     case — it is the literal string `"3-4 prior purchases"` for all 200
+     samples, carrying zero bits by construction.
+   So the profile store is inert because there is nothing in the profile to
+   act on, not because the three consumption strategies were badly chosen. A
+   fourth strategy is not worth writing against this data. Revisit only if
+   the collision check above comes back positive on the hidden set.
+
+   **Methodology landmine found and fixed while measuring this.** The store
+   is write-through and outlives the process, so re-running the local eval
+   fed each run's history into the next: counting sessions whose `reset()`
+   received a carried hint, three consecutive runs over the same 200 samples
+   gave **45/200 → 105/200 → 200/200**. Any A/B of a `profile_hint`-consuming
+   agent was therefore confounded by how many times the eval had been run
+   before, drifting toward "every session is influenced" the longer you
+   iterate — which is very likely why the numbers recorded above for the
+   three experiments are erratic (e.g. the corroboration-gated run scoring
+   0.585→0.588 against a 0.601 baseline). Treat those specific figures as
+   indicative, not reproducible; the *direction* (all three regress) is
+   corroborated independently by the null signal checks. Fixed by making the
+   store path overridable (`$TECHJAM_PROFILE_STORE`, `starter/user_profile.py`);
+   `scripts/run_eval.py` now points each run at a fresh temp store by
+   default, with `--profile-store` to opt back into a persistent one. Isolate
+   the official CLI the same way:
+   `TECHJAM_PROFILE_STORE=/tmp/store.json uv run python3 -m evaluator.local_evaluator`.
+   Cross-session persistence remains a real feature for the graded single
+   pass — this only removes the re-scoring artifact. Score-neutral today
+   since `profile_hint` is unread.
 6. Remaining gaps from the original spec analysis (`TODO.md` has the full
    competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
@@ -390,6 +459,135 @@ Notable things confirmed empirically along the way, not just assumed:
    attributes (`style`, `size`, `use_case`, `feature`) that have no
    extractor at all. Caveat recorded there: this fixes only the catalog
    half of the two-extractor disagreement.
+
+9. **`FALLBACK_ATTRIBUTE_ORDER` asks the three least-answerable attributes
+   first — measured, not yet acted on.** Fell out of the profiling work in
+   #5 (`scripts/eval_profile_signal.py --check tags` prints it as the
+   marginal it compares tags against), so it is a genuine measurement, but
+   it is a *question-ordering* change and has had no A/B yet — do not treat
+   the numbers below as a result. Share of the 200 public samples where the
+   customer can still answer a question about each attribute after turn 1,
+   derived from the evaluator's own reply policy (a constraint is disclosed
+   only when `classify_constraint()` buckets it as the asked attribute):
+
+   ```
+   feature   0.960      style     0.085
+   material  0.725      size      0.045
+   color     0.255      use_case  0.020
+   ```
+
+   `FALLBACK_ATTRIBUTE_ORDER` is currently `style, size, use_case, feature,
+   budget` — i.e. once the entropy picker runs out of material/color, the
+   agent asks the three *rarest* buckets (8.5%/4.5%/2.0%) before the one
+   answerable in 96% of sessions. Since MTTC is 20% of the score and a
+   non-answer burns a whole turn, moving `feature` to the front is the
+   cheapest remaining MTTC lead. Caveats before believing it: (a) the
+   96% is partly an artifact of `classify_constraint()` using `feature` as
+   its catch-all `return` — it is the bucket everything unmatched falls
+   into, so this may be a local-simulator quirk that does not hold for the
+   hidden grader, exactly like the `budget` finding in "Progress" above;
+   (b) `feature` currently sits *after* the fallbacks that never fire, so
+   reordering also changes how often the agent asks anything at all. Run the
+   full 200-sample A/B before landing.
+
+10. **Catalog attribute extraction was substring-matched, not word-boundary
+    matched — fixed, and it is a real bug whose fix currently *costs* 0.005.**
+    Found while building co-occurrence statistics (#11): the strongest
+    "signal" in the catalog was `P(material=lace | category=Necklaces
+    Pendant Necklaces) = 0.867`, which is not a fact about jewelry — it is
+    "neck**lace**" containing "lace". `_extract_material`/`_extract_color`
+    tested `word in text` with no boundaries, while both the evaluator
+    (`MATERIAL_RE`/`COLOR_RE`) and this repo's own customer-side
+    `extract_disclosed_value` have always used `\b`. Only the catalog side
+    was loose. Measured over the 50k catalog:
+
+    ```
+    color:    21.6% of products mislabeled (10,824), of which 9,312 are a
+              value invented where no color word occurs at all
+              ("red" in embroidered, "tan" in titanium/instant)
+    material:  4.7% mislabeled (2,344), dominated by lace <- necklace
+    coverage: color 58.6% -> 39.9%, material 73.7% -> 70.9%
+    ```
+
+    **This is the root cause of the previously-unexplained disagreement in
+    open problem #1** (16.3% material / 37.0% color conflict with the true
+    target), which had been worked around by weakening the hard filter to
+    `_boost_by_disclosed`. Fixed in `attributes.py` (`_vocab_matcher`, one
+    word-boundary alternation, longest-first, re-ranked by vocab order to
+    preserve the original selection rule).
+    **Honest result: the fix measures -0.0054 on the full public set**
+    (HitRate 0.755→0.740, MRR 0.384→0.390, MTTC 5.600→5.585,
+    TechnicalScore 0.6008→0.5954), reproduced both with and without the LM
+    work in #11. Best current understanding of why: the buggy extractor
+    assigned a color to 58.6% of the catalog instead of 39.9%, and
+    `_boost_by_disclosed` penalizes a *known* mismatch by −1 while ignoring
+    unknowns, so the wrong labels gave the resort far more (noisy)
+    separation to work with. Correct-but-sparser labels leave more
+    candidates neutral. The indicated next step is therefore **not** to
+    revert the bug but to retune the boost/penalty weights against the
+    corrected coverage — the current ±1/0 scheme was tuned when 58.6% of
+    color labels existed and a fifth of them were fictional. Note the
+    HitRate delta is 3 samples out of 200; treat it as directional.
+
+11. **Co-occurrence and LLM-perplexity attribute inference.** Two attempts at
+    the same goal — infer an attribute the customer has not stated — after
+    the profile-based route in #5 measured dead.
+    - **Item-attribute co-occurrence** (`starter/cooccurrence.py`): counts
+      `P(color | category)`, `P(color | material)` etc. over the catalog.
+      The signal is enormous and real once #10 is fixed
+      (`P(material=stainless steel | category=Watches Wrist Watches)` = 0.483
+      vs 0.023 marginal, +79σ; `P(material=mesh | Running Road Running)` =
+      0.425 vs 0.032). **Built but not wired into the agent.** Note clearly:
+      this is *item* co-occurrence, not user co-occurrence — the shipped data
+      has no user-item interactions at all (catalog fields are
+      `parent_asin, title, features, description, price, categories, details,
+      average_rating, rating_number, store`; `average_rating` is a per-item
+      aggregate). "Users who bought X also bought Y" is not computable here.
+    - **Local masked-LM belief with an entropy gate**
+      (`starter/lm_confidence.py`, wired into `Agent._infer_attributes`):
+      distilbert-base-uncased (67M, ~255MB, cached in `model/` beside
+      bge-small) scores the closed `MATERIALS`/`COLORS` vocabularies in a
+      `[MASK]`ed template and returns a normalized-entropy confidence.
+      A local model is required because the hosted Claude Messages API
+      returns no token logprobs, and because `docs/submission_rules.md`
+      § Model Policy warns network access may be disabled for official
+      scoring; bge-small itself cannot do it (its published weights carry no
+      LM head — 200 tensors, no `cls.predictions.*`).
+
+      **The entropy gate works — this is the solid finding**
+      (`scripts/eval_lm_confidence.py`, predicting the true target's
+      extracted material from the turn-1 message):
+
+      ```
+      material   top-1 0.483 vs 0.322 guess-the-mode baseline   (+0.161)
+        H < 0.60      n= 61   accuracy 0.787
+        H 0.60-0.75   n=105   accuracy 0.371
+        H 0.75-0.85   n= 14   accuracy 0.000
+      ```
+
+      Monotonic and steep, so `MAX_CONFIDENT_ENTROPY = 0.60` is calibrated
+      rather than guessed. **Color is deliberately excluded**: top-1 0.189
+      against a 0.432 always-"black" baseline — worse than doing nothing —
+      and its gate ran *backwards* (confident 0.172 vs unsure 0.250), while
+      collapsing onto a single attractor value ("pink" for 14 of 37
+      targets). Template phrasing mattered more than expected: three colour
+      templates scored 0/3 on probes whose answer was stated in the text and
+      predicted "purple" for every input.
+
+      **But the end-to-end payoff is ~noise: +0.0010 TechnicalScore**
+      (MRR +0.0045, HitRate flat, MTTC 0.02 worse), reproduced twice —
+      0.6008→0.6018 on the original extractor and 0.5954→0.5964 on the
+      fixed one. Why the calibrated predictor buys so little: it fires only
+      on material; the customer already discloses material in 72.5% of
+      sessions, so the inference mostly duplicates information that arrives
+      anyway; and it must be boost-only (agreement lifts, disagreement is
+      ignored) because #5 measured that any mismatch penalty sinks a
+      candidate below every neutral one. Cost: **246 ms per inference**
+      (~2.5 s per 10-turn session) and ~255MB of shipped asset.
+      Conclusion: the mechanism is validated, the application point is
+      low-leverage. If it is kept, the higher-leverage use is predicting
+      *which attribute the customer can answer* (see #9's answerability
+      marginals) rather than nudging the candidate resort.
 
 ## Blockers / mistakes already made (so they aren't repeated)
 

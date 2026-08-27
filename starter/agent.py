@@ -4,8 +4,10 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .attributes import AttributeIndex, FILTERABLE_ATTRIBUTES, extract_disclosed_value, select_dynamic_attribute
+from .attributes import (AttributeIndex, COLORS, FILTERABLE_ATTRIBUTES, MATERIALS,
+                         extract_disclosed_value, select_dynamic_attribute)
 from .classifier import EmbeddingIntentClassifier, EmbeddingOverrideDetector, classify_intent, detected_attributes
+from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attribute
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
 from .user_profile import UserProfileStore
 
@@ -90,7 +92,25 @@ DIVERSIFY_LAMBDA = 0.5
 # exclusion persists for the whole session like a genuine disclosure would,
 # so a wrong corroborated guess can permanently block ever asking about that
 # attribute, even when the remaining candidate pool would make it the most
-# informative possible question. See CLAUDE.md for the full write-up.
+# informative possible question. The root cause under all three is that a
+# shared profile_key simply isn't an identity signal on this data: same-key
+# sessions' targets agree on coarse category 0.5% of the time vs a 1.2%
+# random baseline (scripts/eval_profile_signal.py --check collision), so
+# there is nothing correct to carry. See CLAUDE.md #5 for the full write-up.
+
+
+# Local masked-LM attribute inference (lm_confidence.py). Fills in an
+# attribute the customer has NOT stated, gated on the model's own entropy --
+# measured accuracy 0.787 below MAX_CONFIDENT_ENTROPY vs a 0.322
+# guess-the-mode baseline, falling to 0.000 above it. Applied boost-only and
+# at a fraction of a real disclosure's weight: an inference can lift a
+# candidate but never sink one, so the ~21% of confident predictions that are
+# wrong cost nothing beyond a missed lift. That asymmetry is not a style
+# choice -- CLAUDE.md #5 measured that *any* nonzero mismatch penalty drops a
+# candidate below every neutral (unknown-attribute) candidate regardless of
+# weight, which is what made every previous profile-hint experiment regress.
+LM_INFERENCE_WEIGHT = 0.5
+ATTRIBUTE_VOCAB = {"material": MATERIALS, "color": COLORS}
 
 
 @dataclass
@@ -105,12 +125,15 @@ class SessionState:
     # profile session behaves identically to before user_profile.py existed.
     disclosed: dict[str, str] = field(default_factory=dict)
     # attribute -> corroborated value (recurred >=2x, see user_profile.py's
-    # MIN_CORROBORATION) seen for this profile_key in *past* sessions. Kept
-    # separate from `disclosed` and used only to skip a likely-redundant
-    # question in _next_attribute, never to bias ranking -- see that
-    # function's comment for why (a profile-key match can be a coincidental
-    # collision rather than a genuine returning shopper, and this was
-    # measured to matter).
+    # MIN_CORROBORATION) seen for this profile_key in *past* sessions.
+    # Populated on every reset(), read by nothing -- deliberately. A
+    # profile-key match turns out not to be an identity signal at all: over
+    # the 409 public-set session pairs sharing a key, 0.5% want a target in
+    # the same coarse category against a 1.2% +- 0.5% random baseline
+    # (scripts/eval_profile_signal.py). Every way of consuming this that was
+    # tried regressed the full set; see _next_attribute below and CLAUDE.md
+    # #5. Kept populated so the store stays exercised and the diagnostic has
+    # something to check if the hidden set's profiles behave differently.
     profile_hint: dict[str, str] = field(default_factory=dict)
     # identity for the long-term profile store; set once in reset().
     profile_key: str | None = None
@@ -205,6 +228,14 @@ class Agent:
                 # any of them should degrade to BM25-only, not crash Agent init.
                 logger.error("dense index unavailable, falling back to BM25-only: %s", exc)
 
+        self.lm_scorer: MaskedLMScorer | None = None
+        try:
+            self.lm_scorer = MaskedLMScorer()
+        except Exception as exc:
+            # Same degrade-don't-crash policy as the dense index: a missing or
+            # corrupt local LM must cost the inference boost, not the agent.
+            logger.error("masked LM unavailable, attribute inference disabled: %s", exc)
+
         self.intent_classifier: EmbeddingIntentClassifier | None = None
         self.override_detector: EmbeddingOverrideDetector | None = None
         if embedding_model is not None:
@@ -271,7 +302,12 @@ class Agent:
             state.asked_attributes,
         )
 
-        candidate_pool = self._retrieve(query, top_k, max(top_k, ENTROPY_POOL_SIZE), signal.label, state.disclosed)
+        inferred = self._infer_attributes(query, state.disclosed)
+        if inferred:
+            logger.debug("respond(%s, turn=%s): LM-inferred %s", session_id, turn, inferred)
+        candidate_pool = self._retrieve(
+            query, top_k, max(top_k, ENTROPY_POOL_SIZE), signal.label, state.disclosed, inferred
+        )
         recommendations = candidate_pool[:top_k]
 
         attribute = _next_attribute(state, query, candidate_pool, self.attribute_index, signal.label)
@@ -289,6 +325,30 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
+    def _infer_attributes(self, query: str, disclosed: dict[str, str]) -> dict[str, str]:
+        """Attributes the customer has not stated, that the LM is confident about.
+
+        Only ever fills gaps: an attribute already in `disclosed` is skipped
+        outright, so a genuine answer is never second-guessed by a guess.
+        """
+        if self.lm_scorer is None or not query.strip():
+            return {}
+        inferred: dict[str, str] = {}
+        for attribute in ATTRIBUTE_TEMPLATES:
+            if attribute in disclosed:
+                continue
+            vocab = ATTRIBUTE_VOCAB.get(attribute)
+            if not vocab:
+                continue
+            try:
+                belief = belief_for_attribute(self.lm_scorer, attribute, query, vocab)
+            except Exception:
+                logger.exception("LM inference failed for %s", attribute)
+                continue
+            if belief is not None and belief.confident:
+                inferred[attribute] = belief.value
+        return inferred
+
     def _retrieve(
         self,
         query: str,
@@ -296,6 +356,7 @@ class Agent:
         pool_size: int,
         intent_label: str,
         disclosed: dict[str, str] | None = None,
+        inferred: dict[str, str] | None = None,
     ) -> list[str]:
         if not query.strip():
             return []
@@ -322,7 +383,7 @@ class Agent:
             return []
         fused = reciprocal_rank_fusion(rank_lists, top_n=pool_size, weights=weights)
 
-        candidates = self._boost_by_disclosed(fused, disclosed) if disclosed else fused
+        candidates = self._boost_by_disclosed(fused, disclosed, inferred) if (disclosed or inferred) else fused
 
         if intent_label == "browsing":
             return self._diversify(candidates, top_k)
@@ -371,7 +432,12 @@ class Agent:
         remainder = [cid for cid in candidate_ids if cid not in picked_set]
         return picked_ids + remainder
 
-    def _boost_by_disclosed(self, candidate_ids: list[str], disclosed: dict[str, str]) -> list[str]:
+    def _boost_by_disclosed(
+        self,
+        candidate_ids: list[str],
+        disclosed: dict[str, str],
+        inferred: dict[str, str] | None = None,
+    ) -> list[str]:
         # Non-eliminating by construction: a stable resort, so nothing is
         # ever dropped -- unlike the hard-equality filter this replaced,
         # which compared two independent single-value, first-vocab-hit
@@ -390,13 +456,19 @@ class Agent:
         # here. A short disclosed phrase dotted against a full-product
         # embedding is too diluted a signal; exact vocab agreement, even
         # imperfect, is the stronger one here.)
-        def match_score(pid: str) -> int:
-            score = 0
+        def match_score(pid: str) -> float:
+            score = 0.0
             for attribute, value in disclosed.items():
                 actual = self.attribute_index.value_for(attribute, pid)
                 if actual is None:
                     continue
                 score += 1 if actual == value else -1
+            for attribute, value in (inferred or {}).items():
+                # Boost-only: agreement lifts, disagreement is ignored rather
+                # than penalized. See LM_INFERENCE_WEIGHT above for why the
+                # asymmetry is load-bearing and not just caution.
+                if self.attribute_index.value_for(attribute, pid) == value:
+                    score += LM_INFERENCE_WEIGHT
             return score
 
         return sorted(candidate_ids, key=match_score, reverse=True)
