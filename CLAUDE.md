@@ -110,6 +110,11 @@ harvested override/continuation turns plus hand-written out-of-distribution
 pivots. Read-only and Agent-free. Run this before touching the detector; the
 measured table is in "Known open problems" #7.
 
+Intent diagnostics: `uv run python3 scripts/eval_intent.py` — sweeps scoring
+rules for `EmbeddingIntentClassifier` on turn-1, accumulated, and
+out-of-distribution pools, with the lexical fallback as a floor. Companion to
+`eval_override.py`; the measured table is in "Known open problems" #13.
+
 Intent-head diagnostics: `uv run python3 scripts/train_intent_head.py` — trains
 a logistic head on frozen bge-small embeddings and scores it against the
 centroid classifier on in-distribution, held-out-template, and
@@ -324,12 +329,15 @@ Notable things confirmed empirically along the way, not just assumed:
    was re-run and reproduced 0.6073 exactly, so the legs are deterministic and
    comparable.
 
-   Not done: the same trimmed-prototype rule was **not** applied to
-   `EmbeddingIntentClassifier`, which shares the mechanism and the thin-margin
-   problem. Its output is a continuous score feeding fusion weights rather
-   than a binary state-wipe, so it needs its own measurement
-   (`scripts/eval_classifier.py` + full set) before changing. The *trained*
-   route for it was tried and rejected — see #12.
+   Applied to `EmbeddingIntentClassifier` too? **No — measured and rejected,
+   see #13.** Two corrections to what this section used to claim about that
+   classifier. Its output is *not* "a continuous score feeding fusion
+   weights": `signal.score` is referenced nowhere but a log line
+   (`agent.py:310`), and every consumer — fusion weights, the MMR re-rank, the
+   entropy threshold, `_next_attribute` — branches on `signal.label`. It is a
+   binary decision, same as this one. And it does not in fact share the
+   thin-margin problem in any way that produces errors: it scores 0.988 on
+   turn-1 intent. The *trained* route for it was also tried and rejected — #12.
 
    Original analysis follows.
 
@@ -594,9 +602,57 @@ Notable things confirmed empirically along the way, not just assumed:
     turns out more varied than the local templates, which is the one condition
     that would change the answer.
 
-    Not tried: an unsupervised improvement to the same classifier (the
-    trimmed-prototype rule from #7, which *did* work for the override
-    detector) — that stays the open option, and needs no labels.
+    The unsupervised alternative (the trimmed-prototype rule from #7) was then
+    tried as well, and also rejected — #13.
+
+13. **Trimmed-prototype rule does *not* transfer to the intent classifier.**
+    #7's fix for the override detector was swept for `EmbeddingIntentClassifier`
+    in the new `scripts/eval_intent.py`. Every variant is worse, and not
+    marginally:
+
+    ```
+    rule                    turn-1   accumulated   OOD probe
+    lexical (fallback)       1.000         0.773       1.000
+    centroid (current)       0.988         0.708       1.000   <- unchanged
+    top1-mean                0.781         0.608       0.938
+    top4-mean                0.769         0.588       0.938
+    top10-mean (= centroid)  0.831         0.704       0.938
+    ```
+
+    Why it transferred to one classifier and not the other: the override
+    prototypes had a specific *shape* pathology — all twelve are long
+    two-clause sentences that name the discarded prior statement, so the mean
+    encoded that sentence form and terse pivots fell outside it. The
+    buying/browsing prototypes have no such common form; they are varied
+    single utterances whose mean direction *is* the signal, so trimming to the
+    top-k throws away the averaging that makes the centroid robust. **The
+    lesson is that "centroids are fragile" is not a general truth about this
+    codebase's classifiers — it was a fact about one prototype set.** Check the
+    prototype set's shape before assuming the fix generalizes.
+
+    **There is also no headroom to chase here.** The centroid is at 0.988 on
+    turn-1, its only two errors being buying sessions whose hard constraint is
+    contentless ("A key requirement is: Imported."). And per #4, the thing the
+    label feeds — dual-track routing — was itself measured net flat on the
+    full set (0.600 -> 0.601). A perfect intent label is worth approximately
+    nothing; do not spend more on this classifier.
+
+    Two measurement caveats worth carrying forward, both instances of the #12
+    trap. **The lexical fallback's 1.000 on turn-1 is template memorization**:
+    `\bkey\s+requirement\b` and `\bstill\s+(?:exploring|...)\b` in
+    `BUYING_PHRASES`/`BROWSING_PHRASES` match the simulator's two templates
+    literally, so that number means nothing, exactly like #12's 0.984. **And
+    the OOD probe pool is partly circular** — the lexical rule scores 1.000
+    there by a degenerate path (every browsing probe registers 0/0 evidence
+    and falls through to the browsing tie-break, while every buying probe hits
+    attribute vocabulary), which is true because the probes were hand-written
+    to have exactly that property. The probes can falsify a rule but should
+    not be used to rank two rules that both pass.
+
+    The `accumulated` column is reported for shape only and is **not** an
+    accuracy: `scenario_type` is not valid ground truth once clarifying
+    answers land, because the classifier is deliberately built to drift
+    buying-ward as concrete attributes accumulate (`classifier.py:14`).
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
