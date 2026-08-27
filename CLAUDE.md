@@ -315,6 +315,82 @@ Notable things confirmed empirically along the way, not just assumed:
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
    attribute boost + MMR diversity, no learned/LLM reranker).
 
+7. **Both nearest-centroid classifiers are the weak link; a trained
+   classifier is the obvious next step.** Reported from manual REPL use and
+   reproduced directly: `"never mind, give me white shoes"` is **not**
+   detected as an intent override — `EmbeddingOverrideDetector.is_override`
+   returns `False` (override centroid 0.6836 vs continuation centroid
+   0.7171, margin −0.034), so `disclosed`/`asked_attributes` are never
+   cleared and the stale earlier constraints keep biasing the pool for the
+   rest of the session (`agent.py:247`). Measured margins on hand-written
+   probes around it:
+
+   ```
+   never mind, give me white shoes            ovr 0.6836  cont 0.7171  -> MISS
+   scratch that, white shoes                  ovr 0.6521  cont 0.6555  -> MISS
+   never mind what I said, give me white shoes ovr 0.7122 cont 0.6989  -> hit
+   actually, give me white shoes instead      ovr 0.7537  cont 0.6834  -> hit
+   I changed my mind, white shoes please      ovr 0.7767  cont 0.6682  -> hit
+   ```
+
+   Root cause is the *centroid*, not the prototypes: every entry in
+   `PROTOTYPE_OVERRIDE` is a long two-clause sentence that explicitly names
+   the discarded prior statement ("what I said before", "my earlier
+   preference"), so the mean vector encodes that whole sentence *shape*.
+   A terse pivot is dominated by its imperative-request half
+   ("give me white shoes"), which sits closer to the continuation
+   centroid. Mean-pooling also throws away the fact that a single
+   prototype matches strongly. Decision margins are ~0.03 in a space where
+   both centroids sit at ~0.65–0.80 similarity to almost anything — the
+   boundary is inside the noise floor, which is the same fragility already
+   documented for the buying/browsing deadzone experiment
+   (`classifier.py:322`).
+
+   Ordered by cost, before jumping straight to fine-tuning:
+   - **Nearest-prototype (max) instead of centroid** — one-line change,
+     no training. On the 8-example hand-written probe above it got 8/8
+     where the centroid got 6/8, including both terse pivots. *This is an
+     8-example hand-picked probe, not a measurement* — it has to be run
+     through `scripts/eval_classifier.py` and the full 200-sample set
+     before being believed, and it will likely raise false positives
+     (max-similarity is less robust to one badly-placed prototype).
+   - **Add terse-pivot prototypes** ("never mind, X", "scratch that, X",
+     "forget it, X") — also free, but treats the symptom; the shape
+     mismatch will recur for whatever phrasing the hidden simulator uses.
+   - **Train a real classifier** (logistic regression / small MLP head on
+     the frozen bge-small embeddings — not fine-tuning the encoder, which
+     `TODO.md`'s out-of-scope list arguably bars and which needs far more
+     data). A learned boundary can weight the discard-cue dimensions
+     instead of averaging them away with the request half of the sentence.
+     Blocker: **there is no labeled override data yet.** The label source
+     would be the evaluator's own reply generator — `customer_reply()` and
+     `initial_message()` in `evaluator/local_evaluator.py` already produce
+     override turns for `intent_override` samples with known ground truth,
+     so a labeled set can be harvested from the 200 public samples the same
+     way `scripts/eval_classifier.py` already reconstructs turns. Caveat
+     that applies to any of these: training on the local simulator's
+     vocabulary risks overfitting to it, which is exactly the failure the
+     zero-shot design was chosen to avoid (`classifier.py:6`) — hold out
+     the hand-written probes above as an out-of-distribution check.
+
+   The same argument applies to `EmbeddingIntentClassifier` (buying vs
+   browsing), which shares the mechanism and the thin-margin problem, but
+   the override detector is the higher-value target: a missed override is a
+   whole-session failure, a wrong buying/browsing label only shifts fusion
+   weights.
+
+8. **LLM-extracted catalog attributes (offline, one-time).** Designed and
+   costed, nothing built — full working notes in `NEXT_STEPS.md`. Replaces
+   `AttributeIndex`'s first-vocab-hit extraction with a one-time
+   `claude-haiku-4-5` Batch API pass over the 50k catalog (~$5–12, ~9.4M
+   input tokens), emitting a static closed-vocabulary JSON sidecar shipped
+   as a local asset so the agent still needs no network at scoring time.
+   Motivation: thin coverage (78.1/58.6/21% material/color/price), the
+   16.3%/37.0% disagreement with the true target from #1, and the four
+   attributes (`style`, `size`, `use_case`, `feature`) that have no
+   extractor at all. Caveat recorded there: this fixes only the catalog
+   half of the two-extractor disagreement.
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
 - Diagnostic scripts assumed `public_set.jsonl` samples carried a raw query
