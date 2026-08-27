@@ -113,9 +113,16 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.755   MRR: 0.384   MTTC: 5.60   Efficiency: 0.540
-TechnicalScore: 0.601
+HitRate@10: 0.745   MRR: 0.389   MTTC: 5.09   Efficiency: 0.591
+TechnicalScore: 0.607
 ```
+
+(Previous run, before the `FALLBACK_ATTRIBUTE_ORDER` answerability reorder
+described in "Known open problems" #9: HitRate 0.740 / MRR 0.395 /
+MTTC 5.605 / Efficiency 0.540 / TechnicalScore 0.596 — the reorder is
+almost purely an MTTC win, +0.0109 TechnicalScore. Note this pair of runs
+brackets the #10 word-boundary fix and the #11 LM inference, both already
+landed, so it is *not* comparable to the 0.601 line below.)
 
 (Previous run, before the dual-track buying/browsing routing described in
 "Known open problems" #4: HitRate 0.755 / MRR 0.373 / MTTC 5.49 /
@@ -289,15 +296,13 @@ Notable things confirmed empirically along the way, not just assumed:
    extractor at all. Caveat recorded there: this fixes only the catalog
    half of the two-extractor disagreement.
 
-9. **`FALLBACK_ATTRIBUTE_ORDER` asks the three least-answerable attributes
-   first — measured, not yet acted on.** Fell out of the profiling work in
-   #5 (`scripts/eval_profile_signal.py --check tags` prints it as the
-   marginal it compares tags against), so it is a genuine measurement, but
-   it is a *question-ordering* change and has had no A/B yet — do not treat
-   the numbers below as a result. Share of the 200 public samples where the
-   customer can still answer a question about each attribute after turn 1,
-   derived from the evaluator's own reply policy (a constraint is disclosed
-   only when `classify_constraint()` buckets it as the asked attribute):
+9. ~~**`FALLBACK_ATTRIBUTE_ORDER` asks the three least-answerable
+   attributes first.**~~ **Fixed — the single largest remaining MTTC win.**
+   The order is now sorted by *answerability*: share of the 200 public
+   samples where the customer can still answer a question about each
+   attribute after turn 1, derived from the evaluator's own reply policy (a
+   constraint is disclosed only when `classify_constraint()` buckets it as
+   the asked attribute):
 
    ```
    feature   0.960      style     0.085
@@ -305,19 +310,37 @@ Notable things confirmed empirically along the way, not just assumed:
    color     0.255      use_case  0.020
    ```
 
-   `FALLBACK_ATTRIBUTE_ORDER` is currently `style, size, use_case, feature,
-   budget` — i.e. once the entropy picker runs out of material/color, the
-   agent asks the three *rarest* buckets (8.5%/4.5%/2.0%) before the one
-   answerable in 96% of sessions. Since MTTC is 20% of the score and a
-   non-answer burns a whole turn, moving `feature` to the front is the
-   cheapest remaining MTTC lead. Caveats before believing it: (a) the
-   96% is partly an artifact of `classify_constraint()` using `feature` as
-   its catch-all `return` — it is the bucket everything unmatched falls
-   into, so this may be a local-simulator quirk that does not hold for the
-   hidden grader, exactly like the `budget` finding in "Progress" above;
-   (b) `feature` currently sits *after* the fallbacks that never fire, so
-   reordering also changes how often the agent asks anything at all. Run the
-   full 200-sample A/B before landing.
+   The old order (`style, size, use_case, feature, budget`) made the agent
+   ask the three *rarest* buckets (8.5%/4.5%/2.0%) before the one answerable
+   in 96% of sessions, once the entropy picker ran out of material/color.
+   Now `feature, style, size, use_case, budget`.
+
+   Full 200-sample A/B, both legs run on this HEAD:
+
+   ```
+                 HitRate    MRR      MTTC    Technical
+   before         0.7400   0.3949   5.6050    0.5964
+   after          0.7450   0.3888   5.0900    0.6073   (+0.0109)
+   ```
+
+   Per-sample: **39 samples reach the target sooner, 5 later**, 156
+   unchanged; 3 new hits against 2 lost. The modal delta is **−3 turns on 24
+   samples**, which is exactly the predicted mechanism (skip style/size/
+   use_case, ask the one bucket the customer can answer). So the win is
+   broad, not a handful of lucky samples.
+
+   Two things worth keeping on the record. **MRR moved the wrong way**
+   (−0.0061): the score's MRR uses the rank at the *first* hit, not the best
+   rank ever, so converting a late-and-well-ranked hit into an early-and-
+   worse-ranked one costs MRR while paying more in Efficiency. That trade is
+   inherent to the scoring and it nets strongly positive here — but it means
+   MTTC work will keep showing a small MRR drag, and a future change should
+   not be judged on MRR alone. **The 96% is partly an artifact**: `feature`
+   is `classify_constraint()`'s catch-all `return`, the bucket every
+   unmatched value falls into, so this may be a local-simulator quirk that
+   doesn't hold for the hidden grader — the same shape as the `budget`
+   finding in "Progress" above. `budget` stays last-resort rather than
+   dropped for the same reason.
 
 10. **Catalog attribute extraction was substring-matched, not word-boundary
     matched — fixed, and it is a real bug whose fix currently *costs* 0.005.**

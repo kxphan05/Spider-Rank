@@ -22,12 +22,25 @@ ALLOWED_ATTRIBUTES = {
 # select_dynamic_attribute) based on value-diversity in the current
 # candidate pool. style/size/use_case/feature have no cheap structural
 # extractor from catalog text, so they stay a fixed fallback order, used
-# once the dynamic pick has nothing left worth asking about. `budget` is
-# last-resort only: measured against the local evaluator, disclosed answers
-# almost never bucket as budget (see attributes.py STRUCTURAL_ATTRIBUTES
-# comment), so it's demoted below every other question rather than dropped
-# outright.
-FALLBACK_ATTRIBUTE_ORDER = ["style", "size", "use_case", "feature", "budget"]
+# once the dynamic pick has nothing left worth asking about.
+#
+# The order is by *answerability*, measured against the local evaluator's
+# own reply policy (scripts/eval_profile_signal.py --check tags): share of
+# the 200 public samples where the customer can still answer a question
+# about the attribute after turn 1 --
+#
+#   feature 0.960   style 0.085   size 0.045   use_case 0.020
+#
+# A question the customer can't answer burns a whole turn, and MTTC is 20%
+# of the score, so the most-answerable bucket goes first. Caveat kept on
+# the record: `feature` is `classify_constraint()`'s catch-all return, so
+# its 96% is partly an artifact of being the bucket everything unmatched
+# falls into -- this may be a local-simulator quirk, same shape as the
+# `budget` finding below. `budget` is last-resort only: measured against
+# the local evaluator, disclosed answers almost never bucket as budget
+# (see attributes.py STRUCTURAL_ATTRIBUTES comment), so it's demoted below
+# every other question rather than dropped outright.
+FALLBACK_ATTRIBUTE_ORDER = ["feature", "style", "size", "use_case", "budget"]
 
 ATTRIBUTE_QUESTIONS = {
     "material": "What material are you looking for?",
