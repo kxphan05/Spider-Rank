@@ -108,8 +108,9 @@ def main() -> None:
 
         if debug:
             state = agent._sessions[session_id]
-            print(f"  [debug] disclosed={state.disclosed}")
+            print(f"  [debug] disclosed={state.disclosed}  profile_hint={state.profile_hint}")
             print(f"  [debug] asked_attributes={state.asked_attributes}")
+            print(f"  [debug] profile_key={state.profile_key}  session_index={state.profile_session_index}")
         print()
 
 

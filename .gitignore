@@ -15,6 +15,7 @@ data/catalog.jsonl.gz
 results.json
 *.pyc
 data/dense_index/
+data/user_profiles.json
 model/
 
 # Local tool state, not project source

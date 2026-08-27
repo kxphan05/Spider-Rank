@@ -82,6 +82,27 @@ All agent logic lives in `starter/`:
    new session, not a mid-session change). On detection, `disclosed` and
    `asked_attributes` are cleared so the agent re-asks and re-filters from
    scratch instead of carrying stale constraints forward.
+6. **Long-term user-profile store** (`starter/user_profile.py`,
+   `UserProfileStore`): write-through JSON file (`data/user_profiles.json`,
+   gitignored — runtime state, not source data) that persists across process
+   restarts, not just within one `Agent` instance's lifetime. The API
+   contract's `reset_request.user_profile` (`docs/agent_api_contract.json`)
+   has no customer/user id, so there's nothing to key long-term state on
+   except the anonymized profile dict's own content — `profile_key()` hashes
+   it (sorted-key JSON → sha256, first 16 hex chars) and two sessions
+   presenting an identical profile are treated as the same returning
+   "shopper profile." `Agent.reset()` calls `start_session()`, which bumps a
+   per-key session counter and returns any *corroborated* (recurred ≥2x,
+   `MIN_CORROBORATION`) historical material/color/budget disclosure as
+   `SessionState.profile_hint`; `respond()` calls `record_disclosure()`
+   whenever a genuine this-session disclosure happens, appending to that
+   key's history. **`profile_hint` is currently populated but not consulted
+   anywhere in retrieval or question logic** — see "Known open problems" #5
+   for three different uses of it that were each tried and measured to
+   regress the full public set, and why. The store still runs (fully
+   exercised, correctly populated — 125 distinct keys / 30 seen more than
+   once across the 200-sample public set) with zero net effect on scoring
+   while a viable way to use it is worked out.
 
 Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
@@ -230,13 +251,69 @@ Notable things confirmed empirically along the way, not just assumed:
    unchanged (order doesn't matter for the entropy scoring downstream,
    only the value distribution does). All the "browsing" numbers above are
    post-fix, with MMR actually running.
-5. Remaining gaps from the original spec analysis (`TODO.md` has the full
+5. ~~**No long-term user-profile persistence across sessions.**~~
+   **Store built (architecture #6 above); personalization use still open.**
+   `starter/user_profile.py`'s `UserProfileStore` now persists a per-profile-
+   key disclosure history to disk across process restarts, keyed by a
+   content hash of the anonymized `user_profile` dict (no customer id exists
+   in the API contract to key on instead). Three different ways of actually
+   *using* the carried-forward value (`SessionState.profile_hint`) were
+   tried and each measured to regress the full 200-sample public set
+   (baseline HitRate 0.755 / MRR 0.384 / MTTC 5.60 / TechnicalScore 0.601 —
+   see "Progress" above, unchanged by the store itself since it's currently
+   inert):
+   - **Boost candidate ranking at full weight**, merged directly into
+     `disclosed` and run through the existing `_boost_by_disclosed` (same
+     ±1 categorical match/mismatch scoring as a genuine disclosure): on the
+     60-sample seed-7 subset, TechnicalScore 0.637→0.622, entirely from one
+     `intent_override` sample whose carried material/color disagreed with
+     its true target and got demoted rank 1→7.
+   - **Boost at half weight** (`PROFILE_HINT_WEIGHT`, in a separate
+     `profile_hint` dict from genuine `disclosed` so a real this-session
+     answer always overrides a stale hint): 60-sample subset only recovered
+     to 0.633, not back to baseline. Root cause found by inspection, not
+     guessing: *any* nonzero mismatch penalty sinks a candidate below every
+     neutral (unknown-attribute) candidate in the pool regardless of
+     magnitude, so the cost is structural, not a weight-tuning problem —
+     confirmed by also trying weight 0.25 with no further improvement on
+     the one affected sample. Gating the carry on corroboration (same value
+     recurring ≥2x in history, `MIN_CORROBORATION`) before trusting it
+     didn't fix the full-set number either (TechnicalScore 0.585→0.588,
+     still well below the 0.601 baseline) — collisions on this catalog are
+     template-level (many genuinely different customers share the same
+     coarse `preference_tags` combination), so a value recurring twice
+     doesn't actually make it more likely correct for a *third*,
+     unrelated session sharing that key.
+   - **Use the corroborated hint to skip a likely-redundant *question*
+     instead of biasing ranking** (add it to `_next_attribute`'s `excluded`
+     set), reasoning the downside should be bounded to "waste one turn if
+     wrong" rather than the ranking approach's unbounded downside: measured
+     worse than expected on the full set (HitRate 0.755→0.740, TechnicalScore
+     0.601→0.589), concentrated entirely in `browsing` (0.8125→0.775).
+     Root cause: the exclusion isn't actually bounded to one wasted turn —
+     it persists for the rest of the session exactly like a genuine
+     disclosure would, so a wrong corroborated guess can permanently block
+     ever asking about that attribute again, even on a later turn where the
+     remaining candidate pool would make it the single most informative
+     question available. Confirmed directly: several `browsing` sessions
+     that used to hit flipped to a full miss, with the material/color
+     question silently never asked for the rest of the session.
+   Conclusion: on this competition's public-set profile generation (a small
+   template set produces the `preference_tags` combinations — 125/200
+   profiles are unique, i.e. collisions are common and don't correlate with
+   the *current* session's actual target), a profile-key match is a weak
+   enough identity signal that using it for either ranking or question
+   selection costs more than it gives, however the risk is hedged. Left as
+   explicitly inert (`profile_hint` populated, never read) rather than
+   shipped with a measured regression — this may be worth revisiting if the
+   hidden grader's profile generation turns out less collision-prone, or if
+   a differently-shaped signal (e.g. nudging `FALLBACK_ATTRIBUTE_ORDER` from
+   this *session's own* freshly-given `preference_tags`, which needs no
+   cross-session identity assumption at all) is tried instead.
+6. Remaining gaps from the original spec analysis (`TODO.md` has the full
    competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
-   attribute boost + MMR diversity, no learned/LLM reranker); `user_profile`
-   passed into `reset()` is accepted but completely unused (no
-   personalization); no long-term user-profile persistence across sessions
-   (`4.2.III`'s "long-term user profiles").
+   attribute boost + MMR diversity, no learned/LLM reranker).
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
@@ -274,3 +351,16 @@ Notable things confirmed empirically along the way, not just assumed:
   testing ("disclosed isn't filling up") when it's actually just the
   by-design ceiling of only 3 filterable attributes (material, color,
   budget).
+- When building the long-term user-profile store (see "Known open
+  problems" #5), "use it to skip a question instead of biasing ranking"
+  was reasoned to have a strictly bounded downside ("waste one turn if the
+  guess is wrong") *before* measuring — it doesn't. Excluding an attribute
+  from being asked is not the same kind of action as a one-off skipped
+  question: the exclusion is stored in session state and persists for
+  every remaining turn, so a wrong guess can silently block the single
+  most informative question for the rest of a 10-turn session. Lesson:
+  "this failure mode is bounded" is itself a claim to verify empirically
+  on the full set, not reason about from the code's shape alone — this
+  project's own convention (measure before trusting a design argument)
+  applies to safety arguments about a design, not just its expected
+  benefit.

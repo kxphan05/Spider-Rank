@@ -7,6 +7,7 @@ from pathlib import Path
 from .attributes import AttributeIndex, FILTERABLE_ATTRIBUTES, extract_disclosed_value, select_dynamic_attribute
 from .classifier import EmbeddingIntentClassifier, EmbeddingOverrideDetector, classify_intent, detected_attributes
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
+from .user_profile import UserProfileStore
 
 logger = logging.getLogger(__name__)
 
@@ -73,16 +74,47 @@ DIVERSIFY_WINDOW = 20
 DIVERSIFY_PIN = 2
 DIVERSIFY_LAMBDA = 0.5
 
+# Long-term profile carry-over (user_profile.py): a profile_key is a content
+# hash of an anonymized profile dict with no customer id, so two sessions
+# sharing a key can be a coincidental template collision, not an actual
+# returning shopper (125/200 public-set profiles are unique -- collisions do
+# happen). SessionState.profile_hint carries the corroborated cross-session
+# value (see user_profile.py's MIN_CORROBORATION) but is intentionally NOT
+# consulted anywhere in retrieval/question logic below -- three different
+# uses of it were each tried and measured to regress the full 200-sample
+# public set: biasing candidate ranking (HitRate 0.755->0.745, TechnicalScore
+# 0.601->0.585, weight-tuning down to 0.25 didn't help -- a wrong guess sinks
+# the true target below every neutral candidate outright); and using it to
+# skip a "likely-redundant" question (0.755->0.740, 0.601->0.589) -- that
+# skip isn't actually bounded to "waste one turn" as it first appears: the
+# exclusion persists for the whole session like a genuine disclosure would,
+# so a wrong corroborated guess can permanently block ever asking about that
+# attribute, even when the remaining candidate pool would make it the most
+# informative possible question. See CLAUDE.md for the full write-up.
+
 
 @dataclass
 class SessionState:
     first_message: str | None = None
     recent_messages: list[str] = field(default_factory=list)
     asked_attributes: list[str] = field(default_factory=list)
-    # attribute -> extracted value, from any message (asked or volunteered).
-    # Used to filter/rerank the candidate pool in _retrieve, not just as
-    # extra query text.
+    # attribute -> extracted value, from a message THIS session (asked or
+    # volunteered). Used to filter/rerank the candidate pool in _retrieve,
+    # not just as extra query text. Never seeded from cross-session history --
+    # see profile_hint below for that -- so a fresh (never-before-seen)
+    # profile session behaves identically to before user_profile.py existed.
     disclosed: dict[str, str] = field(default_factory=dict)
+    # attribute -> corroborated value (recurred >=2x, see user_profile.py's
+    # MIN_CORROBORATION) seen for this profile_key in *past* sessions. Kept
+    # separate from `disclosed` and used only to skip a likely-redundant
+    # question in _next_attribute, never to bias ranking -- see that
+    # function's comment for why (a profile-key match can be a coincidental
+    # collision rather than a genuine returning shopper, and this was
+    # measured to matter).
+    profile_hint: dict[str, str] = field(default_factory=dict)
+    # identity for the long-term profile store; set once in reset().
+    profile_key: str | None = None
+    profile_session_index: int = 0
 
 
 MAX_QUERY_CHARS = 2000
@@ -110,7 +142,17 @@ def _next_attribute(
     # Skip attributes already evidenced in the accumulated text (e.g. a
     # buying session's turn-1 message names a material) -- asking about it
     # again just wastes a turn, since the evaluator's customer policy only
-    # reveals values not already marked "disclosed".
+    # reveals values not already marked "disclosed". Deliberately NOT
+    # excluding (or boosting ranking with) state.profile_hint -- see its
+    # comment on SessionState and user_profile.py's module docstring: three
+    # different ways of using a cross-session profile_hint were each tried
+    # and measured to regress the full 200-sample public set, because a
+    # profile_key match is frequently a coincidental template collision
+    # rather than a genuine returning shopper, and a wrong guess is costly
+    # however it's used (sinks true-target ranking, or -- worse than
+    # expected -- permanently blinds the session to ever asking about that
+    # attribute, since exclusion here would persist for the rest of the
+    # session same as a genuine disclosure).
     excluded = set(state.asked_attributes) | detected_attributes(query)
 
     min_entropy = MIN_ENTROPY_BUYING if intent_label == "buying" else MIN_ENTROPY_BROWSING
@@ -138,8 +180,10 @@ class Agent:
         self,
         catalog_path: str | Path = "data/catalog.jsonl",
         dense_index_dir: str | Path = "data/dense_index",
+        user_profile_store: UserProfileStore | None = None,
     ) -> None:
         catalog_path = Path(catalog_path)
+        self.profile_store = user_profile_store if user_profile_store is not None else UserProfileStore()
         self.bm25 = BM25Index(catalog_path)
         self.attribute_index = AttributeIndex.build(catalog_path)
 
@@ -174,9 +218,17 @@ class Agent:
             raise ValueError("session_id must be a non-empty string")
         if not isinstance(user_profile, dict):
             logger.warning("reset(%s): user_profile is not a dict (%r); ignoring", session_id, type(user_profile))
+            user_profile = {}
         # user_profile is anonymized aggregate data (purchase_frequency, rating
-        # style, preference_tags, summary); not yet used for personalization.
-        self._sessions[session_id] = SessionState()
+        # style, preference_tags, summary) with no customer id -- see
+        # user_profile.py for how this is turned into a long-term profile key.
+        key, session_index, carried = self.profile_store.start_session(user_profile)
+        state = SessionState(profile_key=key, profile_session_index=session_index, profile_hint=carried)
+        self._sessions[session_id] = state
+        logger.debug(
+            "reset(%s): profile_key=%s session_index=%d carried=%s",
+            session_id, key, session_index, carried,
+        )
 
     def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
         if session_id not in self._sessions:
@@ -195,6 +247,7 @@ class Agent:
             if self.override_detector is not None and self.override_detector.is_override(user_message):
                 logger.debug("respond(%s, turn=%s): override detected, clearing disclosed/asked state", session_id, turn)
                 state.disclosed.clear()
+                state.profile_hint.clear()
                 state.asked_attributes.clear()
             state.recent_messages.append(user_message)
             del state.recent_messages[:-RECENT_WINDOW]
@@ -203,6 +256,7 @@ class Agent:
             value = extract_disclosed_value(attribute, user_message, self.attribute_index.price_buckets)
             if value is not None:
                 state.disclosed[attribute] = value
+                self.profile_store.record_disclosure(state.profile_key, state.profile_session_index, attribute, value)
 
         query = _build_query(state)
 
