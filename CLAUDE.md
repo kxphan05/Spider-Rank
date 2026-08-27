@@ -104,6 +104,12 @@ Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
 `disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
 
+Override diagnostics: `uv run python3 scripts/eval_override.py` — sweeps
+scoring rules for `EmbeddingOverrideDetector` against the simulator's own
+harvested override/continuation turns plus hand-written out-of-distribution
+pivots. Read-only and Agent-free. Run this before touching the detector; the
+measured table is in "Known open problems" #7.
+
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
 departure from the null, profile field→scenario_type, profile-key
@@ -118,9 +124,14 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.745   MRR: 0.389   MTTC: 5.09   Efficiency: 0.591
+HitRate@10: 0.745   MRR: 0.388   MTTC: 5.09   Efficiency: 0.591
 TechnicalScore: 0.607
 ```
+
+(That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
+problems" #7. The centroid it replaced scored 0.6073 and k=4 scores 0.6070 —
+the two are indistinguishable at this sample size, and #7 explains why the
+change was made on offline detector quality rather than on this number.)
 
 (Previous run, before the `FALLBACK_ATTRIBUTE_ORDER` answerability reorder
 described in "Known open problems" #9: HitRate 0.740 / MRR 0.395 /
@@ -225,9 +236,98 @@ Notable things confirmed empirically along the way, not just assumed:
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
    attribute boost + MMR diversity, no learned/LLM reranker).
 
-7. **Both nearest-centroid classifiers are the weak link; a trained
-   classifier is the obvious next step.** Reported from manual REPL use and
-   reproduced directly: `"never mind, give me white shoes"` is **not**
+7. **Override detector: centroid replaced by a trimmed nearest-prototype
+   rule + lead-clause scoring. Detector measurably better, end-to-end score
+   flat (-0.0005).** The diagnosis below was confirmed and acted on; the
+   analysis is kept because it explains the fix.
+
+   New rule (`EmbeddingOverrideDetector`, `classifier.py`): score against the
+   mean of each class's `TOP_PROTOTYPES = 3` closest prototypes instead of the
+   class centroid, and evaluate both the full message and its lead clause
+   (`lead_clause()`), taking whichever leans more override. Swept in the new
+   `scripts/eval_override.py`, which harvests the simulator's own override and
+   continuation turns (30 positives / 1600 negatives over the 200 public
+   samples) plus 20 hand-written out-of-distribution probes:
+
+   ```
+   rule                    sim recall  sim FPR   probe recall  probe FPR
+   centroid (previous)          0.900    0.000          0.800      0.100
+   nearest prototype (k=1)      0.933    0.151          1.000      0.300
+   top3-mean                    0.933    0.007          1.000      0.100
+   top3-mean + lead clause      1.000    0.007          1.000      0.100   <- shipped
+   top4-mean + lead clause      0.933    0.001          1.000      0.100
+   top5-mean + lead clause      0.933    0.000          0.900      0.100
+   ```
+
+   Confirms the CLAUDE.md #7 prediction exactly: **k=1 (max) does fix every
+   terse pivot but raises the false-positive rate 20x** (0.000 -> 0.151, i.e.
+   241 of 1600 ordinary turns silently wiping session state). A small trimmed
+   mean gets max's shape-robustness without its fragility.
+
+   **Full 200-sample A/B, both legs on this HEAD:**
+
+   ```
+                 HitRate    MRR      MTTC    Technical
+   before         0.7450   0.3888   5.0900    0.6073
+   after          0.7450   0.3875   5.0950    0.6068   (-0.0005)
+   ```
+
+   Only **4 of 200 sessions changed**: one `intent_override` improved
+   (rank 9->6), and three regressed slightly (two `buying`, one `browsing`)
+   from false positives firing on the simulator's disclosure template
+   ("For that, what matters is: ..."), which is where all 12 remaining FPs
+   live. Kept anyway, on the same reasoning as #10: **the local simulator
+   cannot measure this at all.** `behavior_for()` emits exactly one override
+   string, `"Actually, ignore my earlier preference. What I need is: {X}."`,
+   which is near-verbatim `PROTOTYPE_OVERRIDE[0]` — so simulator recall was
+   already 0.900 by construction and there is no local headroom to win. The
+   probe column (0.800 -> 1.000) is the only evidence about phrasings the
+   hidden grader might use, and it is hand-picked. Treat -0.0005 as noise, not
+   as a cost.
+
+   **Resolved: `TOP_PROTOTYPES = 4` shipped.** Swept against the real class
+   (not a reimplementation) and A/B'd on the full set:
+
+   ```
+    k   sim recall   sim FPR      sim FP   probe recall   probe FPR
+    1        0.933    0.1512    242/1600          1.000       0.400
+    2        1.000    0.0156     25/1600          1.000       0.200
+    3        1.000    0.0075     12/1600          1.000       0.100
+    4        0.933    0.0013      2/1600          1.000       0.100   <- shipped
+    5        0.933    0.0000      0/1600          0.900       0.100
+   12        0.900    0.0000      0/1600          0.900       0.100   (= centroid)
+
+                 HitRate    MRR      MTTC    Technical
+   centroid       0.7450   0.3888   5.0900    0.6073
+   k=3            0.7450   0.3875   5.0950    0.6068
+   k=4            0.7450   0.3876   5.0900    0.6070
+   ```
+
+   k=4 keeps the entire out-of-distribution gain (probe recall 1.000, vs the
+   centroid's 0.800) while cutting false positives 12 -> 2 of 1600. Per-sample
+   it changes **2 of 200 sessions** against the centroid (k=3 changed 4): one
+   `intent_override` improves rank 9->6, one `buying` regresses rank 2->5. The
+   two overrides k=4 loses are both the pathological template case where
+   `new_value` is 180 characters of verbatim catalog copy.
+
+   All three legs are within ±0.0005 TechnicalScore, which is **below this
+   benchmark's resolution** — 200 samples cannot separate them, and the
+   end-to-end numbers should not be read as evidence either way. The decision
+   rests on the offline table, where k=4 dominates the centroid on both recall
+   columns at a cost of 2 false positives in 1600 turns. The centroid baseline
+   was re-run and reproduced 0.6073 exactly, so the legs are deterministic and
+   comparable.
+
+   Not done: the same trimmed-prototype rule was **not** applied to
+   `EmbeddingIntentClassifier`, which shares the mechanism and the thin-margin
+   problem. Its output is a continuous score feeding fusion weights rather
+   than a binary state-wipe, so it needs its own measurement
+   (`scripts/eval_classifier.py` + full set) before changing.
+
+   Original analysis follows.
+
+   Reported from manual REPL use and
+   reproduced directly: `"never mind, give me white shoes"` was **not**
    detected as an intent override — `EmbeddingOverrideDetector.is_override`
    returns `False` (override centroid 0.6836 vs continuation centroid
    0.7171, margin −0.034), so `disclosed`/`asked_attributes` are never

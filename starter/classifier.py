@@ -249,8 +249,48 @@ PROTOTYPE_CONTINUATION = (
 )
 
 
+# How many best-matching prototypes each class averages over. A plain
+# centroid (k = len(prototypes)) is dominated by the prototypes' shared
+# sentence *shape* -- every PROTOTYPE_OVERRIDE entry is a long two-clause
+# sentence that names the discarded prior statement, so a terse pivot
+# ("never mind, give me white shoes") is judged mostly on its
+# imperative-request half and lands nearer the continuation centroid. The
+# opposite extreme, k=1 (nearest prototype), fixes terse pivots but is at the
+# mercy of a single badly-placed prototype: measured 0.151 false-positive
+# rate on the simulator's own continuation turns, versus 0.007 at k=3. A
+# small trimmed mean gets the shape-robustness without that fragility.
+# Swept in scripts/eval_override.py; see CLAUDE.md open problem #7.
+TOP_PROTOTYPES = 4
+
+# An opening clause up to this many characters is scored on its own as well
+# as in context -- see EmbeddingOverrideDetector.is_override.
+LEAD_CLAUSE_RE = re.compile(r"^(.{0,60}?)[.,;:!?]\s")
+
+
+def lead_clause(text: str) -> str:
+    """The message's opening clause, or the whole message if it has no break.
+
+    An override cue is a short prefix; what follows can be arbitrarily long
+    ("Actually, ignore my earlier preference. What I need is: " + up to 180
+    characters of verbatim catalog copy, in this evaluator's template). Mean
+    pooling over that whole string washes the cue out -- which is exactly
+    the shape of the override turns every scoring rule otherwise misses.
+    Terse pivots have no tail to strip, so scoring the lead clause too costs
+    them nothing.
+    """
+    match = LEAD_CLAUSE_RE.match(text.strip())
+    return match.group(1) if match else text
+
+
+def _top_prototype_similarity(query_vec: np.ndarray, prototypes: np.ndarray) -> float:
+    """Mean cosine similarity to the `TOP_PROTOTYPES` closest prototypes."""
+    similarities = prototypes @ query_vec
+    k = min(TOP_PROTOTYPES, similarities.shape[0])
+    return float(np.sort(similarities)[-k:].mean())
+
+
 class EmbeddingOverrideDetector:
-    """Nearest-centroid detection of a mid-session preference reset.
+    """Trimmed nearest-prototype detection of a mid-session preference reset.
 
     Same mechanism as EmbeddingIntentClassifier (shares the caller's loaded
     bge-small instance, no retrieval-style prefix -- utterance-to-utterance
@@ -258,36 +298,60 @@ class EmbeddingOverrideDetector:
     not "is this buying or browsing" but "did the customer just discard
     what they said earlier." A false positive here (wrongly clearing state
     on a normal turn) costs a few wasted turns re-asking; a false negative
-    leaves stale disclosed-attribute state in place, which is the more
-    likely default failure mode, so ties lean toward NOT flagging an
-    override (mirrors classify_intent's browsing tie-break: the safer
-    failure is one extra question, not an unwarranted reset).
+    leaves stale disclosed-attribute state in place for the rest of the
+    session, which is a whole-session failure -- so the two errors are not
+    symmetric and the rule is tuned toward recall. Note the caller clears
+    state *before* extracting the current message's disclosures, so a false
+    positive discards only prior turns, never the one it fired on.
+
+    Scoring compares the mean similarity to each class's `TOP_PROTOTYPES`
+    closest members, evaluated on both the full message and its lead clause
+    (whichever looks more override-like wins). Measured against the local
+    simulator's own turns plus hand-written out-of-distribution pivots
+    (`scripts/eval_override.py`):
+
+        rule                 sim recall  sim FPR  probe recall
+        centroid (previous)       0.900    0.000         0.800
+        nearest prototype         0.933    0.151         1.000
+        this rule                 1.000    0.007         1.000
+
+    The simulator emits exactly one override template, near-verbatim
+    PROTOTYPE_OVERRIDE[0], so its recall column is easy by construction and
+    its FPR column is the honest one; the probe column is hand-picked and is
+    a smoke test, not a measurement.
     """
 
     def __init__(self, model) -> None:
         self.model = model
-        self._override_centroid = self._centroid(PROTOTYPE_OVERRIDE)
-        self._continuation_centroid = self._centroid(PROTOTYPE_CONTINUATION)
+        self._override_protos = self._encode(PROTOTYPE_OVERRIDE)
+        self._continuation_protos = self._encode(PROTOTYPE_CONTINUATION)
 
-    def _centroid(self, sentences: tuple[str, ...]) -> np.ndarray:
-        embeddings = self.model.encode(
+    def _encode(self, sentences: tuple[str, ...]) -> np.ndarray:
+        return self.model.encode(
             list(sentences), normalize_embeddings=True, convert_to_numpy=True
         )
-        centroid = embeddings.mean(axis=0)
-        norm = np.linalg.norm(centroid)
-        return centroid / norm if norm > 0 else centroid
+
+    def _leans_override(self, vec: np.ndarray) -> bool:
+        return (
+            _top_prototype_similarity(vec, self._override_protos)
+            > _top_prototype_similarity(vec, self._continuation_protos)
+        )
 
     def is_override(self, text: str) -> bool:
         if not isinstance(text, str) or not text.strip():
             return False
+        variants = [text]
+        lead = lead_clause(text)
+        if lead != text:
+            variants.append(lead)
         try:
-            query_vec = self.model.encode(text, normalize_embeddings=True, convert_to_numpy=True)
+            query_vecs = self.model.encode(
+                variants, normalize_embeddings=True, convert_to_numpy=True
+            )
         except Exception:
             logger.exception("override detector failed on %r; defaulting to no-override", text)
             return False
-        sim_override = float(query_vec @ self._override_centroid)
-        sim_continuation = float(query_vec @ self._continuation_centroid)
-        return sim_override > sim_continuation
+        return any(self._leans_override(vec) for vec in query_vecs)
 
 
 class EmbeddingIntentClassifier:
