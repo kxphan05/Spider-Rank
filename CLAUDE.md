@@ -95,6 +95,22 @@ of it going stale.
    *below* chance), so there is no fourth strategy worth trying — see
    "Known open problems" #5.
 
+Code layout note: the buying/browsing label decides four things (BM25 weight,
+dense weight, entropy threshold, whether the MMR diversity re-rank runs). All
+four are resolved in one place, `routing_params()` in `agent.py` — previously
+the `intent_label == "buying"` conditional was written out separately in
+`_retrieve`, `_next_attribute` and `respond`'s debug log, which meant the log
+could report weights retrieval wasn't using. Add new intent-conditioned
+behaviour to `RoutingParams`, not as a fourth branch.
+
+Scripts share `scripts/_common.py`, which puts the repo root on `sys.path` as
+an import side effect and exports `DEFAULT_CATALOG` / `DEFAULT_DATASET` (both
+anchored to the repo root, so scripts run from any directory) and
+`isolate_profile_store()`. Import it before any `starter`/`evaluator` import.
+
+Lint gate (config in `pyproject.toml`, `evaluator/` excluded as
+organizer-provided): `uvx ruff check starter/ scripts/`.
+
 Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
 `--scenario`, `--seed`, and a tqdm progress bar on stderr, `--no-progress` to
 suppress). tqdm is imported defensively and comes in transitively with
@@ -143,14 +159,16 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.745   MRR: 0.388   MTTC: 5.09   Efficiency: 0.591
-TechnicalScore: 0.607
+HitRate@10: 0.745   MRR: 0.3876   MTTC: 5.09   Efficiency: 0.591
+TechnicalScore: 0.6070
 ```
 
 (That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
-problems" #7. The centroid it replaced scored 0.6073 and k=4 scores 0.6070 —
+problems" #7, re-run on this HEAD. The centroid it replaced scored 0.6073 —
 the two are indistinguishable at this sample size, and #7 explains why the
-change was made on offline detector quality rather than on this number.)
+change was made on offline detector quality rather than on this number. An
+earlier revision of this block quoted the *centroid's* 0.388/0.6073 while
+labelling it k=4; the k=4 figures are the ones above.)
 
 (Previous run, before the `FALLBACK_ATTRIBUTE_ORDER` answerability reorder
 described in "Known open problems" #9: HitRate 0.740 / MRR 0.395 /
@@ -671,17 +689,17 @@ Notable things confirmed empirically along the way, not just assumed:
 
     ```
     configuration            HitRate     MRR     MTTC   Technical      delta
-    as shipped                0.7450  0.3888    5.090     0.6073          --
-    - masked LM               0.7450  0.3841    5.085     0.6060     -0.0013
-    - both classifiers        0.7400  0.3728    5.070     0.6004     -0.0069
-    - dense retrieval         0.7450  0.4328    5.035     0.6216     +0.0143
-    - dense - masked LM       0.7450  0.4351    5.035     0.6223     +0.0150
-    - everything (offline)    0.7450  0.4289    5.025     0.6207     +0.0134
+    as shipped                0.7450  0.3876    5.090     0.6070          --
+    - masked LM               0.7450  0.3841    5.085     0.6060     -0.0010
+    - both classifiers        0.7400  0.3728    5.070     0.6004     -0.0065
+    - dense retrieval         0.7450  0.4328    5.035     0.6216     +0.0147
+    - dense - masked LM       0.7450  0.4351    5.035     0.6223     +0.0154
+    - everything (offline)    0.7450  0.4289    5.025     0.6207     +0.0137
     ```
 
     **HitRate is identical to four decimals with and without dense.** The
     dense leg finds nothing BM25 misses; its contribution to the fusion only
-    demotes correct items BM25 already ranked well (MRR 0.3888 -> 0.4328).
+    demotes correct items BM25 already ranked well (MRR 0.3876 -> 0.4328).
     This is 20x the +-0.0005 noise floor, so it is not a sampling artifact.
 
     **Do not act on this without reading the confound.** The local simulator

@@ -18,22 +18,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import resource
 import statistics
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import catalog_index, evaluate, load_jsonl  # noqa: E402
 from starter.agent import Agent  # noqa: E402
-from starter.user_profile import STORE_PATH_ENV  # noqa: E402
 
-PUBLIC_SET = Path("data/public_set.jsonl")
-CATALOG = Path("data/catalog.jsonl")
 
 
 class TimingAgent:
@@ -84,10 +82,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
-    # Same isolation the eval wrapper uses: a shared store across runs would
-    # leak corroborated disclosures between measurements.
-    store_dir = tempfile.mkdtemp(prefix="latency_profiles_")
-    os.environ[STORE_PATH_ENV] = str(Path(store_dir) / "user_profiles.json")
+    # A shared store across runs would leak corroborated disclosures between
+    # measurements; isolate_profile_store is the same isolation run_eval uses.
+    isolate_profile_store()
 
     rss_before = peak_rss_mb()
 
@@ -102,8 +99,8 @@ def main() -> None:
 
     rss_after_init = peak_rss_mb()
 
-    samples = load_jsonl(PUBLIC_SET)[: args.limit]
-    catalog_ids, categories, products = catalog_index(CATALOG)
+    samples = load_jsonl(DEFAULT_DATASET)[: args.limit]
+    catalog_ids, categories, products = catalog_index(DEFAULT_CATALOG)
 
     timed = TimingAgent(agent)
     wall_start = time.perf_counter()

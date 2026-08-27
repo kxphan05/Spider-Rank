@@ -39,7 +39,10 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from starter import classifier  # noqa: E402
@@ -68,7 +71,7 @@ def main() -> None:
     buying_centroid, browsing_centroid = centroid(buying_protos), centroid(browsing_protos)
 
     print("harvesting labelled turns...", file=sys.stderr)
-    texts, label_list, _, stage_list = harvest("data/public_set.jsonl", "data/catalog.jsonl")
+    texts, label_list, _, stage_list = harvest(DEFAULT_DATASET, DEFAULT_CATALOG)
     labels = np.array(label_list)
     stages = np.array(stage_list)
 
@@ -98,12 +101,12 @@ def main() -> None:
     # Lexical fallback, as a floor.
     row = f"{'lexical (fallback)':>22}"
     for name, (_, expected) in pools.items():
-        subset = [t for t, s in zip(texts, stages) if (s == "turn1") == (name == "turn-1")] \
+        subset = [t for t, s in zip(texts, stages, strict=True) if (s == "turn1") == (name == "turn-1")] \
             if name != "OOD probe" else probe_texts
         if name == "accumulated":
-            subset = [t for t, s in zip(texts, stages) if s == "accumulated"]
+            subset = [t for t, s in zip(texts, stages, strict=True) if s == "accumulated"]
         elif name == "turn-1":
-            subset = [t for t, s in zip(texts, stages) if s == "turn1"]
+            subset = [t for t, s in zip(texts, stages, strict=True) if s == "turn1"]
         predicted = np.array([LABELS.index(classify_intent(t).label) for t in subset])
         row += f"{float((predicted == expected).mean()):>14.3f}"
     print(row)
@@ -127,12 +130,12 @@ def main() -> None:
     classifier.TOP_PROTOTYPES = original_k
 
     # Where does the current rule actually go wrong on turn-1?
-    turn1_texts = [t for t, s in zip(texts, stages) if s == "turn1"]
+    turn1_texts = [t for t, s in zip(texts, stages, strict=True) if s == "turn1"]
     turn1_vecs, turn1_labels = pools["turn-1"]
     predicted = score_rule(turn1_vecs, None)
     print("\n--- turn-1 errors, centroid rule (first 8 of each direction) ---")
     for want in (0, 1):
-        wrong = [t for t, w, p in zip(turn1_texts, turn1_labels, predicted) if w == want and p != want]
+        wrong = [t for t, w, p in zip(turn1_texts, turn1_labels, predicted, strict=True) if w == want and p != want]
         print(f"  want {LABELS[want]} got {LABELS[1 - want]}: {len(wrong)} of {int((turn1_labels == want).sum())}")
         for text in wrong[:8]:
             print(f"    {text[:105]!r}")

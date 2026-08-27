@@ -11,11 +11,12 @@ Usage:
 """
 from __future__ import annotations
 
-import sys
 from collections import Counter, defaultdict
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import (  # noqa: E402
     catalog_index,
@@ -30,8 +31,8 @@ from starter.retrieval import load_embedding_model  # noqa: E402
 
 
 def main() -> None:
-    samples = load_jsonl("data/public_set.jsonl")
-    catalog_ids, categories, products = catalog_index("data/catalog.jsonl")
+    samples = load_jsonl(DEFAULT_DATASET)
+    catalog_ids, categories, products = catalog_index(DEFAULT_CATALOG)
 
     print("loading embedding model for EmbeddingIntentClassifier...")
     embedding_classifier = EmbeddingIntentClassifier(load_embedding_model())

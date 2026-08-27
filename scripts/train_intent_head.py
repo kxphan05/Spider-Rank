@@ -84,7 +84,10 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import (  # noqa: E402
     catalog_index,
@@ -187,8 +190,8 @@ def accuracy(weights: np.ndarray, bias: float, features: np.ndarray, targets: np
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--catalog", default="data/catalog.jsonl")
-    parser.add_argument("--dataset", default="data/public_set.jsonl")
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--save", action="store_true",
                         help="write model/intent_head.npz. Off by default: the head measures WORSE "
                              "than the zero-shot centroid out of distribution (see module docstring).")
@@ -230,7 +233,7 @@ def main() -> None:
         train_mask, test_mask = stages == train_stage, stages == test_stage
         weights, bias = fit_logistic(features[train_mask], targets[train_mask])
         head = accuracy(weights, bias, features[test_mask], targets[test_mask])
-        centroid = centroid_accuracy([t for t, m in zip(texts, test_mask) if m], targets[test_mask])
+        centroid = centroid_accuracy([t for t, m in zip(texts, test_mask, strict=True) if m], targets[test_mask])
         print(f"  train {train_stage:12s} -> test {test_stage:12s}  head {head:.3f}   centroid {centroid:.3f}")
 
     print("\n=== 3. out-of-distribution probes (the only number that matters) ===")
@@ -239,7 +242,7 @@ def main() -> None:
     print(f"  head      {head_probe:.3f}")
     print(f"  centroid  {centroid_accuracy(probe_texts, probe_targets):.3f}")
     predictions = (probe_features @ weights + bias > 0).astype(int)
-    for text, want, got in zip(probe_texts, probe_targets, predictions):
+    for text, want, got in zip(probe_texts, probe_targets, predictions, strict=True):
         print(f"    {'ok ' if want == got else 'BAD'} want={LABELS[want]:8s} got={LABELS[got]:8s} {text!r}")
 
     print("\n=== 4. regularization sweep: is the OOD gap just a bad C? ===")

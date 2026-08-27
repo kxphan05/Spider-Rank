@@ -18,6 +18,10 @@ data/dense_index/
 data/user_profiles.json
 model/
 
-# Local tool state, not project source
-.claude/
+# Local tool state, not project source. The skills directory is the exception:
+# CLAUDE.md cites .claude/skills/retrieval-experiments/SKILL.md as the
+# authoritative write-up for three closed investigations, so leaving it
+# untracked made those citations dangle on a fresh clone.
+.claude/*
+!.claude/skills/
 logs/

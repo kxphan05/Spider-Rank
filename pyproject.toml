@@ -19,3 +19,17 @@ torch = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+# Lint gate for our own code. The evaluator is organizer-provided and scored
+# as-is, so it is excluded rather than reformatted:
+#   uvx ruff check starter/ scripts/
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["evaluator"]
+
+[tool.ruff.lint]
+# F  pyflakes (dead imports, undefined names)   E9 syntax/IO errors
+# B  bugbear (real footguns)                    C4 comprehension clarity
+# SIM simplifications                           UP  py312 idioms
+select = ["F", "E9", "B", "C4", "SIM", "UP"]

@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -23,7 +22,10 @@ import os
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 from starter.text_utils import product_passage  # noqa: E402
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
@@ -116,7 +118,7 @@ def build(catalog_path: Path, out_dir: Path, limit: int | None, batch_size: int)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build cached dense embeddings for the catalog")
-    parser.add_argument("--catalog", default="data/catalog.jsonl", type=Path)
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG, type=Path)
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, type=Path)
     parser.add_argument("--limit", type=int, default=None, help="Only embed the first N products (smoke test)")
     parser.add_argument("--batch-size", type=int, default=128)

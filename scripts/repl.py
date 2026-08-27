@@ -21,7 +21,10 @@ import sys
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from starter.agent import Agent
 
@@ -54,7 +57,7 @@ def format_recommendation(pid: str, catalog: dict[str, dict]) -> str:
 def main() -> None:
     print("Loading agent (embedding model + dense index)...", file=sys.stderr)
     agent = Agent()
-    catalog = load_catalog_lookup(Path("data/catalog.jsonl"))
+    catalog = load_catalog_lookup(DEFAULT_CATALOG)
 
     session_id = uuid.uuid4().hex
     agent.reset(session_id, {})

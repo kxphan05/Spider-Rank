@@ -41,7 +41,10 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import catalog_index, evaluate, load_jsonl  # noqa: E402
 from starter.agent import Agent  # noqa: E402
@@ -50,8 +53,8 @@ from starter.user_profile import STORE_PATH_ENV  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--catalog", default="data/catalog.jsonl")
-    parser.add_argument("--dataset", default="data/public_set.jsonl")
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--output", default="results.json")
     parser.add_argument("--baseline", default="docs/baseline_results.json")
     parser.add_argument("--limit", type=int, default=None, help="only run the first N samples (after --scenario/--seed)")

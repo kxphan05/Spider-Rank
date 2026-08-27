@@ -31,14 +31,16 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import (DEFAULT_CATALOG, DEFAULT_INDEX_DIR, DEFAULT_MODEL_DIR,  # noqa: F401
+                     REPO_ROOT)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = REPO_ROOT / "model"
-INDEX_DIR = REPO_ROOT / "data" / "dense_index"
-CATALOG = REPO_ROOT / "data" / "catalog.jsonl"
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
+
+MODEL_DIR = DEFAULT_MODEL_DIR
+INDEX_DIR = DEFAULT_INDEX_DIR
+CATALOG = DEFAULT_CATALOG
 
 ENCODER = "BAAI/bge-small-en-v1.5"
 MASKED_LM = "distilbert-base-uncased"

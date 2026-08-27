@@ -32,11 +32,13 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import (  # noqa: E402
     catalog_index,
@@ -184,7 +186,7 @@ def main() -> None:
     continuation_centroid = normalized_centroid(model, PROTOTYPE_CONTINUATION)[None, :]
 
     print("harvesting simulator turns...", file=sys.stderr)
-    sim_pos, sim_neg = harvest("data/public_set.jsonl", "data/catalog.jsonl")
+    sim_pos, sim_neg = harvest(DEFAULT_DATASET, DEFAULT_CATALOG)
     print(f"  {len(sim_pos)} override turns, {len(sim_neg)} continuation turns", file=sys.stderr)
 
     pools: dict[str, tuple[list[str], list[str]]] = {
@@ -247,10 +249,10 @@ def main() -> None:
         missed = ~rule.decide(pos_vecs @ proto_o.T, pos_vecs @ proto_c.T)
         flagged = rule.decide(neg_vecs @ proto_o.T, neg_vecs @ proto_c.T)
         print(f"  missed overrides ({int(missed.sum())}/{len(sim_pos)}):")
-        for sentence in sorted({s for s, m in zip(sim_pos, missed) if m})[:6]:
+        for sentence in sorted({s for s, m in zip(sim_pos, missed, strict=True) if m})[:6]:
             print(f"    {sentence!r}")
         print(f"  false positives ({int(flagged.sum())}/{len(sim_neg)}):")
-        for sentence in sorted({s for s, f in zip(sim_neg, flagged) if f})[:6]:
+        for sentence in sorted({s for s, f in zip(sim_neg, flagged, strict=True) if f})[:6]:
             print(f"    {sentence!r}")
 
     print("\n--- probe detail [top3-mean] ---")
@@ -259,7 +261,7 @@ def main() -> None:
         vecs = model.encode(list(sentences), normalize_embeddings=True, convert_to_numpy=True)
         so, sc = vecs @ proto_o.T, vecs @ proto_c.T
         decisions = rule.decide(so, sc)
-        for sentence, decision in zip(sentences, decisions):
+        for sentence, decision in zip(sentences, decisions, strict=True):
             want = decision if label == "OVR" else not decision
             print(f"    {'ok ' if want else 'BAD'} {label}  {sentence!r}")
 

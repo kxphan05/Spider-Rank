@@ -13,8 +13,8 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.745    MRR  0.3888    MTTC  5.09    Efficiency  0.591
-TechnicalScore  0.6073
+HitRate@10  0.745    MRR  0.3876    MTTC  5.09    Efficiency  0.591
+TechnicalScore  0.6070
 ```
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
@@ -25,10 +25,10 @@ By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 0.812 | 0.431 | 4.38 |
-| buying | 80 | 0.688 | 0.349 | 5.26 |
-| intent_override | 30 | 0.800 | 0.464 | 5.93 |
-| boundary | 10 | 0.500 | 0.138 | 6.90 |
+| browsing | 80 | 0.8125 | 0.4313 | 4.38 |
+| buying | 80 | 0.6875 | 0.3457 | 5.26 |
+| intent_override | 30 | 0.8000 | 0.4662 | 5.93 |
+| boundary | 10 | 0.5000 | 0.1375 | 6.90 |
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
@@ -160,27 +160,27 @@ Each component was disabled independently against the full public set
 
 | configuration | HitRate | MRR | MTTC | TechnicalScore | Δ |
 |---|---:|---:|---:|---:|---:|
-| **as shipped** | 0.7450 | 0.3888 | 5.090 | **0.6073** | — |
-| − masked LM | 0.7450 | 0.3841 | 5.085 | 0.6060 | −0.0013 |
-| − both classifiers | 0.7400 | 0.3728 | 5.070 | 0.6004 | −0.0069 |
-| − dense retrieval | 0.7450 | 0.4328 | 5.035 | 0.6216 | **+0.0143** |
-| − dense − masked LM | 0.7450 | 0.4351 | 5.035 | **0.6223** | **+0.0150** |
-| − everything (offline degrade) | 0.7450 | 0.4289 | 5.025 | 0.6207 | +0.0134 |
+| **as shipped** | 0.7450 | 0.3876 | 5.090 | **0.6070** | — |
+| − masked LM | 0.7450 | 0.3841 | 5.085 | 0.6060 | −0.0010 |
+| − both classifiers | 0.7400 | 0.3728 | 5.070 | 0.6004 | −0.0065 |
+| − dense retrieval | 0.7450 | 0.4328 | 5.035 | 0.6216 | **+0.0147** |
+| − dense − masked LM | 0.7450 | 0.4351 | 5.035 | **0.6223** | **+0.0154** |
+| − everything (offline degrade) | 0.7450 | 0.4289 | 5.025 | 0.6207 | +0.0137 |
 
 Two findings, stated plainly:
 
-**The classifiers earn their place** (+0.0069). **The masked LM barely
-registers**: +0.0013 here, and −0.0007 when measured against the no-dense
+**The classifiers earn their place** (+0.0065). **The masked LM barely
+registers**: +0.0010 here, and −0.0007 when measured against the no-dense
 configuration — a sign flip across configurations is what noise looks like at
 this sample size. For 257 MB of weights, 350 MB of peak RSS and 47 ms/turn,
 that is not a trade worth making, so the LM is **not fetched by default**
 (`fetch_assets.py --with-lm` opts back in).
 
 **Dense retrieval is net-negative on the local set, by 20x the noise floor.**
-Removing it *raises* TechnicalScore 0.6073 → 0.6216. Note HitRate is
+Removing it *raises* TechnicalScore 0.6070 → 0.6216. Note HitRate is
 *identical* to four decimals: the dense leg finds nothing BM25 misses, and its
 contribution to the fusion demotes correct items BM25 had already ranked well
-(MRR 0.3888 → 0.4328).
+(MRR 0.3876 → 0.4328).
 
 **We have not acted on this, and the reason is a measured confound.** The
 local simulator builds its customer messages from the target product's own

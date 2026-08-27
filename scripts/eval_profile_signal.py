@@ -55,11 +55,13 @@ import itertools
 import math
 import random
 import statistics
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter/evaluator imports below resolve when this script is run directly.
 
 from evaluator.local_evaluator import (  # noqa: E402
     catalog_index, classify_constraint, coarse_category, initial_message,
@@ -229,8 +231,8 @@ CHECKS = ("tags", "scenario", "collision", "store")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--catalog", default="data/catalog.jsonl")
-    parser.add_argument("--dataset", default="data/public_set.jsonl")
+    parser.add_argument("--catalog", default=DEFAULT_CATALOG)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--check", action="append", choices=CHECKS, default=None,
                         help="run only this check (repeatable); default runs all four")
     args = parser.parse_args()
