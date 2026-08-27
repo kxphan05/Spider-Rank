@@ -95,6 +95,11 @@ of it going stale.
    *below* chance), so there is no fourth strategy worth trying — see
    "Known open problems" #5.
 
+Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
+`--scenario`, `--seed`, and a tqdm progress bar on stderr, `--no-progress` to
+suppress). tqdm is imported defensively and comes in transitively with
+sentence-transformers, so the submitted dependency set is unchanged.
+
 Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
 REPL against the live agent. Commands: `/reset`, `/debug` (prints
 `disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
