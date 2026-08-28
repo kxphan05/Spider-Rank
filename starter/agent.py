@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .attributes import (AttributeIndex, COLORS, FILTERABLE_ATTRIBUTES, MATERIALS,
-                         extract_disclosed_value, select_dynamic_attribute)
+                         budget_constraint_satisfied, extract_disclosed_value,
+                         select_dynamic_attribute)
 from .classifier import EmbeddingIntentClassifier, EmbeddingOverrideDetector, classify_intent, detected_attributes
 from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attribute
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
@@ -176,6 +177,21 @@ DIVERSIFY_LAMBDA = 0.5
 # candidate below every neutral (unknown-attribute) candidate regardless of
 # weight, which is what made every previous profile-hint experiment regress.
 LM_INFERENCE_WEIGHT = 0.5
+
+# Disclosed-attribute resort weights (_boost_by_disclosed). A *match* between
+# a disclosed value and the catalog's extracted value is rewarded, a known
+# *mismatch* is penalized, and an unextractable attribute scores 0. These were
+# +1/-1 by assumption, never by measurement -- and they were set when
+# attributes.py's extractor was substring-matching (CLAUDE.md #10), so 58.6%
+# of the catalog carried a colour label and roughly a fifth of those were
+# fictional. The word-boundary fix cut real colour coverage to 39.9% and cost
+# 0.005 TechnicalScore, because correct-but-sparser labels leave far more
+# candidates at a neutral 0. Retuning against the corrected coverage is the
+# indicated follow-up (NEXT_STEPS #2); sweep with
+# scripts/sweep_boost_weights.py. Kept asymmetric-capable on purpose: a known
+# mismatch and an unextractable attribute are different kinds of evidence.
+DISCLOSED_MATCH_BOOST = 1.0
+DISCLOSED_MISMATCH_PENALTY = 1.0
 ATTRIBUTE_VOCAB = {"material": MATERIALS, "color": COLORS}
 
 
@@ -354,7 +370,7 @@ class Agent:
             del state.recent_messages[:-RECENT_WINDOW]
 
         for attribute in FILTERABLE_ATTRIBUTES:
-            value = extract_disclosed_value(attribute, user_message, self.attribute_index.price_buckets)
+            value = extract_disclosed_value(attribute, user_message)
             if value is not None:
                 state.disclosed[attribute] = value
                 self.profile_store.record_disclosure(state.profile_key, state.profile_session_index, attribute, value)
@@ -532,10 +548,26 @@ class Agent:
         def match_score(pid: str) -> float:
             score = 0.0
             for attribute, value in disclosed.items():
+                if attribute == "budget":
+                    # A budget is a *bound*, not a value to match: "under $80"
+                    # is satisfied by every product at or below $80, not only
+                    # by those in $80's price bucket. Bucket equality here
+                    # used to boost the priciest bucket for a stated ceiling
+                    # and penalize everything cheaper. An unpriced product
+                    # (79.2% of the catalog) is neutral, exactly like an
+                    # unextractable material or colour.
+                    price = self.attribute_index.price_for(pid)
+                    if price is None:
+                        continue
+                    satisfied = budget_constraint_satisfied(value, price)
+                    if satisfied is None:
+                        continue
+                    score += DISCLOSED_MATCH_BOOST if satisfied else -DISCLOSED_MISMATCH_PENALTY
+                    continue
                 actual = self.attribute_index.value_for(attribute, pid)
                 if actual is None:
                     continue
-                score += 1 if actual == value else -1
+                score += DISCLOSED_MATCH_BOOST if actual == value else -DISCLOSED_MISMATCH_PENALTY
             for attribute, value in (inferred or {}).items():
                 # Boost-only: agreement lifts, disagreement is ignored rather
                 # than penalized. See LM_INFERENCE_WEIGHT above for why the
