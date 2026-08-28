@@ -765,6 +765,50 @@ Notable things confirmed empirically along the way, not just assumed:
     `HF_HUB_OFFLINE=1` and exits non-zero if any required component is dark.
     **Run preflight before any scored run.**
 
+16. **Fusion-weight sweep: the buying curve is strictly monotone, and there is
+    a usable middle at ratio 0.25.** #14's open question was whether retuning
+    the RRF weights could capture the dense-ablation gain without dropping the
+    leg. Swept with `scripts/sweep_fusion_weights.py` (200 samples per point;
+    only the dense:bm25 *ratio* matters, since weighted RRF is scale-invariant
+    per leg, so bm25 is pinned to 1.0 and dense is the ratio):
+
+    ```
+    buying track          HitRate     MRR     MTTC   Technical   vs shipped
+      ratio 0.00           0.7500  0.4372    5.020     0.6258      +0.0188
+      ratio 0.25           0.7500  0.4096    4.985     0.6182      +0.0112
+      ratio 0.50           0.7450  0.3876    5.090     0.6070   <- shipped
+      ratio 0.75           0.7400  0.3727    5.125     0.5993      -0.0077
+      ratio 1.00           0.7200  0.3615    5.225     0.5839      -0.0230
+      ratio 1.25           0.6900  0.3494    5.505     0.5597      -0.0473
+      ratio 1.50           0.6650  0.3388    5.720     0.5397      -0.0672
+    ```
+
+    The harness reproduces the shipped 0.6070 exactly at ratio 0.50, so the
+    other points are comparable.
+
+    Three findings. **There is no interior optimum** — the curve decreases
+    monotonically across the whole swept range and the decline accelerates, so
+    the hoped-for flat region near the shipped value does not exist; 0.50 is
+    already well down the slope. **HitRate falls too**, 0.750 -> 0.665, not just
+    MRR: at high dense weight the dense leg does not merely reorder, it
+    displaces correct BM25 results out of the top 10 entirely. That is a
+    stronger claim than #14's ablation made. **But halving the weight to 0.25
+    captures +0.0112 of the +0.0188 available from full removal** — roughly 60%
+    of the gain while keeping a real dense leg as paraphrase insurance. That is
+    the compromise #14 predicted; it just sits lower than anyone guessed.
+
+    Not yet decided whether to ship 0.25. The #14 confound still applies in
+    full: the local set is a near-pure exact-match benchmark (89.7% of hard
+    constraints are verbatim substrings of the target's own text), so it
+    systematically under-prices the dense leg.
+
+    **Browsing track: sweep was still running when this was written.** It ships
+    at ratio 1.20, which on the buying curve corresponds to roughly -0.045, so
+    if the shape repeats the retune is worth more there than on buying. Note
+    when reading it that the sweep scores all 200 samples while only ~80 route
+    to browsing, so deltas are diluted by roughly 0.4x — read the shape, and
+    break out `scenario_metrics` from the JSON for the per-slice numbers.
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
 - Diagnostic scripts assumed `public_set.jsonl` samples carried a raw query
