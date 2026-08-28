@@ -17,10 +17,17 @@ Current score on the 200-sample public set: **TechnicalScore 0.6070**
 
 ---
 
-## 1. Retune the RRF fusion weights
+## 1. Retune the RRF fusion weights — ~~queued~~ **swept; decision pending**
 
-**Status:** motivated by a fresh measurement, nothing tried. This is the
-highest-value lead on the board, and it is cheap.
+**Status:** done as an experiment, not as a decision. `scripts/sweep_fusion_weights.py`
+exists and both curves are recorded in CLAUDE.md #16. The buying curve is
+strictly monotone with no interior optimum (ratio 0.25 captures +0.0112 of the
++0.0188 available from removing dense entirely); the browsing curve is flat and
+should not be re-run. **What is still open is whether to ship buying ratio
+0.25**, which is a judgment call about the hidden set, not a measurement — the
+#14 confound (89.7% of local hard constraints are verbatim substrings of the
+target's own catalog text) means the local set systematically under-prices the
+dense leg. The original framing follows.
 
 `CLAUDE.md` #14 records the ablation: **removing the dense leg entirely raises
 TechnicalScore 0.6070 → 0.6216**, with HitRate identical to four decimals.
@@ -44,9 +51,15 @@ Report the result as a curve, not a point — the useful output is how score
 varies with the dense weight, since that curve is what tells a later session
 how much is being paid for insurance.
 
-## 2. Retune the attribute boost weights
+## 2. Retune the attribute boost weights — **in progress**
 
-**Status:** indicated by a measured regression, nothing tried.
+**Status:** indicated by a measured regression; harness built, sweep not yet run.
+`starter/agent.py` now exposes `DISCLOSED_MATCH_BOOST` /
+`DISCLOSED_MISMATCH_PENALTY` (was a hardcoded +1/-1) and
+`scripts/sweep_boost_weights.py` sweeps the penalty:match ratio. Note the ratio
+is the only free parameter *while the masked LM is dark*; when it is live,
+`LM_INFERENCE_WEIGHT = 0.5` also sets how a real disclosure trades against an
+inference, which is the script's `--scale` axis.
 
 `CLAUDE.md` #10 fixed a real bug — catalog attribute extraction was
 substring-matched, so `"red"` matched inside *embroidered* and `"lace"` inside
@@ -144,19 +157,90 @@ it is computable on the 200-sample public set.
 
 ## 4. Smaller, well-defined gaps
 
-- **Budget extraction requires a literal `$`** (`CLAUDE.md` #3). "fifty
-  dollars" and "around 50" don't match. Widening is easy; note that the local
-  evaluator almost never buckets a disclosure as `budget`, so this cannot be
-  validated locally and must be justified on the hidden set's behalf.
-- **`starter/cooccurrence.py` is built but unwired** (#11). The item-attribute
-  signal is real and large once #10's fix is in
-  (`P(material=stainless steel | Watches)` = 0.483 vs 0.023 marginal). Either
-  wire it into `_infer_attributes` alongside the masked LM, or delete it — a
-  module that no code path reaches is a maintenance cost with no return.
+- ~~**Budget extraction requires a literal `$`**~~ **Fixed — and it was three
+  bugs, not one.** (1) The `\$\s?(\d+)` pattern meant "less than 80 dollars"
+  disclosed nothing. (2) The comparator was discarded and the amount mapped to
+  the bucket *containing* it, then compared for equality — so "under $80"
+  resolved to the top bucket `$48+` and a stated ceiling **boosted the priciest
+  products while penalizing every cheap one**. (3) `_extract_budget` returns the
+  literal string `"unknown"` for the 79.2% of the catalog with no price, which
+  is a known value rather than `None`, so any budget disclosure scored a full
+  mismatch against 39,590 of 50,000 products. Now `parse_budget_constraint()`
+  returns a bound (`"<=80"` / `">=200"`), `AttributeIndex.price_for()` exposes
+  the raw price, and `_boost_by_disclosed` compares numerically with unpriced
+  products neutral. **Unverifiable locally** — `classify_constraint()` never
+  buckets a disclosure as `budget`, so the correct expectation is that the
+  public set is bit-identical; that is the regression check, not a win
+  condition. One judgment call recorded: a bare or approximate amount ("my
+  budget is $80", "around fifty dollars") reads as a *ceiling*, since that is
+  the dominant sense of a stated shopping budget.
+- **Co-occurrence priors are built but unwired** (#11). The item-attribute
+  signal is real and large once #10's fix is in — the diagnostic reports
+  `P(material=cotton | category=Shirts T-Shirts)` = 0.933 against a 0.265
+  marginal, and `P(material=sterling silver | Rings Statement)` = 0.756 against
+  0.040. **Moved from `starter/` to `scripts/cooccurrence.py`** and given a
+  `main()`, since no agent code path reaches it and `starter/` is copied
+  verbatim into the submitted bundle. Still the same open choice: wire it into
+  `_infer_attributes` alongside the masked LM, or drop it. Move it back into
+  the package only once it earns its place by measurement.
 - **No cross-encoder or LLM reranking stage** (#6). Spec § 4.2.I names "LLM
   Semantic Ranking" as a core pillar; ranking here is hybrid retrieval +
   attribute boost + MMR, with nothing learned. This is the most visible
   remaining gap against the spec as written, independent of its score impact.
+
+## 5. Rewrite the query on intent override, not just the slots
+
+**Status:** gap confirmed by reading the code and reproducing it; nothing
+changed. **This is the next experiment after #2.**
+
+`Agent.respond` clears exactly three things when
+`EmbeddingOverrideDetector.is_override` fires (`agent.py:364`):
+
+```python
+state.disclosed.clear()
+state.profile_hint.clear()
+state.asked_attributes.clear()
+```
+
+`state.first_message` and `state.recent_messages` survive — and `_build_query()`
+concatenates precisely those two into the retrieval query, so **the query string
+is byte-for-byte identical before and after the clear** (reproduced directly).
+The discarded preference stops biasing `_boost_by_disclosed`, but its *words*
+keep feeding BM25 and the dense leg: `first_message` for the whole session,
+pre-override turns for another `RECENT_WINDOW = 4` messages. Since the boost
+only resorts a pool the query already selected, the text channel is the stronger
+of the two.
+
+Against the spec, § 4.2.II asks for "Intent Override (slot erasure **and
+rewriting**)". Erasure is implemented; rewriting is not.
+
+### The experiment
+
+On override, also reset `first_message` to the override message and drop
+`recent_messages`. **Unlike the budget fix (#4), this is locally measurable** —
+30 `intent_override` samples, currently hitting at 0.833 (CLAUDE.md #7).
+
+Two things to hold onto when reading the result:
+
+- **30 samples means one session is ±0.033 on that subset.** Per CLAUDE.md #16,
+  convert to absolute counts before believing any delta, and report the
+  full-set number alongside the subset.
+- **The local override template flatters this change.** `behavior_for()` emits
+  `"Actually, ignore my earlier preference. What I need is: {X}."`, where `{X}`
+  carries the complete new constraint — so discarding the history loses nothing
+  locally *by construction*. A terse hidden-set pivot ("never mind, white
+  shoes") carries far less, and dropping `first_message` there could leave the
+  query almost contentless. If the full-history and rewritten variants measure
+  the same, prefer the more conservative one (e.g. drop `recent_messages` but
+  keep `first_message`), and consider a middle option: keep the override
+  message plus everything after it, discard only what preceded the pivot.
+
+Two things worth verifying while in this code path, both cheap: the clear runs
+*before* the disclosure loop (so a constraint stated in the override message is
+still captured — deliberate, and why the demo builder can't infer overrides from
+the slot dict shrinking), and clearing `asked_attributes` lets the agent re-ask
+a pre-pivot question, which is intended but costs a turn.
+
 
 ---
 

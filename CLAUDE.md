@@ -178,6 +178,13 @@ priors (`popularity`, `rating`) or from the user profile (`profile_rating`).
 Note the two profile-independent variants are the controls — a gain from
 `profile_rating` means nothing unless it beats `rating`.
 
+Question-policy design: `docs/question_policy_plan.md` — replaces the
+two-stage entropy-then-fixed-order picker with one expected-value objective
+(answerability x gain). Written, not built. Records two corrections found by
+reading the evaluator: there is no per-turn cost to trade off (the agent cannot
+end a session), and `ask_attribute: null` still draws a reply, so it is a minor
+refinement rather than a win.
+
 Intent-detection research + staged plan: `docs/intent_detection_plan.md`
 (industry practice, where this pipeline is strong vs thin, and why slot filling
 rather than the intent classifier is the bottleneck).
@@ -567,8 +574,11 @@ Notable things confirmed empirically along the way, not just assumed:
 11. **Co-occurrence and LLM-perplexity attribute inference.** Two attempts at
     the same goal — infer an attribute the customer has not stated — after
     the profile-based route in #5 measured dead.
-    - **Item-attribute co-occurrence** (`starter/cooccurrence.py`): counts
+    - **Item-attribute co-occurrence** (`scripts/cooccurrence.py`): counts
       `P(color | category)`, `P(color | material)` etc. over the catalog.
+      Runnable as a diagnostic (`uv run python3 scripts/cooccurrence.py`); it
+      lives in `scripts/` rather than `starter/` precisely because no agent
+      code path reaches it, and `starter/` ships verbatim into the bundle.
       The signal is enormous and real once #10 is fixed
       (`P(material=stainless steel | category=Watches Wrist Watches)` = 0.483
       vs 0.023 marginal, +79σ; `P(material=mesh | Running Road Running)` =
