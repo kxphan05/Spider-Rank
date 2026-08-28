@@ -17,9 +17,12 @@ Current score on the 200-sample public set: **TechnicalScore 0.6070**
 
 ---
 
-## 1. Retune the RRF fusion weights — ~~queued~~ **swept; decision pending**
+## 1. ~~Retune the RRF fusion weights~~ — **shipped, +0.0112**
 
-**Status:** done as an experiment, not as a decision. `scripts/sweep_fusion_weights.py`
+**Status:** decided and shipped. Buying runs at dense:bm25 **0.25**; the full
+set moved 0.6070 -> **0.6182**, reproducing the sweep's prediction exactly.
+Browsing is untouched and must stay that way (its curve was measured flat).
+The original framing follows. `scripts/sweep_fusion_weights.py`
 exists and both curves are recorded in CLAUDE.md #16. The buying curve is
 strictly monotone with no interior optimum (ratio 0.25 captures +0.0112 of the
 +0.0188 available from removing dense entirely); the browsing curve is flat and
@@ -188,10 +191,26 @@ it is computable on the 200-sample public set.
   attribute boost + MMR, with nothing learned. This is the most visible
   remaining gap against the spec as written, independent of its score impact.
 
-## 5. Rewrite the query on intent override, not just the slots
+## 5. ~~Rewrite the query on intent override~~ — **built, measured −0.0580, reverted**
 
-**Status:** gap confirmed by reading the code and reproducing it; nothing
-changed. **This is the next experiment after #2.**
+**Status:** built and measured. **It fails badly — see CLAUDE.md #17.**
+
+The gap described below is real and the diagnosis of it stands. The fix does
+not: restarting the query from the pivot message scored 0.5602 against 0.6182,
+with the `intent_override` subset collapsing from hit 0.800 to 0.333.
+
+**And this section previously asserted, as established, the thing that made it
+fail.** It claimed the local override template "carries the complete new
+constraint, so discarding the history loses nothing locally *by
+construction*." That is wrong. Turn 1 is `"I'm looking for [<category>].
+<old_value>"` and the pivot is `"...What I need is: leather"` — the **category
+appears only in turn 1 and is never restated**, so dropping `first_message`
+searches 50k products for one attribute word. The claim came from reading the
+template's shape rather than printing a sample; printing one takes a minute and
+would have caught it.
+
+Any future attempt must preserve the original framing and drop only the
+preference clause. The original write-up follows, for the diagnosis.
 
 `Agent.respond` clears exactly three things when
 `EmbeddingOverrideDetector.is_override` fires (`agent.py:364`):

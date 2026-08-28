@@ -203,9 +203,13 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.745   MRR: 0.3876   MTTC: 5.09   Efficiency: 0.591
-TechnicalScore: 0.6070
+HitRate@10: 0.750   MRR: 0.4096   MTTC: 4.985   Efficiency: 0.6015
+TechnicalScore: 0.6182
 ```
+
+(That line is with the buying dense:bm25 ratio at **0.25**, shipped after the
+sweep in #16 — the previous 0.50 scored 0.6070 on this same HEAD, so the
+change is worth +0.0112 and reproduced the sweep's prediction exactly.)
 
 (That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
 problems" #7, re-run on this HEAD. The centroid it replaced scored 0.6073 —
@@ -857,6 +861,73 @@ Notable things confirmed empirically along the way, not just assumed:
     intent_override hit rate (0.833 vs 0.800). That is #14's mechanism confirmed
     at finer grain: the dense leg does not add recall on this benchmark, it
     demotes items BM25 had already ranked well.
+
+17. **Query rewriting on intent override: measured −0.0580, reverted.** The
+    gap was real — `Agent.respond` clears `disclosed`/`profile_hint`/
+    `asked_attributes` on a detected pivot but never touches `first_message`
+    or `recent_messages`, so `_build_query`'s output is byte-for-byte
+    identical before and after the clear and the discarded preference keeps
+    feeding BM25. Spec § 4.2.II asks for "slot erasure *and rewriting*"; only
+    erasure existed. The obvious fix — restart the query from the pivot
+    message — is catastrophic:
+
+    ```
+                            HitRate     MRR     MTTC   Technical
+    ratio 0.25 only          0.7500  0.4096    4.985     0.6182
+    + override rewrite       0.6800  0.3668    5.490     0.5602   -0.0580
+      intent_override subset:  hit 0.800 -> 0.333,  MTTC 5.90 -> 9.27
+    ```
+
+    **Root cause, found by printing a sample instead of reading the
+    template's shape.** The category is stated *once*, in turn 1, and never
+    restated; the pivot message carries only the changed attribute:
+
+    ```
+    TURN 1 : "I'm looking for ['Clothing, Shoes & Jewelry', 'Men',
+              'Accessories', 'Belts']. Buckle closure"
+    PIVOT  : "Actually, ignore my earlier preference. What I need is: leather"
+    ```
+
+    Dropping `first_message` therefore throws away "Belts" and searches 50k
+    products for "leather". **This refutes a claim an earlier revision of
+    NEXT_STEPS §5 stated as established** — that the local override template
+    "carries the complete new constraint, so discarding the history loses
+    nothing locally by construction." It carries the changed *attribute*, not
+    the request.
+
+    Any selective-history scheme here must preserve the original framing (the
+    category) and drop only the preference clause. The aggressive version is
+    not merely suboptimal, it is structurally wrong for this task shape. Not
+    retried; the surgical version requires knowing which clause of turn 1 is
+    the preference, which on this simulator means parsing its template.
+
+18. **Turn-annealed slate diversity: measured null, not shipped.** The idea:
+    `DIVERSIFY_LAMBDA` is fixed at 0.5 and conditioned on intent but not on
+    the turn, which leaves the 10-turn cap unexploited — a diverse slate is
+    nearly free early (a miss costs one turn and buys information) and pure
+    downside late (no turn left to recover in). So anneal lambda upward as the
+    budget depletes. Two schedules, both against the shipped 0.6182:
+
+    ```
+                            HitRate     MRR     MTTC   Technical
+    fixed 0.5 (shipped)      0.7500  0.4096    4.985     0.6182
+    anneal 0.35 -> 0.90      0.7450  0.4052    4.980     0.6144   -0.0038
+    anneal 0.50 -> 0.90      0.7450  0.4087    4.995     0.6152   -0.0030
+    ```
+
+    Both are one session below on HitRate (150 -> 149) and MTTC does not move,
+    which was the entire point. The 0.50 -> 0.90 run is the informative one:
+    its **browsing metrics are byte-identical** to the fixed-lambda run (hit
+    0.825, MRR 0.470, MTTC 4.29), so the schedule changed nothing in the track
+    it governs, and the whole delta is a single `intent_override` session that
+    the classifier routed browsing-ward. No signal in either direction.
+
+    Worth noting *why* the first schedule was worse: `lambda_early = 0.35` made
+    turn 1 more diverse than the previous fixed 0.5, and at turn 1 the query is
+    the raw customer message whose top hits are usually already right, so
+    hedging displaced good candidates. If anyone revisits this, the lesson is
+    that early-turn diversity is not free on this benchmark — but the honest
+    conclusion is that there is nothing here to revisit.
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
