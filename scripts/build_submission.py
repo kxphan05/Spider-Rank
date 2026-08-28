@@ -17,25 +17,43 @@ source tree. Layout follows the rules' recommended shape:
       src/              the agent package (copied from starter/)
       tools/            fetch_assets.py, preflight.py, and their bootstrap
 
-`data/` and `model/` are deliberately *not* copied -- together they are ~460 MB
-and the catalog is organizer-provided. `tools/fetch_assets.py` materializes
-them into the bundle, and `tools/preflight.py` verifies the result offline.
+`data/` and `model/` are deliberately *not* copied into the bundle -- the
+catalog is organizer-provided, and the encoder plus dense index are ~200 MB.
+`tools/fetch_assets.py` materializes them, and `tools/preflight.py` verifies
+the result offline.
+
+That fetch needs network, though, and the rules warn that "organizer policy may
+disable network access" for official scoring. `--with-assets` therefore also
+emits a *separate* archive of the prebuilt assets next to the bundle, so the
+organizer can choose: run the fetch, or unpack the archive at the bundle root
+and stay offline. It is deliberately not inside the bundle -- a ~200 MB
+submission should be an opt-in, and § Allowed Submission Contents asks for
+"lightweight local assets".
+
+The masked LM is excluded by default: it costs ~255 MB and is worth +0.0010
+TechnicalScore (CLAUDE.md #11). Pass --with-lm to include it anyway.
 
 Usage:
     uv run python3 scripts/build_submission.py
-    uv run python3 scripts/build_submission.py --verify     # also run the harness
+    uv run python3 scripts/build_submission.py --verify        # also run the harness
+    uv run python3 scripts/build_submission.py --with-assets   # + the asset archive
     uv run python3 scripts/build_submission.py --out /tmp/sub
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 from _common import REPO_ROOT  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect.
+from starter.paths import catalog_fingerprint  # noqa: E402
 
 DEFAULT_OUT = REPO_ROOT / "dist" / "submission"
 AGENT_PACKAGE = REPO_ROOT / "starter"
@@ -194,6 +212,123 @@ def build(out: Path) -> None:
         print(f"    {p.relative_to(out)}")
 
 
+ASSETS_DOC = """# Prebuilt runtime assets
+
+The agent needs a local sentence encoder and a precomputed dense index. This
+archive contains both, so the submission can be scored **with no network
+access at any point**.
+
+| | |
+|---|---|
+| archive | `{archive}` ({size} MB) |
+| sha256 | `{checksum}` |
+| masked LM | {lm} |
+
+## Verify and unpack
+
+```bash
+sha256sum -c SHA256SUMS
+tar -xzf {archive} -C submission/
+```
+
+That produces `submission/model/` and `submission/data/dense_index/`, which is
+where the agent looks by default. Then confirm the pipeline comes up whole
+with the network disabled:
+
+```bash
+cd submission && python3 tools/preflight.py --strict
+```
+
+**Run that check.** If an asset is missing the agent still starts and still
+returns 10 recommendations, with dense retrieval and both classifiers silently
+dark -- preflight is what turns that into a non-zero exit.
+
+## Alternative: build them yourself
+
+```bash
+cd submission && python3 tools/fetch_assets.py
+```
+
+This needs network and re-encodes the 50k catalog (hours on a laptop CPU,
+minutes on a machine with a GPU). It produces the same artifacts.
+
+## Catalog fingerprint
+
+The dense index was built from a catalog with sha256
+`{catalog_sha}`, recorded as `catalog_sha256` in
+`data/dense_index/meta.json`. The agent compares the two at load time and logs
+a warning if they differ, so a mismatch against the official frozen catalog is
+visible rather than silent. If it warns, rebuild with `tools/fetch_assets.py`.
+"""
+
+ASSET_SOURCES = [
+    (REPO_ROOT / "model", "model"),
+    (REPO_ROOT / "data" / "dense_index", "data/dense_index"),
+]
+LM_CACHE_MARKER = "distilbert"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_assets(out: Path, include_lm: bool = False) -> Path | None:
+    """Tar the prebuilt runtime assets alongside the bundle, with a checksum.
+
+    Returns the archive path, or None if a source is missing (the dense index
+    takes hours to build, so a partial tree is a normal state to hit rather
+    than an error worth aborting the whole build over).
+    """
+    missing = [src for src, _ in ASSET_SOURCES if not src.exists()]
+    if missing:
+        print("\n-- skipping asset archive: not built yet --")
+        for src in missing:
+            print(f"    missing {src.relative_to(REPO_ROOT)}")
+        print("    build them with:  uv run python3 scripts/fetch_assets.py")
+        return None
+
+    archive = out.parent / "submission-assets.tar.gz"
+    skipped_lm = False
+
+    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        nonlocal skipped_lm
+        if not include_lm and LM_CACHE_MARKER in info.name:
+            skipped_lm = True
+            return None
+        # Normalize ownership so the archive does not leak local account names
+        # and unpacks identically for whoever receives it.
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    print(f"\n-- packaging runtime assets into {archive.name} --")
+    with tarfile.open(archive, "w:gz") as tar:
+        for src, arcname in ASSET_SOURCES:
+            tar.add(src, arcname=arcname, filter=_filter)
+
+    size_mb = archive.stat().st_size / (1 << 20)
+    checksum = _sha256(archive)
+    (out.parent / "SHA256SUMS").write_text(f"{checksum}  {archive.name}\n")
+
+    catalog = REPO_ROOT / "data" / "catalog.jsonl"
+    fingerprint = catalog_fingerprint(catalog) if catalog.exists() else "unknown"
+    (out.parent / "ASSETS.md").write_text(ASSETS_DOC.format(
+        archive=archive.name, size=f"{size_mb:.0f}", checksum=checksum,
+        catalog_sha=fingerprint,
+        lm=("included" if include_lm else "excluded (worth +0.0010, costs ~255 MB)"),
+    ))
+    print(f"    {archive} -- {size_mb:.0f} MB")
+    print(f"    sha256 {checksum}")
+    if skipped_lm:
+        print("    masked LM excluded (pass --with-lm to include it)")
+    print(f"    wrote {out.parent / 'SHA256SUMS'} and {out.parent / 'ASSETS.md'}")
+    return archive
+
+
 def verify(out: Path, limit: int | None = None) -> int:
     """Import the bundle's Agent from a neutral directory and score it.
 
@@ -253,9 +388,19 @@ def main() -> int:
     parser.add_argument("--verify", action="store_true",
                         help="after building, import the bundle's Agent from a neutral "
                              "directory and score it on the full public set")
+    parser.add_argument("--with-assets", action="store_true",
+                        help="also emit submission-assets.tar.gz (encoder + dense index) "
+                             "with SHA256SUMS and ASSETS.md, for offline scoring")
+    parser.add_argument("--with-lm", action="store_true",
+                        help="include the masked LM in the asset archive (+255 MB, "
+                             "worth +0.0010 TechnicalScore)")
     args = parser.parse_args()
 
     build(args.out)
+    if args.with_assets:
+        build_assets(args.out, include_lm=args.with_lm)
+    elif args.with_lm:
+        print("\nnote: --with-lm has no effect without --with-assets")
     if args.verify:
         return verify(args.out, args.limit)
     print("\nVerify with:  uv run python3 scripts/build_submission.py --verify")
