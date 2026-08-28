@@ -97,8 +97,17 @@ ENTROPY_POOL_SIZE = 30  # fused-candidate pool size used for attribute-entropy s
 # "browsing" shifts weight toward dense for "unlock cross-category scenario
 # matching" breadth, then gets an MMR diversity re-rank (Agent._diversify)
 # on top.
+# Buying dense weight halved to a 0.25 dense:bm25 ratio, from the sweep in
+# CLAUDE.md #16: the buying curve is strictly monotone decreasing with no
+# interior optimum, and 0.25 captures +0.0112 of the +0.0188 available from
+# removing the dense leg outright. We keep a real dense leg rather than take
+# the full gain because the local set is a near-pure exact-match benchmark
+# (89.7% of hard constraints are verbatim substrings of the target's own
+# catalog text, #14), so it systematically under-prices the paraphrase
+# robustness dense exists to provide. Browsing is untouched: its curve was
+# measured flat across 0.0-1.5 and must not be re-tuned (#16).
 BUYING_BM25_WEIGHT = 2.0
-BUYING_DENSE_WEIGHT = 1.0
+BUYING_DENSE_WEIGHT = 0.5
 BROWSING_BM25_WEIGHT = 1.25
 BROWSING_DENSE_WEIGHT = 1.5
 
