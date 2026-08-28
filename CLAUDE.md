@@ -116,6 +116,23 @@ Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
 suppress). tqdm is imported defensively and comes in transitively with
 sentence-transformers, so the submitted dependency set is unchanged.
 
+Submission bundle: `uv run python3 scripts/build_submission.py --verify`
+assembles `dist/submission/` in the rules' recommended shape (`agent.py`
+exporting `Agent`, `src/`, `requirements.txt`, `README.md`, `REPORT.md`,
+`tools/`) and then imports that bundle's `Agent` from a neutral working
+directory, asserts dense retrieval and both classifiers came up live, and
+scores it on the full public set. The bundle is **generated, never
+hand-edited** — change `starter/`, then rebuild.
+
+Data and model paths resolve in three steps (`starter/agent.py`
+`_resolve_data_path`, `starter/paths.py` `model_cache_dir`): the
+`TECHJAM_CATALOG` / `TECHJAM_DENSE_INDEX` / `TECHJAM_MODEL_DIR` env var, then
+the path relative to the working directory, then the path beside the package.
+Before this, all three were bare cwd-relative strings (`"data/catalog.jsonl"`,
+`"./model"`), so running the agent from anywhere but the repo root silently
+lost the dense index and both classifiers — the same silent-degrade class as
+#15, and the exact condition a submitted bundle runs under.
+
 Offline-asset setup: `uv run python3 scripts/fetch_assets.py` (the only step
 that needs network) then `uv run python3 scripts/preflight.py --strict` to
 verify the pipeline comes up whole with the network disabled. See "Known open

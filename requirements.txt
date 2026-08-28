@@ -1,0 +1,18 @@
+# Runtime dependencies for the submitted agent.
+#
+# torch is pinned to the CPU build: the agent runs entirely on CPU and the
+# default CUDA wheels are a multi-GB download the grader does not need.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy==2.5.2
+torch==2.13.0
+sentence-transformers==6.0.0
+
+# Optional. Only needed for the masked-LM attribute inference, which is off by
+# default because it is worth +0.001 TechnicalScore for 257 MB of weights
+# (see REPORT.md section 6). sentence-transformers already pulls a compatible
+# transformers, so this line is a pin, not an extra install.
+transformers==5.15.1
+
+# uv.lock in the source repository holds the fully resolved transitive set if
+# an exact byte-for-byte environment is required.

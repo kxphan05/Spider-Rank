@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .paths import model_cache_dir
 from .text_utils import field_text, terms
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def load_embedding_model():
     from sentence_transformers import SentenceTransformer
 
     torch.set_num_threads(max(1, os.cpu_count() or 1))
-    return SentenceTransformer(DENSE_MODEL_NAME, cache_folder="./model")
+    return SentenceTransformer(DENSE_MODEL_NAME, cache_folder=model_cache_dir())
 
 
 class BM25Index:

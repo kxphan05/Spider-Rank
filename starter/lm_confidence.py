@@ -48,10 +48,12 @@ import logging
 import math
 from dataclasses import dataclass
 
+from .paths import model_cache_dir
+
 logger = logging.getLogger(__name__)
 
 LM_MODEL_NAME = "distilbert-base-uncased"
-LM_CACHE_DIR = "./model"
+
 
 # Beliefs at or above this normalized entropy are treated as "the model does
 # not know". Calibrated, not chosen by feel: measured against the true
@@ -83,7 +85,8 @@ class LMBelief:
 class MaskedLMScorer:
     """Scores closed-vocabulary values in a `[MASK]`ed template."""
 
-    def __init__(self, model_name: str = LM_MODEL_NAME, cache_dir: str = LM_CACHE_DIR) -> None:
+    def __init__(self, model_name: str = LM_MODEL_NAME, cache_dir: str | None = None) -> None:
+        cache_dir = cache_dir if cache_dir is not None else model_cache_dir()
         import torch
         from transformers import AutoModelForMaskedLM, AutoTokenizer
 

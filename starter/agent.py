@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,6 +13,36 @@ from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_r
 from .user_profile import UserProfileStore
 
 logger = logging.getLogger(__name__)
+
+# Data-asset location. The evaluator constructs `Agent()` with no arguments,
+# so these defaults decide where a *submitted* bundle looks for the catalog
+# and dense index -- and a wrong guess degrades silently (a missing dense
+# index costs the whole dense leg without raising). Resolution order:
+#
+#   1. the TECHJAM_CATALOG / TECHJAM_DENSE_INDEX environment variables
+#   2. the path relative to the current working directory (repo-root runs)
+#   3. the same path relative to this package's parent directory
+#
+# Step 3 is what makes the bundle work when the harness runs from somewhere
+# other than the directory holding `data/`. Step 2 is listed first so
+# behaviour from the repo root is exactly what it has always been.
+CATALOG_PATH_ENV = "TECHJAM_CATALOG"
+DENSE_INDEX_PATH_ENV = "TECHJAM_DENSE_INDEX"
+_PACKAGE_PARENT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_data_path(relative: str, env_var: str) -> Path:
+    override = os.environ.get(env_var)
+    if override:
+        return Path(override)
+    candidate = Path(relative)
+    if candidate.exists():
+        return candidate
+    fallback = _PACKAGE_PARENT / relative
+    if fallback.exists():
+        logger.debug("%s not found at %s; using %s", relative, candidate, fallback)
+        return fallback
+    return candidate  # let the caller raise/degrade with the conventional path
 
 ALLOWED_ATTRIBUTES = {
     "category", "material", "color", "size", "style", "brand",
@@ -237,11 +268,14 @@ class Agent:
 
     def __init__(
         self,
-        catalog_path: str | Path = "data/catalog.jsonl",
-        dense_index_dir: str | Path = "data/dense_index",
+        catalog_path: str | Path | None = None,
+        dense_index_dir: str | Path | None = None,
         user_profile_store: UserProfileStore | None = None,
     ) -> None:
-        catalog_path = Path(catalog_path)
+        catalog_path = (Path(catalog_path) if catalog_path is not None
+                        else _resolve_data_path("data/catalog.jsonl", CATALOG_PATH_ENV))
+        dense_index_dir = (dense_index_dir if dense_index_dir is not None
+                           else _resolve_data_path("data/dense_index", DENSE_INDEX_PATH_ENV))
         self.profile_store = user_profile_store if user_profile_store is not None else UserProfileStore()
         self.bm25 = BM25Index(catalog_path)
         self.attribute_index = AttributeIndex.build(catalog_path)

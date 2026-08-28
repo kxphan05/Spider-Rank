@@ -238,8 +238,9 @@ highest-scoring one we measured locally.**
 and arrives transitively.
 
 ```bash
-# 1. install dependencies (exact versions pinned in uv.lock)
-uv sync
+# 1. install dependencies -- either resolver works
+uv sync                              # exact versions, from uv.lock
+pip install -r requirements.txt      # equivalent pins, CPU-only torch
 
 # 2. download the catalog -- see README.md "Download the Catalog"
 #    -> data/catalog.jsonl
@@ -254,9 +255,41 @@ uv run python3 scripts/preflight.py --strict
 uv run python3 -m evaluator.local_evaluator
 ```
 
-No non-obvious environment variables are required. Two are honored if set:
-`TECHJAM_PROFILE_STORE` relocates the long-term profile store (used to isolate
-eval runs), and `HF_HUB_OFFLINE=1` is set automatically by `preflight.py`.
+### The submission bundle
+
+`scripts/build_submission.py` assembles a self-contained bundle in the shape
+the rules recommend — `agent.py` exporting `Agent`, `src/` for the agent
+package, `requirements.txt`, `README.md`, this report as `REPORT.md`, and
+`tools/` holding the two setup commands. It is **generated, never
+hand-maintained**, so it cannot drift from the source tree:
+
+```bash
+uv run python3 scripts/build_submission.py --verify
+```
+
+`--verify` imports `Agent` from the built bundle in a neutral working
+directory, asserts that dense retrieval and both classifiers actually came up
+live rather than silently degrading, and scores the bundle on the full public
+set. The bundle is 17 files and ~123 KB; `data/` and `model/` are excluded
+(~460 MB together, and the catalog is organizer-provided) and are materialized
+by `tools/fetch_assets.py`.
+
+### Environment variables
+
+All optional, all with working defaults. Data and model paths resolve against
+the working directory first and then against the package's own directory, so
+the harness may be run from either — a submitted bundle is exactly the case
+where those differ.
+
+| variable | purpose |
+|---|---|
+| `TECHJAM_CATALOG` | catalog path, if not `data/catalog.jsonl` |
+| `TECHJAM_DENSE_INDEX` | dense index directory, if not `data/dense_index` |
+| `TECHJAM_MODEL_DIR` | model weights directory, if not `model/` |
+| `TECHJAM_PROFILE_STORE` | long-term user-profile store path |
+
+`preflight.py` sets `HF_HUB_OFFLINE=1` itself, so its check cannot be masked by
+a background download.
 
 ### Development and diagnostic tooling
 
@@ -272,3 +305,5 @@ eval runs), and `HF_HUB_OFFLINE=1` is set automatically by `preflight.py`.
 | `scripts/eval_profile_signal.py` | whether `user_profile` carries signal |
 | `scripts/eval_lm_confidence.py` | masked-LM entropy-gate calibration |
 | `scripts/train_intent_head.py` | trained-head diagnostic (rejected; `--save` opt-in) |
+| `scripts/sweep_fusion_weights.py` | RRF dense:bm25 weight curve |
+| `scripts/build_submission.py` | assemble and verify the submission bundle |
