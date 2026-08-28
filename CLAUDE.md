@@ -162,6 +162,14 @@ centroid classifier on in-distribution, held-out-template, and
 out-of-distribution pools. Saving is opt-in; the measured verdict is "don't
 ship it" ("Known open problems" #12).
 
+Presentation demo: `uv run python3 scripts/build_demo.py` renders
+`dist/demo.html`, a turn-by-turn replay of four real sessions (committed in
+`demo/sessions.json`). `--capture` re-runs the live agent to regenerate them.
+UI is out of scope for scoring (`TODO.md` 4.3) — this is for presenting only.
+Note the override flag comes from the real detector, not from watching the slot
+dict shrink: an override clears the slots and the same turn can immediately
+refill one, so the naive heuristic misses it.
+
 Fusion-weight sweep: `uv run python3 scripts/sweep_fusion_weights.py --track buying`
 — reports TechnicalScore as a curve against the dense:bm25 ratio (only the ratio
 matters; weighted RRF is scale-invariant per leg). Companion:

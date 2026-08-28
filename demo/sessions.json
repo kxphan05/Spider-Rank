@@ -1,0 +1,2416 @@
+[
+ {
+  "sample_id": "public_0001",
+  "scenario": "buying",
+  "profile": {
+   "average_prior_rating": 5.0,
+   "preference_tags": [
+    "fit",
+    "comfort",
+    "durability"
+   ],
+   "purchase_frequency": "3-4 prior purchases",
+   "rating_style": "usually positive",
+   "summary": "Prior purchases emphasize fit, comfort, durability; ratings are usually positive."
+  },
+  "target": {
+   "asin": "B09PYB7B6Z",
+   "title": "QIAN0813 Celttic Knot Triple Moon Pentagram Pentacle Star Wicca Pendant Necklace Round Pagan Jewelry",
+   "category": "Jewelry Necklaces",
+   "rating": 4.5,
+   "ratings": 490
+  },
+  "turns": [
+   {
+    "turn": 1,
+    "user": "I'm looking for Jewelry Necklaces. A key requirement is: Material:alloy.",
+    "agent": "Do you have a color preference?",
+    "ask": "color",
+    "intent": "buying",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B09JC4FKXL",
+      "title": "Gift Animal Necklace Party Glass White Crystal Cat Pattern Pendant Heart Shaped Jewelry Women's Necklace",
+      "rating": 2.0,
+      "ratings": 1,
+      "price": 10.59,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B07S85N55P",
+      "title": "FOY-MALL Fashion Glass Gem Tree Pendant Chain Necklace XL1622N",
+      "rating": 3.5,
+      "ratings": 6,
+      "price": 8.99,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B086ZXZ8CX",
+      "title": "Silver Gold Love Heart Pendant Fashion Jewelry Long Link Chain Necklace for Women Chokers",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": 15.99,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B0BXP9MW6Z",
+      "title": "HOSBY 3 Pcs Smile Expression Keychains for Women Bag Charms Key Chains Car Key Pendant for Purse Handbag Bag D",
+      "rating": 4.6,
+      "ratings": 49,
+      "price": 10.9,
+      "category": "Keyrings Keychains & Charms",
+      "is_target": false
+     },
+     {
+      "asin": "B00UO5IC1K",
+      "title": "Aqua79 Kokopelli Keychain - Silver 3D Sparkling Charm Rhinestones Fashionable Stylish Metal Alloy Durable Key ",
+      "rating": 3.8,
+      "ratings": 8,
+      "price": 12.99,
+      "category": "Keyrings Keychains & Charms",
+      "is_target": false
+     },
+     {
+      "asin": "B073PD4VDL",
+      "title": "Sindary Austrian Crystal Unique 3.35\" Unicorn Horse Keychain Pendant K6172",
+      "rating": 4.0,
+      "ratings": 28,
+      "price": 15.95,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B06XBRZC6T",
+      "title": "Charmed Craft Floating Charm Living Memory Lockets Keychain Magnetic Glass Key Ring Jewelry (regular heart)",
+      "rating": 3.6,
+      "ratings": 16,
+      "price": null,
+      "category": "Necklaces & Pendants Pendants",
+      "is_target": false
+     },
+     {
+      "asin": "B01IGYIPFI",
+      "title": "Palovenir Handmade Sloth Pendant Necklace Collection",
+      "rating": 4.4,
+      "ratings": 3,
+      "price": 15.99,
+      "category": "Jewelry Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B079KSQDR3",
+      "title": "FL BEAUTY Sterling Silver Plated 3D Dark green Dinosaur Charm Women Girls Hook Dangle Earring",
+      "rating": 4.3,
+      "ratings": 126,
+      "price": 6.99,
+      "category": "Earrings Drop & Dangle",
+      "is_target": false
+     },
+     {
+      "asin": "B09PTKKFTZ",
+      "title": "SONGCHANGJEWELRY Genshin-I Game HuTao Keychain - Anime Figure Enamel Key Pendant - Key Accessories for Anime L",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 9.99,
+      "category": "Accessories Keychains",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 2,
+    "user": "I don't have an additional preference for color.",
+    "agent": "What material are you looking for?",
+    "ask": "material",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B073PD4VDL",
+      "title": "Sindary Austrian Crystal Unique 3.35\" Unicorn Horse Keychain Pendant K6172",
+      "rating": 4.0,
+      "ratings": 28,
+      "price": 15.95,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B09JC4FKXL",
+      "title": "Gift Animal Necklace Party Glass White Crystal Cat Pattern Pendant Heart Shaped Jewelry Women's Necklace",
+      "rating": 2.0,
+      "ratings": 1,
+      "price": 10.59,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B0BRC8GHR6",
+      "title": "Personalized Turtle Ring Zircon Microinlaid Jewelry Ring Diamond Gift Metal Full Female Rings Jewelry Gift",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": 13.57,
+      "category": "Jewelry Rings",
+      "is_target": false
+     },
+     {
+      "asin": "B00P1UARN4",
+      "title": "Crystal Pearl Resin Stone Collar Bib Bubble Statement Necklace for Women W/Earring Set Fashion Jewelry",
+      "rating": 3.3,
+      "ratings": 6,
+      "price": null,
+      "category": "Jewelry Jewelry Sets",
+      "is_target": false
+     },
+     {
+      "asin": "B083WG73FZ",
+      "title": "Necklace Lock Pendant Simple Cute Necklaces Long Chain Punk Multilayer Choker Necklace Fashion Jewelry Women G",
+      "rating": 3.6,
+      "ratings": 2,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B07DL6FDPX",
+      "title": "BranXin Simple Newest fashion jewelry accessories Bohemia DIY long velvet Sparkling crystal choker necklace",
+      "rating": 1.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Jewelry Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B07RHKC2DZ",
+      "title": "3Pcs Avengers 4 Endgame Thanos Keychains Ring Sword Double edged Cosplay Weapons Movie Keyring With Ring Neckl",
+      "rating": 3.3,
+      "ratings": 3,
+      "price": null,
+      "category": "Accessories Keychains",
+      "is_target": false
+     },
+     {
+      "asin": "B007PX0H7Q",
+      "title": "Sterling Silver Multiple Gemstone Heart Necklace, 18\"",
+      "rating": 4.5,
+      "ratings": 6,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B09SHH6XKG",
+      "title": "COLORFUL BLING\u00a04/5/12Pcs\u00a0 4 StylesSterling Silver Ear Cuff Simple Criss Cross Double Lines Ear Cuffs Non Pierc",
+      "rating": 3.4,
+      "ratings": 18,
+      "price": 5.99,
+      "category": "Earrings Cuffs & Wraps",
+      "is_target": false
+     },
+     {
+      "asin": "B01N6ZU7P5",
+      "title": "Souarts Ancient Silver Color Earrings with 10pcs Random Mixed Floral Snap Button Jewelry Charms(Not in Pairs)",
+      "rating": 1.0,
+      "ratings": 4,
+      "price": null,
+      "category": "Jewelry Earrings",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 3,
+    "user": "I don't have an additional preference for material.",
+    "agent": "Is there a specific feature that matters most to you?",
+    "ask": "feature",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B073PD4VDL",
+      "title": "Sindary Austrian Crystal Unique 3.35\" Unicorn Horse Keychain Pendant K6172",
+      "rating": 4.0,
+      "ratings": 28,
+      "price": 15.95,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B09JC4FKXL",
+      "title": "Gift Animal Necklace Party Glass White Crystal Cat Pattern Pendant Heart Shaped Jewelry Women's Necklace",
+      "rating": 2.0,
+      "ratings": 1,
+      "price": 10.59,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B0BRC8GHR6",
+      "title": "Personalized Turtle Ring Zircon Microinlaid Jewelry Ring Diamond Gift Metal Full Female Rings Jewelry Gift",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": 13.57,
+      "category": "Jewelry Rings",
+      "is_target": false
+     },
+     {
+      "asin": "B00P1UARN4",
+      "title": "Crystal Pearl Resin Stone Collar Bib Bubble Statement Necklace for Women W/Earring Set Fashion Jewelry",
+      "rating": 3.3,
+      "ratings": 6,
+      "price": null,
+      "category": "Jewelry Jewelry Sets",
+      "is_target": false
+     },
+     {
+      "asin": "B083WG73FZ",
+      "title": "Necklace Lock Pendant Simple Cute Necklaces Long Chain Punk Multilayer Choker Necklace Fashion Jewelry Women G",
+      "rating": 3.6,
+      "ratings": 2,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B007PX0H7Q",
+      "title": "Sterling Silver Multiple Gemstone Heart Necklace, 18\"",
+      "rating": 4.5,
+      "ratings": 6,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B07RHKC2DZ",
+      "title": "3Pcs Avengers 4 Endgame Thanos Keychains Ring Sword Double edged Cosplay Weapons Movie Keyring With Ring Neckl",
+      "rating": 3.3,
+      "ratings": 3,
+      "price": null,
+      "category": "Accessories Keychains",
+      "is_target": false
+     },
+     {
+      "asin": "B07DL6FDPX",
+      "title": "BranXin Simple Newest fashion jewelry accessories Bohemia DIY long velvet Sparkling crystal choker necklace",
+      "rating": 1.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Jewelry Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B014RSAKIW",
+      "title": "Multicolor Pearl Chain",
+      "rating": 2.7,
+      "ratings": 4,
+      "price": null,
+      "category": "Sunglasses & Eyewear Accessories Eyeglass Chains",
+      "is_target": false
+     },
+     {
+      "asin": "B008TUQHUU",
+      "title": "Simply Sweet Silver Gemstone Neckpiece with Garnet Made in America Other Gemstones Available",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 4,
+    "user": "For that, what matters is: Triple Moon Pentagram Symbol; The Triple Moon represents the Phases of the Moon which are linked to the three aspects of the Goddess and the phases of the Life of Women.The Pentagram representing the holistic r.",
+    "agent": "Any particular style or fit you'd like?",
+    "ask": "style",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B09PYB7B6Z",
+      "title": "QIAN0813 Celttic Knot Triple Moon Pentagram Pentacle Star Wicca Pendant Necklace Round Pagan Jewelry",
+      "rating": 4.5,
+      "ratings": 490,
+      "price": 9.99,
+      "category": "Jewelry Necklaces",
+      "is_target": true
+     },
+     {
+      "asin": "B08F4VQ8JC",
+      "title": "GUNGNEER Stainless Steel Triple Moon Goddess Triquetra Pentacle Necklace Pagan Wicca Star Pendant Jewelry Men ",
+      "rating": 4.2,
+      "ratings": 31,
+      "price": 14.99,
+      "category": "Jewelry Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B008OYIY3O",
+      "title": "Sterling Silver Triple Goddess Necklace Featuring a Genuine Grey Moonstone .Made in America",
+      "rating": 4.5,
+      "ratings": 2,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B0B3MQKT6F",
+      "title": "My Shape Tetragrammaton Pentagram Pentacle Pendant Necklace Wiccan Pagan Jewelry",
+      "rating": 4.4,
+      "ratings": 48,
+      "price": 11.91,
+      "category": "Jewelry Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B09LV2N6CM",
+      "title": "YYDSBBA Sunflower Alloy Necklace for Women Creative Double-Layer Letter Can Open Clavicle Chain",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Necklaces Chains",
+      "is_target": false
+     },
+     {
+      "asin": "B0C5J7FCYR",
+      "title": "AOBOCO Celtic Dragon Necklace S925 Sterling Silver Moonstone, Crystal Witch Necklace Triple Moon Goddess Penda",
+      "rating": 4.5,
+      "ratings": 30,
+      "price": 45.99,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B0BT7KXFMM",
+      "title": "HAQUIL Mushroom Necklace Vintage Mushroom Pendant Cute Accessories Jewelry Gift for Women",
+      "rating": 4.4,
+      "ratings": 56,
+      "price": 11.99,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B08P7G15VB",
+      "title": "Waysles Moonstone Star Necklace S925 Sterling Silver Star Moon Star Jewelry Gifts for Women\u2026",
+      "rating": 4.6,
+      "ratings": 31,
+      "price": null,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     },
+     {
+      "asin": "B07HRJVGP2",
+      "title": "PJ Jewelry Ancient Egyptian Symbol Eye of Horus Ankh Cross Protection Wedding Band Ring for Men",
+      "rating": 4.6,
+      "ratings": 255,
+      "price": 9.99,
+      "category": "Jewelry Rings",
+      "is_target": false
+     },
+     {
+      "asin": "B073PD4VDL",
+      "title": "Sindary Austrian Crystal Unique 3.35\" Unicorn Horse Keychain Pendant K6172",
+      "rating": 4.0,
+      "ratings": 28,
+      "price": 15.95,
+      "category": "Necklaces Pendant Necklaces",
+      "is_target": false
+     }
+    ],
+    "target_rank": 1
+   }
+  ],
+  "hit_turn": 4,
+  "rank_at_hit": 1
+ },
+ {
+  "sample_id": "public_0006",
+  "scenario": "browsing",
+  "profile": {
+   "average_prior_rating": 1.0,
+   "preference_tags": [
+    "comfort",
+    "fit",
+    "durability",
+    "style"
+   ],
+   "purchase_frequency": "3-4 prior purchases",
+   "rating_style": "critical",
+   "summary": "Prior purchases emphasize comfort, fit, durability, style; ratings are critical."
+  },
+  "target": {
+   "asin": "B071F2Z7JG",
+   "title": "Pro Club Men's Heavyweight Mesh Basketball Shorts",
+   "category": "Basketball Men",
+   "rating": 4.6,
+   "ratings": 3042
+  },
+  "turns": [
+   {
+    "turn": 1,
+    "user": "I'm looking for Basketball Men, but I'm still exploring.",
+    "agent": "What material are you looking for?",
+    "ask": "material",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08LC68G6C",
+      "title": "Air Cushion Fashion Sneakers Anti-Slip Shoes for Men Breathable Uptempo Men Shoes Running Basketball",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B006JPNAPW",
+      "title": "Nike Men's Zoom Soldier VI TB Basketball Shoes 11 (Wolf Grey/Black/White)",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B00J9P56BK",
+      "title": "NIKE Air Bakin' Men's Basketball Shoes Sneakers 316383-001",
+      "rating": 4.9,
+      "ratings": 28,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B072N8TTRS",
+      "title": "MaQoo Men's MQ Border Basketball Shorts Aqua Size",
+      "rating": 3.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B0058TAO4U",
+      "title": "Nike Mens Zoom Hyperrev 2016 Wolf Grey/White/Cool Grey Basketball Shoe 10 Men US",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B07GL8MFQX",
+      "title": "Champion White Black Men's Contender Basketball Shoe 6.5 Regular",
+      "rating": 3.2,
+      "ratings": 2,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B00AQ9JQ1E",
+      "title": "NIKE Men's AIR MAX BODY U BASKETBALL SHOES 9 Men US (DARK GREY/PURE PLATINUM/BLACK)",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B01ACOO1A8",
+      "title": "Nike Jordan Mens Jordan Flight Origin 3 Black/Metallic Silver/Black/Black Basketball Shoe 10.5 Men US",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     },
+     {
+      "asin": "B072KHDZND",
+      "title": "iKRR Men's Mesh Basketball Athletic Loose Training Workout Sports Shorts with Pockets",
+      "rating": 3.4,
+      "ratings": 75,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     },
+     {
+      "asin": "B00NW9L9J2",
+      "title": "Nike AIR Jordan Legacy 312 Mens Basketball-Shoes AV3922-060_11.5 - Black/Black-FIRE RED",
+      "rating": 4.2,
+      "ratings": 21,
+      "price": null,
+      "category": "Team Sports Basketball",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 2,
+    "user": "For that, what matters is: polyester; 100% Polyester.",
+    "agent": "Do you have a color preference?",
+    "ask": "color",
+    "intent": "buying",
+    "disclosed_before": {},
+    "disclosed_after": {
+     "material": "polyester"
+    },
+    "new_slots": {
+     "material": "polyester"
+    },
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0BJ9HLZ9L",
+      "title": "Don't BE A Menace Basketball Jersey for Mens #00 Sleeveless Hip Hop 90s Sports Shirts Stitched",
+      "rating": 4.4,
+      "ratings": 41,
+      "price": 28.8,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B002KNDDZO",
+      "title": "adidas Men's Layup Short",
+      "rating": 4.6,
+      "ratings": 21,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     },
+     {
+      "asin": "B01N5HGJ8E",
+      "title": "adidas Basketball Accelerate 3 Stripes",
+      "rating": 4.7,
+      "ratings": 7,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     },
+     {
+      "asin": "B08P53R3CN",
+      "title": "Roadbox Workout Sleeveless Shirts for Men Athletic Gym Basketball Quick Dry Muscle Tank Tops",
+      "rating": 4.6,
+      "ratings": 2590,
+      "price": 23.99,
+      "category": "Active Shirts & Tees Tank Tops",
+      "is_target": false
+     },
+     {
+      "asin": "B08R3CKZ67",
+      "title": "YIMENG Black Panther Men's Athletic Basketball Jersey Single for Team Scrimmage",
+      "rating": 4.6,
+      "ratings": 128,
+      "price": null,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B0B7HG5FQC",
+      "title": "Anger Eagle Slam Basketball Hoodie Sakuragi Rukawa Miyagi Mitsui Akagi 3D Print Mens Long Sleeves Dunk Sweatsh",
+      "rating": 4.4,
+      "ratings": 40,
+      "price": 29.99,
+      "category": "Men Hoodies",
+      "is_target": false
+     },
+     {
+      "asin": "B07B6M6Y6F",
+      "title": "Members Only Men's Sport Iconic Racer Jacket",
+      "rating": 4.2,
+      "ratings": 29,
+      "price": null,
+      "category": "Men Jackets & Coats",
+      "is_target": false
+     },
+     {
+      "asin": "B00Y1DU8U4",
+      "title": "LaCrosse Men's Alpha Lite 16\" 5.0MM Utility Boot",
+      "rating": 4.5,
+      "ratings": 15,
+      "price": 128.65,
+      "category": "Outdoor & Work Hunting",
+      "is_target": false
+     },
+     {
+      "asin": "B08CSQGXTC",
+      "title": "LETAOTAO Mens Big & Tall Athletic Basketball Shorts Performance Workout Gym Shorts Zipper Pockets",
+      "rating": 4.0,
+      "ratings": 11,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     },
+     {
+      "asin": "B00YQ48YI6",
+      "title": "Under Armour Mens Select 1/2 Pants",
+      "rating": 4.5,
+      "ratings": 12,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 3,
+    "user": "I don't have an additional preference for color.",
+    "agent": "Is there a specific feature that matters most to you?",
+    "ask": "feature",
+    "intent": "browsing",
+    "disclosed_before": {
+     "material": "polyester"
+    },
+    "disclosed_after": {
+     "material": "polyester"
+    },
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0BJ9HLZ9L",
+      "title": "Don't BE A Menace Basketball Jersey for Mens #00 Sleeveless Hip Hop 90s Sports Shirts Stitched",
+      "rating": 4.4,
+      "ratings": 41,
+      "price": 28.8,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B0B7HG5FQC",
+      "title": "Anger Eagle Slam Basketball Hoodie Sakuragi Rukawa Miyagi Mitsui Akagi 3D Print Mens Long Sleeves Dunk Sweatsh",
+      "rating": 4.4,
+      "ratings": 40,
+      "price": 29.99,
+      "category": "Men Hoodies",
+      "is_target": false
+     },
+     {
+      "asin": "B07B6M6Y6F",
+      "title": "Members Only Men's Sport Iconic Racer Jacket",
+      "rating": 4.2,
+      "ratings": 29,
+      "price": null,
+      "category": "Men Jackets & Coats",
+      "is_target": false
+     },
+     {
+      "asin": "B0BGFWZZ73",
+      "title": "Nike mens Retro",
+      "rating": 3.4,
+      "ratings": 2,
+      "price": 49.99,
+      "category": "Men Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B01DSWNCCO",
+      "title": "KAMAL OHAVA Custom Youth Reversible Mesh Basketball Tank Jersey (Add Any Name and Number)",
+      "rating": 3.9,
+      "ratings": 6,
+      "price": null,
+      "category": "Boys Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B002KNDDZO",
+      "title": "adidas Men's Layup Short",
+      "rating": 4.6,
+      "ratings": 21,
+      "price": null,
+      "category": "Basketball Men",
+      "is_target": false
+     },
+     {
+      "asin": "B09PYVD3YW",
+      "title": "Men's 3 Pack Dry Fit Y-Back Workout Tank Top Mesh Sleeveless Gym Muscle Fitness Shirts Bodybuilding Athletic C",
+      "rating": 4.3,
+      "ratings": 419,
+      "price": null,
+      "category": "Active Shirts & Tees Tank Tops",
+      "is_target": false
+     },
+     {
+      "asin": "B06ZYX9DX6",
+      "title": "People's Choice Apparel American Tie Dye Flag for Mens Tank Top",
+      "rating": 3.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Shirts Tank Tops",
+      "is_target": false
+     },
+     {
+      "asin": "B098Q7ZNHQ",
+      "title": "Mens Heated Jacket With Massage Battery Waterproof Heated Jackets For Men Hood S",
+      "rating": 5.0,
+      "ratings": 3,
+      "price": 99.99,
+      "category": "Active & Performance Shells",
+      "is_target": false
+     },
+     {
+      "asin": "B004AGMTMW",
+      "title": "Arena Men's Brizz Polyester Jammer Swimsuit",
+      "rating": 3.3,
+      "ratings": 3,
+      "price": null,
+      "category": "Men Jammers",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 4,
+    "user": "For that, what matters is: Drawstring closure; High quality mesh for maximum breathability to keep you cool.",
+    "agent": "Any particular style or fit you'd like?",
+    "ask": "style",
+    "intent": "buying",
+    "disclosed_before": {
+     "material": "polyester"
+    },
+    "disclosed_after": {
+     "material": "mesh"
+    },
+    "new_slots": {
+     "material": "mesh"
+    },
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B01BFZ7DGC",
+      "title": "At The Buzzer Athletic Basketball Shorts for Men",
+      "rating": 4.1,
+      "ratings": 38,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B0BJ9HLZ9L",
+      "title": "Don't BE A Menace Basketball Jersey for Mens #00 Sleeveless Hip Hop 90s Sports Shirts Stitched",
+      "rating": 4.4,
+      "ratings": 41,
+      "price": 28.8,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B071F2Z7JG",
+      "title": "Pro Club Men's Heavyweight Mesh Basketball Shorts",
+      "rating": 4.6,
+      "ratings": 3042,
+      "price": 36.5,
+      "category": "Basketball Men",
+      "is_target": true
+     },
+     {
+      "asin": "B09HGMBPPQ",
+      "title": "Zuiqe Men Swimming Trunks Drawstring Waistband with Mesh Lining and Pockets Board Short",
+      "rating": 3.8,
+      "ratings": 5,
+      "price": null,
+      "category": "Swim Board Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B08K8QKW7W",
+      "title": "DRSKIN Men's 3 Pack Dry Fit Y-Back Muscle Tank Tops Mesh Sleeveless Gym Bodybuilding Training Athletic Workout",
+      "rating": 4.0,
+      "ratings": 18,
+      "price": null,
+      "category": "Active Shirts & Tees Tank Tops",
+      "is_target": false
+     },
+     {
+      "asin": "B08N6D5FXX",
+      "title": "C/N ARECON Mens Basketball Mesh Knits Elastic Waist Shorts with Lightweight Breathable Athletic Workout Gym Sw",
+      "rating": 4.1,
+      "ratings": 52,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B09BC87V19",
+      "title": "Butrends Mens Mesh Sweatpants Drawstring Elastic Waistband Running Pants Open Bottom Athletic Pants with Zippe",
+      "rating": 4.3,
+      "ratings": 450,
+      "price": 21.99,
+      "category": "Shoes & Jewelry Men",
+      "is_target": false
+     },
+     {
+      "asin": "B07JD7LVR1",
+      "title": "MILANKERR Men Swim Trunks with Mesh Liner,Men Bathing Suit,Swimming Trunks for Men,5.5 Inseam,UPF50+",
+      "rating": 4.5,
+      "ratings": 1182,
+      "price": null,
+      "category": "Swim Trunks",
+      "is_target": false
+     },
+     {
+      "asin": "B09Y1VYGVL",
+      "title": "Mrignt 3 Pack Workout Shirts for Men Athletic Running Shirts with Hoods, Short Sleeve Hoodie for Fitness, Hiki",
+      "rating": 4.5,
+      "ratings": 115,
+      "price": null,
+      "category": "Active Shirts & Tees T-Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B07MPNJG5K",
+      "title": "MILANKERR Men Swim Trunks with Mesh Liner,Men Bathing Suit,Swimming Trunks for Men,5.5 Inseam,UPF50+",
+      "rating": 4.5,
+      "ratings": 1182,
+      "price": null,
+      "category": "Swim Board Shorts",
+      "is_target": false
+     }
+    ],
+    "target_rank": 3
+   }
+  ],
+  "hit_turn": 4,
+  "rank_at_hit": 3
+ },
+ {
+  "sample_id": "public_0013",
+  "scenario": "intent_override",
+  "profile": {
+   "average_prior_rating": 4.0,
+   "preference_tags": [
+    "comfort",
+    "material"
+   ],
+   "purchase_frequency": "3-4 prior purchases",
+   "rating_style": "mixed",
+   "summary": "Prior purchases emphasize comfort, material; ratings are mixed."
+  },
+  "target": {
+   "asin": "B0C65TFM9F",
+   "title": "Vionic Women's Gemma",
+   "category": "Shoes Slippers",
+   "rating": 4.5,
+   "ratings": 9763
+  },
+  "turns": [
+   {
+    "turn": 1,
+    "user": "I'm looking for Shoes Slippers. YOUR NEW FAVORITE SLIPPERS: Slip into divine comfort with Gemma, a plush mule-style spa slipper with an adjustable hook-and-loop closure across the vamp",
+    "agent": "What material are you looking for?",
+    "ask": "material",
+    "intent": "buying",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0C65TFM9F",
+      "title": "Vionic Women's Gemma",
+      "rating": 4.5,
+      "ratings": 9763,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": true
+     },
+     {
+      "asin": "B079331J8C",
+      "title": "Vionic Women's Snug Carnegie Mule - Ladies Slip-on with Concealed Orthotic Support",
+      "rating": 3.9,
+      "ratings": 107,
+      "price": null,
+      "category": "Shoes Mules & Clogs",
+      "is_target": false
+     },
+     {
+      "asin": "B079YGDJ2F",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 89,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YC72RN",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 88,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B07HJ18QRQ",
+      "title": "Vionic Sadie Women's Adjustable Strap Orthotic Slippers",
+      "rating": 4.6,
+      "ratings": 8372,
+      "price": 45.0,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B011PTO1VI",
+      "title": "Acorn Women's Spa Thong with Premium Memory Foam",
+      "rating": 4.2,
+      "ratings": 218,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08C7L8Z6D",
+      "title": "LongBay Kids Girls Warm Fuzzy Faux Fur Boot Slippers Memory Foam House Shoes with Adjustable Hook and Loop",
+      "rating": 4.5,
+      "ratings": 259,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B078J57PWJ",
+      "title": "Laura Ashley Womens Scallop Plush Memory Foam Slip-Ons (See More Colors and Sizes)",
+      "rating": 3.7,
+      "ratings": 66,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08C7V2C8Y",
+      "title": "Crocs Women's Freesail Plush Lined Clog | Fuzzy Slippers Mule",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Shoes Mules & Clogs",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW53YC",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     }
+    ],
+    "target_rank": 1
+   },
+   {
+    "turn": 2,
+    "user": "I don't have an additional preference for material.",
+    "agent": "Do you have a color preference?",
+    "ask": "color",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0C65TFM9F",
+      "title": "Vionic Women's Gemma",
+      "rating": 4.5,
+      "ratings": 9763,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": true
+     },
+     {
+      "asin": "B079YGDJ2F",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 89,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YC72RN",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 88,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079331J8C",
+      "title": "Vionic Women's Snug Carnegie Mule - Ladies Slip-on with Concealed Orthotic Support",
+      "rating": 3.9,
+      "ratings": 107,
+      "price": null,
+      "category": "Shoes Mules & Clogs",
+      "is_target": false
+     },
+     {
+      "asin": "B07HJ18QRQ",
+      "title": "Vionic Sadie Women's Adjustable Strap Orthotic Slippers",
+      "rating": 4.6,
+      "ratings": 8372,
+      "price": 45.0,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B011PTO1VI",
+      "title": "Acorn Women's Spa Thong with Premium Memory Foam",
+      "rating": 4.2,
+      "ratings": 218,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08C7L8Z6D",
+      "title": "LongBay Kids Girls Warm Fuzzy Faux Fur Boot Slippers Memory Foam House Shoes with Adjustable Hook and Loop",
+      "rating": 4.5,
+      "ratings": 259,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW3MFE",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08C7V2C8Y",
+      "title": "Crocs Women's Freesail Plush Lined Clog | Fuzzy Slippers Mule",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Shoes Mules & Clogs",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW53YC",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     }
+    ],
+    "target_rank": 1
+   },
+   {
+    "turn": 3,
+    "user": "For that, what matters is: Textile Upper. Textile Covered EVA Footbed. Rubber Outsole.",
+    "agent": "Is there a specific feature that matters most to you?",
+    "ask": "feature",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {
+     "material": "rubber"
+    },
+    "new_slots": {
+     "material": "rubber"
+    },
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0C65TFM9F",
+      "title": "Vionic Women's Gemma",
+      "rating": 4.5,
+      "ratings": 9763,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": true
+     },
+     {
+      "asin": "B07HJ18QRQ",
+      "title": "Vionic Sadie Women's Adjustable Strap Orthotic Slippers",
+      "rating": 4.6,
+      "ratings": 8372,
+      "price": 45.0,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08MV1VVKR",
+      "title": "NineCiFun Women's Slip on Fuzzy House Slippers Memory Foam Slippers Scuff Outdoor Indoor Warm Plush Bedroom Sh",
+      "rating": 4.5,
+      "ratings": 28673,
+      "price": 24.99,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08F7CD4Y6",
+      "title": "bebe Jeanna Womens Slipper",
+      "rating": 4.4,
+      "ratings": 376,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B01N7KMQ0C",
+      "title": "Vionic Women\u2019s Cozy Ida Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.2,
+      "ratings": 443,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW3MFE",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW53YC",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YGDJ2F",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 89,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YC72RN",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 88,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079331J8C",
+      "title": "Vionic Women's Snug Carnegie Mule - Ladies Slip-on with Concealed Orthotic Support",
+      "rating": 3.9,
+      "ratings": 107,
+      "price": null,
+      "category": "Shoes Mules & Clogs",
+      "is_target": false
+     }
+    ],
+    "target_rank": 1
+   },
+   {
+    "turn": 4,
+    "user": "Actually, ignore my earlier preference. What I need is: Rubber sole.",
+    "agent": "What material are you looking for?",
+    "ask": "material",
+    "intent": "browsing",
+    "disclosed_before": {
+     "material": "rubber"
+    },
+    "disclosed_after": {
+     "material": "rubber"
+    },
+    "new_slots": {},
+    "override_fired": true,
+    "recs": [
+     {
+      "asin": "B0C65TFM9F",
+      "title": "Vionic Women's Gemma",
+      "rating": 4.5,
+      "ratings": 9763,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": true
+     },
+     {
+      "asin": "B07HJ18QRQ",
+      "title": "Vionic Sadie Women's Adjustable Strap Orthotic Slippers",
+      "rating": 4.6,
+      "ratings": 8372,
+      "price": 45.0,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08MV1VVKR",
+      "title": "NineCiFun Women's Slip on Fuzzy House Slippers Memory Foam Slippers Scuff Outdoor Indoor Warm Plush Bedroom Sh",
+      "rating": 4.5,
+      "ratings": 28673,
+      "price": 24.99,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B08F7CD4Y6",
+      "title": "bebe Jeanna Womens Slipper",
+      "rating": 4.4,
+      "ratings": 376,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B01N7KMQ0C",
+      "title": "Vionic Women\u2019s Cozy Ida Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.2,
+      "ratings": 443,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW3MFE",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B00SLW53YC",
+      "title": "Vionic Women\u2019s Cozy Juniper Slipper \u2013 Comfortable House Shoes with Concealed Orthotic Support",
+      "rating": 4.3,
+      "ratings": 439,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079XNVLDZ",
+      "title": "Seranoma Womens Moccasin Indoor/Outdoor Microfiber Slipper",
+      "rating": 4.0,
+      "ratings": 356,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YGDJ2F",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 89,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     },
+     {
+      "asin": "B079YC72RN",
+      "title": "Copper Fit Women's Cozy Slide Slipper",
+      "rating": 3.8,
+      "ratings": 88,
+      "price": null,
+      "category": "Shoes Slippers",
+      "is_target": false
+     }
+    ],
+    "target_rank": 1
+   }
+  ],
+  "hit_turn": 4,
+  "rank_at_hit": 1
+ },
+ {
+  "sample_id": "public_0035",
+  "scenario": "boundary",
+  "profile": {
+   "average_prior_rating": 5.0,
+   "preference_tags": [
+    "material",
+    "performance",
+    "durability"
+   ],
+   "purchase_frequency": "3-4 prior purchases",
+   "rating_style": "usually positive",
+   "summary": "Prior purchases emphasize material, performance, durability; ratings are usually positive."
+  },
+  "target": {
+   "asin": "B0BN6CCHB7",
+   "title": "Skechers Men's Go Max-Athletic Air Mesh Slip on Walking Shoe Sneaker",
+   "category": "Athletic Walking",
+   "rating": 4.5,
+   "ratings": 35329
+  },
+  "turns": [
+   {
+    "turn": 1,
+    "user": "I'm looking for Athletic Walking, but I'm still exploring.",
+    "agent": "What material are you looking for?",
+    "ask": "material",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B092Z73G1R",
+      "title": "Ahico Mens Running Sneakers Walking Shoes Mesh Breathable Lightweight Tennis Comfortable Sport Casual Athletic",
+      "rating": 3.8,
+      "ratings": 34,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08F3FVWHX",
+      "title": "Kapsen Mens Athletic Walking Non Slip Blade Running Tennis Shoes Fashion Sneakers Black White 9.5",
+      "rating": 3.5,
+      "ratings": 9,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07BQFDRNF",
+      "title": "Ezywear Women Lightweight Sneakers Athletic Casual Mesh-Comfortable Slip-On Walking Shoes (6, EZ82905 Pink)",
+      "rating": 4.5,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0875R1642",
+      "title": "Skechers GO Walk 5 Women Athletic 9 Wide Black",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07GSNM5MF",
+      "title": "TIOSEBON Women's Athletic Walking Running Shoes Comfortable Lightweight Sneakers",
+      "rating": 4.2,
+      "ratings": 638,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09DSMBXM4",
+      "title": "NAIKOYO Men's Trail Running Shoes Lightweight Sneakers for Men Outdoor Athletic Waterproof Hiking Shoes",
+      "rating": 3.4,
+      "ratings": 13,
+      "price": null,
+      "category": "Running Trail Running",
+      "is_target": false
+     },
+     {
+      "asin": "B08R86WZ11",
+      "title": "RIBONGZ Wide Toddler Boys Shoes Slip On Little Girls Sneakers for Athletic Walking Running Outdoor/Indoor Grey",
+      "rating": 4.0,
+      "ratings": 7,
+      "price": null,
+      "category": "Shoes Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B08ZK7NZBX",
+      "title": "SKDOIUL Fashion Men Sport Athletic Walking Shoes mesh Breathable Comfort Sneakers Runner Jogging Casual Tennis",
+      "rating": 3.6,
+      "ratings": 8,
+      "price": null,
+      "category": "Running Trail Running",
+      "is_target": false
+     },
+     {
+      "asin": "B07YHHHJ8J",
+      "title": "LAOKS Lightweight Breathable Walking Shoes, Stitchlite Oxford",
+      "rating": 4.5,
+      "ratings": 1442,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 2,
+    "user": "I don't have a preference for material; please use your judgment.",
+    "agent": "Do you have a color preference?",
+    "ask": "color",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B094QZ1DVZ",
+      "title": "Deevike Running Shoes Women Tennis Walking Non Slip Athletic Fashion Sneaker",
+      "rating": 3.8,
+      "ratings": 492,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08S3GN546",
+      "title": "Mens Womens Athletic Shoes, Running Shoes, Non Slip Tennis Shoes, Sneakers for Sports Gym Walking or Work Casu",
+      "rating": 4.3,
+      "ratings": 31,
+      "price": null,
+      "category": "Running Road Running",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07DCPCNH2",
+      "title": "\ud83d\udc8b Mysky Women Fashion Sneakers Sports Running Hiking Thick Bottom Platform Shoes (Black, 40)",
+      "rating": 3.4,
+      "ratings": 4,
+      "price": null,
+      "category": "Women Shoes",
+      "is_target": false
+     },
+     {
+      "asin": "B0B1DQP56F",
+      "title": "Shoeict Womens Workout Running Shoes for Casual Lightweight Tennis Sneakers for Women Mesh Walking Shoes Comfo",
+      "rating": 3.2,
+      "ratings": 6,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08DXJMXHF",
+      "title": "Roadbox Men's 7\" Workout Athletic Gym Shorts Lightweight Basketball Shorts Whit Pocket for Golf, Swim, Soccer,",
+      "rating": 4.6,
+      "ratings": 21,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B074CF8SP3",
+      "title": "TFO Men's Breathable Walking Hiking Shoe Outdoor Running Backpacking Athletic Trekking Sneaker",
+      "rating": 3.6,
+      "ratings": 132,
+      "price": null,
+      "category": "Running Trail Running",
+      "is_target": false
+     },
+     {
+      "asin": "B07GSNM5MF",
+      "title": "TIOSEBON Women's Athletic Walking Running Shoes Comfortable Lightweight Sneakers",
+      "rating": 4.2,
+      "ratings": 638,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07YHHHJ8J",
+      "title": "LAOKS Lightweight Breathable Walking Shoes, Stitchlite Oxford",
+      "rating": 4.5,
+      "ratings": 1442,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07544FGSX",
+      "title": "HonourSport Women Workout Active Skorts Golf,Tennis Running Skirt Pleated,Athletic Lightweight Casual Dress wi",
+      "rating": 4.4,
+      "ratings": 248,
+      "price": null,
+      "category": "Skirts & Skorts Active Skirts",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 3,
+    "user": "I don't have an additional preference for color.",
+    "agent": "Is there a specific feature that matters most to you?",
+    "ask": "feature",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B094QZ1DVZ",
+      "title": "Deevike Running Shoes Women Tennis Walking Non Slip Athletic Fashion Sneaker",
+      "rating": 3.8,
+      "ratings": 492,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08R5ZY4W5",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers Black/White Size 8",
+      "rating": 3.2,
+      "ratings": 5,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09Q5J6QBV",
+      "title": "SIXXIN Womens Lightweight Sneakers Walking Shoes Tennis Sneakers Casual Running Shoes",
+      "rating": 4.1,
+      "ratings": 53,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B01M0YUEIZ",
+      "title": "Dachstein Woolwear 100% Austrian Boiled Wool 4 Ply Extreme Warm Ankle Sock Footlet",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 54.95,
+      "category": "Socks & Hosiery Socks",
+      "is_target": false
+     },
+     {
+      "asin": "B07DCPCNH2",
+      "title": "\ud83d\udc8b Mysky Women Fashion Sneakers Sports Running Hiking Thick Bottom Platform Shoes (Black, 40)",
+      "rating": 3.4,
+      "ratings": 4,
+      "price": null,
+      "category": "Women Shoes",
+      "is_target": false
+     },
+     {
+      "asin": "B0875R1642",
+      "title": "Skechers GO Walk 5 Women Athletic 9 Wide Black",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08DXJMXHF",
+      "title": "Roadbox Men's 7\" Workout Athletic Gym Shorts Lightweight Basketball Shorts Whit Pocket for Golf, Swim, Soccer,",
+      "rating": 4.6,
+      "ratings": 21,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B01I9HNJ8A",
+      "title": "Tanly Women's Flex Comfort Slip On Walking Shoes Lightweight Fashion Sport Running Sneakers Red 8.5 B(M) US",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0B1DQP56F",
+      "title": "Shoeict Womens Workout Running Shoes for Casual Lightweight Tennis Sneakers for Women Mesh Walking Shoes Comfo",
+      "rating": 3.2,
+      "ratings": 6,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 4,
+    "user": "For that, what matters is: 100% Textile; Imported.",
+    "agent": "Any particular style or fit you'd like?",
+    "ask": "style",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B0B1DQP56F",
+      "title": "Shoeict Womens Workout Running Shoes for Casual Lightweight Tennis Sneakers for Women Mesh Walking Shoes Comfo",
+      "rating": 3.2,
+      "ratings": 6,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07D7XGQF8",
+      "title": "My Sport is Your Sports Punishment Pullover Hoodie",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": 31.93,
+      "category": "Men Hoodies",
+      "is_target": false
+     },
+     {
+      "asin": "B01B5KF9OA",
+      "title": "adidas Men's Performance Ultimate Short Sleeve Tee, Collegiate Burgundy, Medium",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Active Shirts & Tees T-Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B00NBAXN1E",
+      "title": "Under Armour Women's Perfect Pace Shorts",
+      "rating": 4.1,
+      "ratings": 195,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B005CP9GEO",
+      "title": "You Might Be An EMS T-Shirt (Navy)",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Novelty & More Novelty",
+      "is_target": false
+     },
+     {
+      "asin": "B07C86XMMR",
+      "title": "Hanes Men's Tagless Midrise Briefs ComfortSoft 12-Pack Assorted Colors Slightly Imperfect",
+      "rating": 3.9,
+      "ratings": 20,
+      "price": null,
+      "category": "Underwear Briefs",
+      "is_target": false
+     },
+     {
+      "asin": "B01M0YUEIZ",
+      "title": "Dachstein Woolwear 100% Austrian Boiled Wool 4 Ply Extreme Warm Ankle Sock Footlet",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 54.95,
+      "category": "Socks & Hosiery Socks",
+      "is_target": false
+     },
+     {
+      "asin": "B008K4MTKC",
+      "title": "Outdoor Research Women's Daily Greens Tee",
+      "rating": 4.0,
+      "ratings": 3,
+      "price": null,
+      "category": "Tops & Tees T-Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B07B6M6Y6F",
+      "title": "Members Only Men's Sport Iconic Racer Jacket",
+      "rating": 4.2,
+      "ratings": 29,
+      "price": null,
+      "category": "Men Jackets & Coats",
+      "is_target": false
+     },
+     {
+      "asin": "B074CFCGD8",
+      "title": "TFO Men's Breathable Walking Hiking Shoe Outdoor Running Backpacking Athletic Trekking Sneaker",
+      "rating": 3.7,
+      "ratings": 132,
+      "price": null,
+      "category": "Running Trail Running",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 5,
+    "user": "I don't have an additional preference for style.",
+    "agent": "What size do you need?",
+    "ask": "size",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B094QZ1DVZ",
+      "title": "Deevike Running Shoes Women Tennis Walking Non Slip Athletic Fashion Sneaker",
+      "rating": 3.8,
+      "ratings": 492,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0B1DQP56F",
+      "title": "Shoeict Womens Workout Running Shoes for Casual Lightweight Tennis Sneakers for Women Mesh Walking Shoes Comfo",
+      "rating": 3.2,
+      "ratings": 6,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08R5ZY4W5",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers Black/White Size 8",
+      "rating": 3.2,
+      "ratings": 5,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07D7XGQF8",
+      "title": "My Sport is Your Sports Punishment Pullover Hoodie",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": 31.93,
+      "category": "Men Hoodies",
+      "is_target": false
+     },
+     {
+      "asin": "B07C86XMMR",
+      "title": "Hanes Men's Tagless Midrise Briefs ComfortSoft 12-Pack Assorted Colors Slightly Imperfect",
+      "rating": 3.9,
+      "ratings": 20,
+      "price": null,
+      "category": "Underwear Briefs",
+      "is_target": false
+     },
+     {
+      "asin": "B07SNQYPY6",
+      "title": "Men's Walking Shoes Casual Sneakers - Athletic Running Non-Slip Lightweight Outdoor Fashion Sneaker MS1936-Bla",
+      "rating": 3.9,
+      "ratings": 8,
+      "price": null,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B07J37XQ5V",
+      "title": "Calvin Klein Men's Alfie Oxford",
+      "rating": 4.3,
+      "ratings": 18,
+      "price": null,
+      "category": "Shoes Oxfords",
+      "is_target": false
+     },
+     {
+      "asin": "B01M0YUEIZ",
+      "title": "Dachstein Woolwear 100% Austrian Boiled Wool 4 Ply Extreme Warm Ankle Sock Footlet",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 54.95,
+      "category": "Socks & Hosiery Socks",
+      "is_target": false
+     },
+     {
+      "asin": "B00NBAXN1E",
+      "title": "Under Armour Women's Perfect Pace Shorts",
+      "rating": 4.1,
+      "ratings": 195,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B0949P4QDJ",
+      "title": "Livinguard Men\u2019s Slim Fit Polo Shirt | Cotton, Odor Control | Machine Washable",
+      "rating": 4.1,
+      "ratings": 74,
+      "price": null,
+      "category": "Shirts Polos",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 6,
+    "user": "I don't have an additional preference for size.",
+    "agent": "What will you be using this for?",
+    "ask": "use_case",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08R5ZY4W5",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers Black/White Size 8",
+      "rating": 3.2,
+      "ratings": 5,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08R64GJ6Y",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers White Size 11",
+      "rating": 3.9,
+      "ratings": 19,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B00ITKSNFM",
+      "title": "Skechers Performance Women's Go Walk 2 Extreme Walking Shoe",
+      "rating": 4.0,
+      "ratings": 17,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B01B5KF9OA",
+      "title": "adidas Men's Performance Ultimate Short Sleeve Tee, Collegiate Burgundy, Medium",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Active Shirts & Tees T-Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B07SNQYPY6",
+      "title": "Men's Walking Shoes Casual Sneakers - Athletic Running Non-Slip Lightweight Outdoor Fashion Sneaker MS1936-Bla",
+      "rating": 3.9,
+      "ratings": 8,
+      "price": null,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07GSNM5MF",
+      "title": "TIOSEBON Women's Athletic Walking Running Shoes Comfortable Lightweight Sneakers",
+      "rating": 4.2,
+      "ratings": 638,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B074CF8SP3",
+      "title": "TFO Men's Breathable Walking Hiking Shoe Outdoor Running Backpacking Athletic Trekking Sneaker",
+      "rating": 3.6,
+      "ratings": 132,
+      "price": null,
+      "category": "Running Trail Running",
+      "is_target": false
+     },
+     {
+      "asin": "B07BQFDRNF",
+      "title": "Ezywear Women Lightweight Sneakers Athletic Casual Mesh-Comfortable Slip-On Walking Shoes (6, EZ82905 Pink)",
+      "rating": 4.5,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0949P4QDJ",
+      "title": "Livinguard Men\u2019s Slim Fit Polo Shirt | Cotton, Odor Control | Machine Washable",
+      "rating": 4.1,
+      "ratings": 74,
+      "price": null,
+      "category": "Shirts Polos",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 7,
+    "user": "I don't have an additional preference for use_case.",
+    "agent": "Do you have a budget in mind?",
+    "ask": "budget",
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08R5ZY4W5",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers Black/White Size 8",
+      "rating": 3.2,
+      "ratings": 5,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0B1DQP56F",
+      "title": "Shoeict Womens Workout Running Shoes for Casual Lightweight Tennis Sneakers for Women Mesh Walking Shoes Comfo",
+      "rating": 3.2,
+      "ratings": 6,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B00ITKSNFM",
+      "title": "Skechers Performance Women's Go Walk 2 Extreme Walking Shoe",
+      "rating": 4.0,
+      "ratings": 17,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B01B5KF9OA",
+      "title": "adidas Men's Performance Ultimate Short Sleeve Tee, Collegiate Burgundy, Medium",
+      "rating": 5.0,
+      "ratings": 1,
+      "price": null,
+      "category": "Active Shirts & Tees T-Shirts",
+      "is_target": false
+     },
+     {
+      "asin": "B07SNQYPY6",
+      "title": "Men's Walking Shoes Casual Sneakers - Athletic Running Non-Slip Lightweight Outdoor Fashion Sneaker MS1936-Bla",
+      "rating": 3.9,
+      "ratings": 8,
+      "price": null,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B07BMCB4LC",
+      "title": "EPTM New Men's Poly Zipper Slim Jacquard Plaid Techno Track Pants",
+      "rating": 4.4,
+      "ratings": 2,
+      "price": null,
+      "category": "Pants Casual",
+      "is_target": false
+     },
+     {
+      "asin": "B01M0YUEIZ",
+      "title": "Dachstein Woolwear 100% Austrian Boiled Wool 4 Ply Extreme Warm Ankle Sock Footlet",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 54.95,
+      "category": "Socks & Hosiery Socks",
+      "is_target": false
+     },
+     {
+      "asin": "B07J37XQ5V",
+      "title": "Calvin Klein Men's Alfie Oxford",
+      "rating": 4.3,
+      "ratings": 18,
+      "price": null,
+      "category": "Shoes Oxfords",
+      "is_target": false
+     },
+     {
+      "asin": "B0041HX7X0",
+      "title": "Pearl iZUMi Men's All-Road Cycling Shoe",
+      "rating": 4.3,
+      "ratings": 186,
+      "price": null,
+      "category": "Athletic Cycling",
+      "is_target": false
+     },
+     {
+      "asin": "B08R64GJ6Y",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers White Size 11",
+      "rating": 3.9,
+      "ratings": 19,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 8,
+    "user": "I don't have an additional preference for budget.",
+    "agent": "Here are the closest matches I found so far.",
+    "ask": null,
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08R5ZY4W5",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers Black/White Size 8",
+      "rating": 3.2,
+      "ratings": 5,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08R64GJ6Y",
+      "title": "Slow Man Men's Slip On Tennis Shoes - Athletic Walking Casual Non-Slip Sneakers White Size 11",
+      "rating": 3.9,
+      "ratings": 19,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07GSNM5MF",
+      "title": "TIOSEBON Women's Athletic Walking Running Shoes Comfortable Lightweight Sneakers",
+      "rating": 4.2,
+      "ratings": 638,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07D7V4LFH",
+      "title": "Mens Stylish Sports Gym Shoes",
+      "rating": 3.2,
+      "ratings": 8,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B01M0YUEIZ",
+      "title": "Dachstein Woolwear 100% Austrian Boiled Wool 4 Ply Extreme Warm Ankle Sock Footlet",
+      "rating": 4.7,
+      "ratings": 19,
+      "price": 54.95,
+      "category": "Socks & Hosiery Socks",
+      "is_target": false
+     },
+     {
+      "asin": "B07YHHHJ8J",
+      "title": "LAOKS Lightweight Breathable Walking Shoes, Stitchlite Oxford",
+      "rating": 4.5,
+      "ratings": 1442,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08DXJMXHF",
+      "title": "Roadbox Men's 7\" Workout Athletic Gym Shorts Lightweight Basketball Shorts Whit Pocket for Golf, Swim, Soccer,",
+      "rating": 4.6,
+      "ratings": 21,
+      "price": null,
+      "category": "Active Active Shorts",
+      "is_target": false
+     },
+     {
+      "asin": "B08P1K7MMZ",
+      "title": "Bruno Marc Men\u2019s Walking Shoes Lightweight Casual Tennis Sneaker",
+      "rating": 4.4,
+      "ratings": 480,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0875R1642",
+      "title": "Skechers GO Walk 5 Women Athletic 9 Wide Black",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 9,
+    "user": "Those options are not quite right yet. Ask me about one specific attribute.",
+    "agent": "Here are the closest matches I found so far.",
+    "ask": null,
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08GHT579S",
+      "title": "GEMAX Womens Walking Tennis Shoes - Slip on Mesh Memory Foam Lightweight Athletic Running Sneakers",
+      "rating": 4.3,
+      "ratings": 519,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B07D7V4LFH",
+      "title": "Mens Stylish Sports Gym Shoes",
+      "rating": 3.2,
+      "ratings": 8,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B08P1K7MMZ",
+      "title": "Bruno Marc Men\u2019s Walking Shoes Lightweight Casual Tennis Sneaker",
+      "rating": 4.4,
+      "ratings": 480,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0BDGKW9JS",
+      "title": "Kalci Short Sleeve Soccer Shirt, Regular Youth Goalie Soccer Jersey, Sweat Wicking Crew Neck Men & Women Goalk",
+      "rating": 3.9,
+      "ratings": 13,
+      "price": 23.99,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B07D8J2PCM",
+      "title": "Alibress Men's Women's Lightweight Breathable Running Athletic Casual Shoes Walking Mesh Sneakers,All Black,46",
+      "rating": 3.7,
+      "ratings": 4,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B01I9HNJ8A",
+      "title": "Tanly Women's Flex Comfort Slip On Walking Shoes Lightweight Fashion Sport Running Sneakers Red 8.5 B(M) US",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09B258TDR",
+      "title": "Dofaoo Men's Sweatpants Joggers with Zipper Pockets Drawstrings Tapered Athletic Pants for Running Workout Hik",
+      "rating": 4.1,
+      "ratings": 94,
+      "price": null,
+      "category": "Men Pants",
+      "is_target": false
+     },
+     {
+      "asin": "B0CB3WFW3L",
+      "title": "InterestPrint Sport Sneakers, Outdoor Sports Comfort Sports Women's Walking Shoes Sneakers for Travel Tennis S",
+      "rating": 3.6,
+      "ratings": 121,
+      "price": 43.99,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B08WC1XBS1",
+      "title": "AODONG Walking Shoes for Women,Womens Breathable Sneakers Athletic Running Shoes Slip Ons Lace Up Lightweight ",
+      "rating": 3.6,
+      "ratings": 15,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   },
+   {
+    "turn": 10,
+    "user": "Those options are not quite right yet. Ask me about one specific attribute.",
+    "agent": "Here are the closest matches I found so far.",
+    "ask": null,
+    "intent": "browsing",
+    "disclosed_before": {},
+    "disclosed_after": {},
+    "new_slots": {},
+    "override_fired": false,
+    "recs": [
+     {
+      "asin": "B08GHT579S",
+      "title": "GEMAX Womens Walking Tennis Shoes - Slip on Mesh Memory Foam Lightweight Athletic Running Sneakers",
+      "rating": 4.3,
+      "ratings": 519,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09MK9SDVY",
+      "title": "Correct-Position Walking Shoes for Women Size 5,Running Shoes Sneakers Black Non Slip Casual Shoes Jogging Sho",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0CB3WFW3L",
+      "title": "InterestPrint Sport Sneakers, Outdoor Sports Comfort Sports Women's Walking Shoes Sneakers for Travel Tennis S",
+      "rating": 3.6,
+      "ratings": 121,
+      "price": 43.99,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     },
+     {
+      "asin": "B06WRQSNNY",
+      "title": "HonourSport Women Workout Active Skorts Golf,Tennis Running Skirt Pleated,Athletic Lightweight Casual Dress wi",
+      "rating": 4.4,
+      "ratings": 248,
+      "price": null,
+      "category": "Skirts & Skorts Active Skirts",
+      "is_target": false
+     },
+     {
+      "asin": "B01M62H4JX",
+      "title": "Nfinity Personalized Backpack with Large Name (Neon Pink)",
+      "rating": 5.0,
+      "ratings": 3,
+      "price": null,
+      "category": "Backpacks Casual Daypacks",
+      "is_target": false
+     },
+     {
+      "asin": "B07GSNM5MF",
+      "title": "TIOSEBON Women's Athletic Walking Running Shoes Comfortable Lightweight Sneakers",
+      "rating": 4.2,
+      "ratings": 638,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B0875R1642",
+      "title": "Skechers GO Walk 5 Women Athletic 9 Wide Black",
+      "rating": 5.0,
+      "ratings": 2,
+      "price": null,
+      "category": "Athletic Walking",
+      "is_target": false
+     },
+     {
+      "asin": "B09B258TDR",
+      "title": "Dofaoo Men's Sweatpants Joggers with Zipper Pockets Drawstrings Tapered Athletic Pants for Running Workout Hik",
+      "rating": 4.1,
+      "ratings": 94,
+      "price": null,
+      "category": "Men Pants",
+      "is_target": false
+     },
+     {
+      "asin": "B0BDGKW9JS",
+      "title": "Kalci Short Sleeve Soccer Shirt, Regular Youth Goalie Soccer Jersey, Sweat Wicking Crew Neck Men & Women Goalk",
+      "rating": 3.9,
+      "ratings": 13,
+      "price": 23.99,
+      "category": "Men Jerseys",
+      "is_target": false
+     },
+     {
+      "asin": "B07SNQYPY6",
+      "title": "Men's Walking Shoes Casual Sneakers - Athletic Running Non-Slip Lightweight Outdoor Fashion Sneaker MS1936-Bla",
+      "rating": 3.9,
+      "ratings": 8,
+      "price": null,
+      "category": "Shoes Fashion Sneakers",
+      "is_target": false
+     }
+    ],
+    "target_rank": null
+   }
+  ],
+  "hit_turn": null,
+  "rank_at_hit": null
+ }
+]

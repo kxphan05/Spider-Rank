@@ -1,0 +1,428 @@
+<title>Shopping Agent Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --plane: #f9f9f7;
+    --raised: #ffffff;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --accent: #2a78d6;
+    --warm: #eb6834;
+    --good: #0ca30c;
+    --border: rgba(11, 11, 11, 0.10);
+    --wash: rgba(42, 120, 214, 0.07);
+    --warm-wash: rgba(235, 104, 52, 0.09);
+    --good-wash: rgba(12, 163, 12, 0.10);
+    --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 6px 20px rgba(0,0,0,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #1a1a19; --plane: #0d0d0d; --raised: #232322;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835;
+      --accent: #3987e5; --warm: #d95926; --good: #0ca30c;
+      --border: rgba(255,255,255,0.11);
+      --wash: rgba(57,135,229,0.14);
+      --warm-wash: rgba(217,89,38,0.16);
+      --good-wash: rgba(12,163,12,0.16);
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #232322;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835;
+    --accent: #3987e5; --warm: #d95926; --good: #0ca30c;
+    --border: rgba(255,255,255,0.11);
+    --wash: rgba(57,135,229,0.14);
+    --warm-wash: rgba(217,89,38,0.16);
+    --good-wash: rgba(12,163,12,0.16);
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--plane); color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px;
+           display: flex; flex-direction: column; gap: 22px; }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 11px;
+             letter-spacing: 0.13em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 0; font-size: clamp(25px, 3.4vw, 34px); font-weight: 600;
+       letter-spacing: -0.02em; text-wrap: balance; }
+  .sub { margin: 0; max-width: 70ch; font-size: 16px; color: var(--ink-2); }
+
+  /* ---- scenario tabs ---- */
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tab {
+    font: inherit; font-size: 13.5px; cursor: pointer;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 15px; display: flex; align-items: center; gap: 9px;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .tab:hover { border-color: var(--axis); }
+  .tab[aria-selected="true"] { background: var(--wash); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tab .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .tab .dot.hit { background: var(--good); }
+  .tab .dot.miss { background: var(--warm); }
+
+  /* ---- transport ---- */
+  .transport {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px;
+  }
+  button.ctl {
+    font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
+    background: var(--raised); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 14px;
+    transition: border-color 120ms ease;
+  }
+  button.ctl:hover:not(:disabled) { border-color: var(--accent); }
+  button.ctl:disabled { opacity: 0.4; cursor: default; }
+  button.ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.ctl.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .scrub { display: flex; gap: 5px; margin-left: auto; }
+  .pip {
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--raised);
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+    display: grid; place-items: center; padding: 0;
+  }
+  .pip[aria-current="true"] { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .pip.hit { border-color: var(--good); color: var(--good); }
+  .pip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- main grid ---- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr); gap: 18px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 11px; padding: 18px; display: flex; flex-direction: column; gap: 14px;
+    min-width: 0;
+  }
+  .panel-title {
+    font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    padding-bottom: 9px; border-bottom: 1px solid var(--grid);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel-title .count { margin-left: auto; font-family: "IBM Plex Mono", monospace;
+                        letter-spacing: 0; text-transform: none; }
+
+  /* ---- conversation ---- */
+  .convo { display: flex; flex-direction: column; gap: 12px; }
+  .msg { display: flex; flex-direction: column; gap: 4px; max-width: 92%; }
+  .msg.user { align-self: flex-start; }
+  .msg.bot { align-self: flex-end; align-items: flex-end; }
+  .who { font-family: "IBM Plex Mono", monospace; font-size: 10px;
+         letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .bubble {
+    padding: 10px 14px; border-radius: 12px; font-size: 14.5px;
+    border: 1px solid var(--border); background: var(--raised);
+  }
+  .msg.user .bubble { border-bottom-left-radius: 4px; }
+  .msg.bot .bubble { background: var(--wash); border-color: transparent; border-bottom-right-radius: 4px; }
+  .msg.override .bubble { background: var(--warm-wash); border-color: var(--warm); }
+  .override-flag {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; color: var(--warm);
+  }
+
+  /* ---- state inspector ---- */
+  .state-rows { display: flex; flex-direction: column; gap: 10px; }
+  .srow { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; }
+  .skey { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+          min-width: 96px; flex: none; }
+  .sval { color: var(--ink); font-weight: 500; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px;
+    background: var(--raised); color: var(--ink-2);
+  }
+  .chip.fresh { border-color: var(--good); color: var(--good); background: var(--good-wash); font-weight: 600; }
+  .chip.empty { color: var(--muted); border-style: dashed; }
+  .badge {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+    border-radius: 5px; padding: 2px 8px; border: 1px solid currentColor;
+  }
+  .badge.buying { color: var(--accent); }
+  .badge.browsing { color: var(--warm); }
+
+  /* ---- recommendations ---- */
+  .recs { display: flex; flex-direction: column; gap: 6px; }
+  .rec {
+    display: grid; grid-template-columns: 26px minmax(0,1fr) auto; gap: 11px; align-items: center;
+    padding: 8px 10px; border-radius: 8px; border: 1px solid transparent;
+    background: var(--raised); min-width: 0;
+  }
+  .rec.target { border-color: var(--good); background: var(--good-wash); }
+  .rnum { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+          text-align: right; font-variant-numeric: tabular-nums; }
+  .rec.target .rnum { color: var(--good); font-weight: 600; }
+  .rtitle { font-size: 12.8px; line-height: 1.4; min-width: 0;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rmeta { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--muted);
+           white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+  .target-tag {
+    font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600;
+    letter-spacing: 0.06em; color: var(--good); display: block;
+  }
+
+  /* ---- outcome ---- */
+  .outcome {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    border-radius: 10px; padding: 14px 18px; font-size: 14.5px;
+    border: 1px solid var(--border);
+  }
+  .outcome.hit { background: var(--good-wash); border-color: var(--good); }
+  .outcome.miss { background: var(--warm-wash); border-color: var(--warm); }
+  .outcome b { font-weight: 600; }
+  .outcome .stat { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  .hidden-target {
+    font-size: 13px; color: var(--ink-2); border-top: 1px solid var(--grid);
+    padding-top: 12px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .hidden-target .lbl { font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+                        letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+  footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--grid);
+           padding-top: 16px; max-width: 76ch; }
+  code { font-family: "IBM Plex Mono", monospace; font-size: 0.9em;
+         background: var(--plane); border: 1px solid var(--border);
+         border-radius: 4px; padding: 1px 5px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="shell">
+  <header>
+    <div class="eyebrow">TechJam Conversational Search · session replay</div>
+    <h1>Watch the shopping agent find a hidden product</h1>
+    <p class="sub">
+      Four real sessions from the 200-sample public set, replayed turn by turn.
+      Every message, recommendation and state change below is captured from an
+      actual run — nothing is mocked. The customer's target is hidden from the
+      agent; the session ends the moment it appears in the top ten.
+    </p>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <div class="transport">
+    <button class="ctl" id="prev" type="button">← Prev</button>
+    <button class="ctl primary" id="play" type="button">▶ Play</button>
+    <button class="ctl" id="next" type="button">Next →</button>
+    <div class="scrub" id="scrub"></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-title">Conversation <span class="count" id="turncount"></span></div>
+      <div class="convo" id="convo"></div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:18px; min-width:0;">
+      <div class="panel">
+        <div class="panel-title">Agent state</div>
+        <div class="state-rows" id="state"></div>
+        <div class="hidden-target" id="hidden"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Top 10 recommendations <span class="count" id="rankinfo"></span></div>
+        <div class="recs" id="recs"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="outcome" id="outcome"></div>
+
+  <footer>
+    Scoring: a session ends at the first turn the target enters the top ten, and
+    MRR uses the rank at that first hit rather than the best rank ever reached.
+    A miss after ten turns counts as turn 11. The <code>boundary</code> session
+    here is a genuine failure, kept in rather than cut — it is the weakest
+    scenario at 0.500 hit rate on the full set.
+  </footer>
+</div>
+
+<script>
+const SESSIONS = /*__SESSIONS__*/null;
+
+const SCENARIO_LABEL = {
+  buying: "Buying",
+  browsing: "Browsing",
+  intent_override: "Intent override",
+  boundary: "Boundary",
+};
+
+let si = 0, ti = 0, timer = null;
+
+const $ = (id) => document.getElementById(id);
+
+function buildTabs() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  SESSIONS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", String(i === si));
+    const hit = s.hit_turn !== null;
+    b.innerHTML = `<i class="dot ${hit ? "hit" : "miss"}"></i>${SCENARIO_LABEL[s.scenario] || s.scenario}`;
+    b.addEventListener("click", () => { stop(); si = i; ti = 0; render(); });
+    tabs.appendChild(b);
+  });
+}
+
+function buildScrub() {
+  const s = SESSIONS[si];
+  const scrub = $("scrub");
+  scrub.innerHTML = "";
+  s.turns.forEach((t, i) => {
+    const b = document.createElement("button");
+    b.className = "pip" + (s.hit_turn === t.turn ? " hit" : "");
+    b.type = "button";
+    b.textContent = t.turn;
+    b.setAttribute("aria-current", String(i === ti));
+    b.setAttribute("aria-label", `Turn ${t.turn}`);
+    b.addEventListener("click", () => { stop(); ti = i; render(); });
+    scrub.appendChild(b);
+  });
+}
+
+function renderConvo() {
+  const s = SESSIONS[si];
+  const box = $("convo");
+  box.innerHTML = "";
+  for (let i = 0; i <= ti; i++) {
+    const t = s.turns[i];
+    const u = document.createElement("div");
+    u.className = "msg user" + (t.override_fired ? " override" : "");
+    u.innerHTML =
+      `<span class="who">Customer · turn ${t.turn}</span>` +
+      `<div class="bubble">${esc(t.user)}</div>` +
+      (t.override_fired ? `<span class="override-flag">⚠ OVERRIDE DETECTED — prior constraints cleared</span>` : "");
+    box.appendChild(u);
+
+    const a = document.createElement("div");
+    a.className = "msg bot";
+    a.innerHTML =
+      `<span class="who">Agent${t.ask ? " · asks " + esc(t.ask) : ""}</span>` +
+      `<div class="bubble">${esc(t.agent || "—")}</div>`;
+    box.appendChild(a);
+  }
+  box.lastElementChild?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function renderState() {
+  const s = SESSIONS[si];
+  const t = s.turns[ti];
+  const slots = t.disclosed_after || {};
+  const fresh = t.new_slots || {};
+  const keys = Object.keys(slots);
+
+  const chips = keys.length
+    ? keys.map((k) => `<span class="chip ${k in fresh ? "fresh" : ""}">${esc(k)}: ${esc(slots[k])}</span>`).join("")
+    : `<span class="chip empty">nothing disclosed yet</span>`;
+
+  $("state").innerHTML = `
+    <div class="srow"><span class="skey">intent</span>
+      <span class="badge ${t.intent}">${t.intent}</span></div>
+    <div class="srow"><span class="skey">asking about</span>
+      <span class="sval">${t.ask ? esc(t.ask) : "— recommending"}</span></div>
+    <div class="srow" style="align-items:flex-start">
+      <span class="skey">slots filled</span><span class="chips">${chips}</span></div>
+    <div class="srow"><span class="skey">target rank</span>
+      <span class="sval">${t.target_rank ? "#" + t.target_rank + " — found" : "not in top 10"}</span></div>
+  `;
+
+  $("hidden").innerHTML =
+    `<span class="lbl">Hidden target (agent cannot see this)</span>` +
+    `<span>${esc(s.target.title)}</span>` +
+    `<span style="color:var(--muted); font-family:'IBM Plex Mono',monospace; font-size:11.5px">` +
+    `${esc(s.target.category)} · ★ ${s.target.rating} · ${fmtn(s.target.ratings)} ratings</span>`;
+}
+
+function renderRecs() {
+  const t = SESSIONS[si].turns[ti];
+  $("rankinfo").textContent = t.target_rank ? `target at #${t.target_rank}` : "";
+  $("recs").innerHTML = t.recs.map((r, i) => `
+    <div class="rec ${r.is_target ? "target" : ""}">
+      <span class="rnum">${i + 1}</span>
+      <span class="rtitle">${r.is_target ? '<span class="target-tag">◆ TARGET</span>' : ""}${esc(r.title)}</span>
+      <span class="rmeta">★ ${r.rating ?? "–"}<br>${fmtn(r.ratings)}</span>
+    </div>`).join("");
+}
+
+function renderOutcome() {
+  const s = SESSIONS[si];
+  const hit = s.hit_turn !== null;
+  const o = $("outcome");
+  o.className = "outcome " + (hit ? "hit" : "miss");
+  o.innerHTML = hit
+    ? `<b>Found on turn ${s.hit_turn}</b>
+       <span class="stat">rank #${s.rank_at_hit}</span>
+       <span class="stat">reciprocal rank ${(1 / s.rank_at_hit).toFixed(3)}</span>
+       <span style="color:var(--ink-2)">Session ends here — the target reached the top ten.</span>`
+    : `<b>Not found in 10 turns</b>
+       <span class="stat">scored as turn 11</span>
+       <span style="color:var(--ink-2)">Kept in the demo deliberately: this is what a failure looks like.</span>`;
+}
+
+function render() {
+  buildTabs();
+  buildScrub();
+  $("turncount").textContent = `turn ${SESSIONS[si].turns[ti].turn} of ${SESSIONS[si].turns.length}`;
+  renderConvo(); renderState(); renderRecs(); renderOutcome();
+  $("prev").disabled = ti === 0;
+  $("next").disabled = ti === SESSIONS[si].turns.length - 1;
+}
+
+function step() {
+  if (ti < SESSIONS[si].turns.length - 1) { ti++; render(); }
+  else stop();
+}
+function stop() { if (timer) { clearInterval(timer); timer = null; $("play").textContent = "▶ Play"; } }
+function play() {
+  if (timer) return stop();
+  if (ti === SESSIONS[si].turns.length - 1) { ti = 0; render(); }
+  $("play").textContent = "❚❚ Pause";
+  timer = setInterval(step, 1900);
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtn = (n) => typeof n === "number" ? n.toLocaleString("en-US") : "–";
+
+$("prev").addEventListener("click", () => { stop(); if (ti > 0) { ti--; render(); } });
+$("next").addEventListener("click", () => { stop(); step(); });
+$("play").addEventListener("click", play);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") { stop(); step(); }
+  if (e.key === "ArrowLeft") { stop(); if (ti > 0) { ti--; render(); } }
+});
+
+render();
+</script>
