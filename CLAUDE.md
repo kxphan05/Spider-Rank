@@ -802,12 +802,43 @@ Notable things confirmed empirically along the way, not just assumed:
     constraints are verbatim substrings of the target's own text), so it
     systematically under-prices the dense leg.
 
-    **Browsing track: sweep was still running when this was written.** It ships
-    at ratio 1.20, which on the buying curve corresponds to roughly -0.045, so
-    if the shape repeats the retune is worth more there than on buying. Note
-    when reading it that the sweep scores all 200 samples while only ~80 route
-    to browsing, so deltas are diluted by roughly 0.4x — read the shape, and
-    break out `scenario_metrics` from the JSON for the per-slice numbers.
+    **Browsing track: measured flat. Do not tune it.**
+
+    ```
+    browsing track        Technical   overall hits   browsing-scenario hits
+      ratio 0.00             0.6036        148/200            66/80
+      ratio 0.25             0.6011        147/200            65/80
+      ratio 0.50             0.6054        149/200            65/80
+      ratio 0.75             0.6063        149/200            65/80
+      ratio 1.00             0.6110        150/200            65/80
+      ratio 1.25             0.6068        149/200            65/80
+      ratio 1.50             0.6004        147/200            63/80
+      (ships at 1.20 -> 0.6070)
+    ```
+
+    The apparent +0.0040 peak at ratio 1.00 is **one session** — 150/200 against
+    149/200 — and the browsing-scenario column moves by at most a single session
+    across the entire sweep. There is no optimum here; the measurement cannot
+    distinguish any setting from any other in 0.0–1.5. Leave browsing at 1.20
+    and do not re-run this.
+
+    **Two methodological notes, both of which cost a wrong conclusion first.**
+    A +0.0040 delta on 200 samples *looks* like it clears a ±0.0025 noise
+    estimate and does not: convert rates to absolute session counts before
+    believing any small delta, because 0.7500 vs 0.7450 is one session. And the
+    two tracks are **not separable** — varying the *browsing* weights visibly
+    moved *buying-scenario* metrics (0.675 -> 0.700), because `scenario_type` is
+    the sample's ground-truth label while the weights key off the *classifier's*
+    per-turn label, and the classifier deliberately drifts buying-ward as
+    attributes accumulate (`classifier.py:14`). Per-track sweeps therefore
+    measure overlapping, not disjoint, populations.
+
+    **Sharper read of where the buying gain comes from.** Buying-scenario hit
+    rate is 0.688 at both ratio 0.00 and the shipped 0.50 — removing dense finds
+    *no additional targets*. The whole gain is MRR (0.4372 vs 0.3876) plus
+    intent_override hit rate (0.833 vs 0.800). That is #14's mechanism confirmed
+    at finer grain: the dense leg does not add recall on this benchmark, it
+    demotes items BM25 had already ranked well.
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
