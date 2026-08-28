@@ -13,8 +13,8 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.745    MRR  0.3876    MTTC  5.09    Efficiency  0.591
-TechnicalScore  0.6070
+HitRate@10  0.750    MRR  0.4096    MTTC  4.985   Efficiency  0.6015
+TechnicalScore  0.6182
 ```
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
@@ -25,10 +25,10 @@ By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 0.8125 | 0.4313 | 4.38 |
-| buying | 80 | 0.6875 | 0.3457 | 5.26 |
-| intent_override | 30 | 0.8000 | 0.4662 | 5.93 |
-| boundary | 10 | 0.5000 | 0.1375 | 6.90 |
+| browsing | 80 | 0.8250 | 0.4700 | 4.29 |
+| buying | 80 | 0.6875 | 0.3310 | 5.10 |
+| intent_override | 30 | 0.8000 | 0.5330 | 5.90 |
+| boundary | 10 | 0.5000 | 0.1860 | 6.90 |
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
@@ -47,7 +47,7 @@ conditions three downstream choices rather than selecting a separate pipeline.
 **Dual-track hybrid retrieval.** BM25 (SQLite FTS5) and dense cosine retrieval
 run independently over the full 50k catalog and are combined by weighted
 reciprocal rank fusion. The weights are intent-conditioned: buying keeps a
-BM25-heavy 2.0/1.0 for precision on hard constraints, browsing shifts to
+BM25-heavy 2.0/0.5 for precision on hard constraints, browsing shifts to
 1.25/1.5 for broader semantic matching and additionally gets an MMR diversity
 re-rank, pinned so diversity can never evict the top matches.
 
@@ -156,11 +156,15 @@ Two guards ship as a result:
 ## 6. Ablations, and the one result that complicates this submission
 
 Each component was disabled independently against the full public set
-(`--limit` omitted; all 200 samples):
+(`--limit` omitted; all 200 samples). **These rows were measured at the
+previous buying fusion weight (dense:bm25 ratio 0.50, TechnicalScore 0.6070),
+before the change described at the end of this section.** They are reported at
+that baseline rather than re-scaled, because the deltas are only meaningful
+against the configuration they were measured in:
 
 | configuration | HitRate | MRR | MTTC | TechnicalScore | Δ |
 |---|---:|---:|---:|---:|---:|
-| **as shipped** | 0.7450 | 0.3876 | 5.090 | **0.6070** | — |
+| **as measured then** | 0.7450 | 0.3876 | 5.090 | **0.6070** | — |
 | − masked LM | 0.7450 | 0.3841 | 5.085 | 0.6060 | −0.0010 |
 | − both classifiers | 0.7400 | 0.3728 | 5.070 | 0.6004 | −0.0065 |
 | − dense retrieval | 0.7450 | 0.4328 | 5.035 | 0.6216 | **+0.0147** |
@@ -182,7 +186,7 @@ Removing it *raises* TechnicalScore 0.6070 → 0.6216. Note HitRate is
 contribution to the fusion demotes correct items BM25 had already ranked well
 (MRR 0.3876 → 0.4328).
 
-**We have not acted on this, and the reason is a measured confound.** The
+**We acted on this only partly, and the reason is a measured confound.** The
 local simulator builds its customer messages from the target product's own
 catalog fields: 359 of 400 turn-1 hard constraints (89.7%) appear as *verbatim
 substrings* of the target's own text, and the 41 that don't are only
@@ -194,8 +198,32 @@ dropping dense is worth +0.015; if it paraphrases at all, dropping it removes
 the only defense. We kept dense retrieval because we cannot distinguish those
 two worlds from the public set, and the downside is asymmetric.
 
+**What we did instead was sweep the weight rather than remove the leg**
+(`scripts/sweep_fusion_weights.py`, 200 samples per point; only the dense:bm25
+ratio matters, since weighted RRF is scale-invariant per leg):
+
+| buying ratio | HitRate | MRR | MTTC | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| 0.00 (no dense) | 0.7500 | 0.4372 | 5.020 | 0.6258 |
+| **0.25 (shipped)** | **0.7500** | **0.4096** | **4.985** | **0.6182** |
+| 0.50 (previous) | 0.7450 | 0.3876 | 5.090 | 0.6070 |
+| 1.00 | 0.7200 | 0.3615 | 5.225 | 0.5839 |
+| 1.50 | 0.6650 | 0.3388 | 5.720 | 0.5397 |
+
+The curve is **strictly monotone decreasing with no interior optimum** — the
+hoped-for flat region near the old value does not exist, and 0.50 was already
+well down the slope. HitRate falls too, not just MRR: at high dense weight the
+dense leg does not merely reorder, it displaces correct BM25 results out of
+the top 10 entirely. Halving the weight to 0.25 captures **+0.0112 of the
++0.0188** available from removing dense outright, which keeps a real dense leg
+as paraphrase insurance at roughly 40% of its former local cost. The browsing
+track was swept too and measured **flat** across 0.0–1.5 (every setting within
+one session of every other), so it was left alone.
+
 The honest summary: **the shipped configuration is deliberately not the
-highest-scoring one we measured locally.**
+highest-scoring one we measured locally.** We took the part of the dense-leg
+finding that is robust to the confound (the weight was too high) and declined
+the part that is not (removing the leg entirely).
 
 ---
 
@@ -210,8 +238,13 @@ highest-scoring one we measured locally.**
    (`"red"` matched inside *embroidered*). The fix is correct and currently
    *costs* 0.005, because the ±1/0 boost weights were tuned against the
    inflated coverage and have not been retuned.
-3. **Budget extraction requires a literal `$`** — "fifty dollars" or
-   "around 50" will not match.
+3. **Budget extraction needs an explicit unit.** `$80`, `80 dollars`,
+   `45 bucks` and `fifty dollars` all parse, as do ceiling/floor phrasings
+   (`under`, `over`, `no more than`); a bare amount with no `$` and no unit
+   ("around 50") does not. Note this whole path is **unverifiable on the
+   public set**: the evaluator's `classify_constraint()` never buckets any
+   sampled constraint as `budget`, so the correct regression check was that
+   the fix leaves the score bit-identical, not that it raises it.
 4. **No cross-encoder or LLM reranking stage.** Spec § 4.2.I names "LLM
    Semantic Ranking" as a pillar; ranking here is hybrid retrieval +
    attribute boost + MMR, with no learned reranker.
