@@ -32,14 +32,32 @@ P(material=lace | category=Necklaces Pendant Necklaces) = 0.867, which is not
 a fact about jewelry -- it is "necklace" containing "lace". Co-occurrence
 amplifies extraction bugs into confident nonsense, so the extractor was fixed
 first (see attributes.py `_vocab_matcher`).
+
+**This lives in `scripts/`, not `starter/`, because no agent code path reaches
+it.** The signal is real and measured, but wiring it into
+`Agent._infer_attributes` alongside the masked LM is an experiment that has not
+been run (NEXT_STEPS #4). Keeping it out of the package keeps 200 lines of
+unreachable code out of the submitted bundle, which copies `starter/` verbatim
+into `src/`. Move it back when it earns its place by measurement.
+
+Usage:
+    uv run python3 scripts/cooccurrence.py
+    uv run python3 scripts/cooccurrence.py --attribute color --top 15
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
+
+from _common import DEFAULT_CATALOG  # noqa: F401
+
+# _common puts the repo root on sys.path as an import side effect, so the
+# starter import below resolves when this script is run directly.
+from starter.attributes import AttributeIndex  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +157,15 @@ class CooccurrenceIndex:
         )
         return cls(dict(joint), dict(marginals), dict(support))
 
+    def evidence_pairs(self, min_support: int = MIN_EVIDENCE_SUPPORT) -> list[tuple[str, str, str]]:
+        """(evidence_attr, evidence_value, target_attr) triples with enough support.
+
+        Public so callers can enumerate what the index actually learned without
+        reaching into its counts.
+        """
+        return [key for key, counts in self._joint.items()
+                if sum(counts.values()) >= min_support]
+
     def marginal(self, attribute: str, value: str) -> float:
         totals = self._marginals.get(attribute)
         if not totals:
@@ -200,3 +227,51 @@ class CooccurrenceIndex:
             if lift > best_lift:
                 best_value, best_lift = value, lift
         return (best_value, best_lift) if best_value is not None else None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Report the strongest attribute co-occurrence priors in the catalog.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--catalog", type=Path, default=Path(DEFAULT_CATALOG))
+    parser.add_argument("--attribute", choices=COOCCURRENCE_ATTRIBUTES, default=None,
+                        help="target attribute to predict (default: material and color -- "
+                             "'category' is excluded because the agent never needs to "
+                             "predict one, and its thousands of tiny buckets produce huge "
+                             "lifts over near-zero priors)")
+    parser.add_argument("--top", type=int, default=20, help="rows to print (default 20)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    index = CooccurrenceIndex.build(args.catalog, AttributeIndex.build(args.catalog))
+
+    targets = [args.attribute] if args.attribute else ["material", "color"]
+    rows = []
+    for evidence_attr, evidence_value, target_attr in index.evidence_pairs():
+        if target_attr not in targets:
+            continue
+        prediction = index.predict(target_attr, {evidence_attr: evidence_value})
+        if prediction is None:
+            continue
+        value, lift = prediction
+        rows.append((lift, evidence_attr, evidence_value, target_attr, value,
+                     index.conditional(target_attr, value, {evidence_attr: evidence_value}),
+                     index.marginal(target_attr, value)))
+
+    # Sorted by posterior, not lift. Lift over a near-zero marginal is huge and
+    # meaningless -- ranking by it put P=0.002 predictions at the top.
+    rows.sort(key=lambda row: row[5], reverse=True)
+    print(f"\n{len(rows)} predictions of {'/'.join(targets)} clear MIN_LIFT={MIN_LIFT} "
+          f"and MIN_EVIDENCE_SUPPORT={MIN_EVIDENCE_SUPPORT}, ranked by posterior\n")
+    header = f"{'lift':>6}  {'P(target|evidence)':>18}  {'marginal':>9}  prediction"
+    print(header)
+    print("-" * (len(header) + 40))
+    for lift, ev_attr, ev_value, tgt_attr, tgt_value, posterior, prior in rows[: args.top]:
+        print(f"{lift:6.1f}x {posterior:18.3f}  {prior:9.3f}  "
+              f"{tgt_attr}={tgt_value}  <-  {ev_attr}={ev_value}")
+
+    print("\nNot wired into the agent -- see the module docstring.")
+
+
+if __name__ == "__main__":
+    main()

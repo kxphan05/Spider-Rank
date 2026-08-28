@@ -34,12 +34,13 @@ import argparse
 import json
 import time
 
-from _common import DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store  # noqa: F401
+from _common import (DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store,  # noqa: F401
+                     score_once)
 
 # _common puts the repo root on sys.path as an import side effect, so the
 # starter/evaluator imports below resolve when this script is run directly.
 import starter.agent as agent_mod  # noqa: E402
-from evaluator.local_evaluator import catalog_index, evaluate, load_jsonl  # noqa: E402
+from evaluator.local_evaluator import catalog_index, load_jsonl  # noqa: E402
 
 # Current shipped ratios, for annotating the curve.
 CURRENT = {
@@ -57,12 +58,6 @@ def set_ratio(track: str, ratio: float) -> None:
     if track in ("browsing", "both"):
         agent_mod.BROWSING_BM25_WEIGHT = 1.0
         agent_mod.BROWSING_DENSE_WEIGHT = ratio
-
-
-def run_once(samples, catalog, agent_kwargs=None) -> dict:
-    catalog_ids, categories, products = catalog
-    agent = agent_mod.Agent(**(agent_kwargs or {}))
-    return evaluate(agent, samples, catalog_ids, categories, products)
 
 
 def main() -> None:
@@ -95,7 +90,7 @@ def main() -> None:
     for ratio in ratios:
         set_ratio(args.track, ratio)
         start = time.perf_counter()
-        report = run_once(samples, catalog)
+        report, _ = score_once(samples, catalog)
         elapsed = (time.perf_counter() - start) / 60
         score = report["recommended_technical_score"]
         if abs(ratio - CURRENT[args.track if args.track != "both" else "buying"]) < 1e-9:

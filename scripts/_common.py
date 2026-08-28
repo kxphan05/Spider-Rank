@@ -1,9 +1,9 @@
 """Shared bootstrap for the scripts in this directory.
 
-Every script here needs the same three things, and each used to re-derive
-them: the repo root on `sys.path` (so `starter` / `evaluator` import when the
-script is run directly), the two dataset paths, and -- for anything that
-constructs an `Agent` -- an isolated user-profile store.
+Every script here needs the same few things, and each used to re-derive them:
+the repo root on `sys.path` (so `starter` / `evaluator` import when the script
+is run directly), the two dataset paths, an isolated user-profile store for
+anything that constructs an `Agent`, and -- for the sweeps -- one scored run.
 
 Import this first; it puts the repo root on `sys.path` as an import side
 effect, so the `starter` / `evaluator` imports that follow resolve:
@@ -50,3 +50,23 @@ def isolate_profile_store(path: str | None = None, *, announce: bool = True) -> 
             print(f"isolating profile store at {path}", file=sys.stderr)
     os.environ[STORE_PATH_ENV] = path
     return path
+
+
+def score_once(samples, catalog, **agent_kwargs):
+    """Build a fresh Agent and score it on `samples`. Returns (report, agent).
+
+    Shared by the parameter sweeps, which all follow the same shape: mutate a
+    module-level constant, build an agent that reads it, score, repeat. The
+    agent comes back so callers can report which components actually came up
+    live -- a sweep whose conclusions depend on the dense leg or the masked LM
+    should say whether that leg was there (CLAUDE.md #15: the degrade is
+    silent).
+
+    `catalog` is the tuple returned by `evaluator.local_evaluator.catalog_index`.
+    """
+    from evaluator.local_evaluator import evaluate
+    from starter.agent import Agent
+
+    catalog_ids, categories, products = catalog
+    agent = Agent(**agent_kwargs)
+    return evaluate(agent, samples, catalog_ids, categories, products), agent
