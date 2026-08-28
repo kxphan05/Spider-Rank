@@ -162,6 +162,18 @@ centroid classifier on in-distribution, held-out-template, and
 out-of-distribution pools. Saving is opt-in; the measured verdict is "don't
 ship it" ("Known open problems" #12).
 
+Fusion-weight sweep: `uv run python3 scripts/sweep_fusion_weights.py --track buying`
+— reports TechnicalScore as a curve against the dense:bm25 ratio (only the ratio
+matters; weighted RRF is scale-invariant per leg). Companion:
+`scripts/sweep_prior_leg.py`, which sweeps a *third* RRF leg built from catalog
+priors (`popularity`, `rating`) or from the user profile (`profile_rating`).
+Note the two profile-independent variants are the controls — a gain from
+`profile_rating` means nothing unless it beats `rating`.
+
+Intent-detection research + staged plan: `docs/intent_detection_plan.md`
+(industry practice, where this pipeline is strong vs thin, and why slot filling
+rather than the intent classifier is the bottleneck).
+
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
 departure from the null, profile field→scenario_type, profile-key
