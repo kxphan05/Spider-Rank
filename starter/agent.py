@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .attributes import (AttributeIndex, COLORS, FILTERABLE_ATTRIBUTES, MATERIALS,
                          budget_constraint_satisfied, extract_disclosed_value,
                          select_dynamic_attribute)
-from .classifier import EmbeddingIntentClassifier, EmbeddingOverrideDetector, classify_intent, detected_attributes
+from .classifier import (
+    EmbeddingIntentClassifier,
+    EmbeddingNonAnswerDetector,
+    EmbeddingOverrideDetector,
+    classify_intent,
+    classify_reply_lexically,
+    detected_attributes,
+)
+from .session_belief import SessionBelief
 from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attribute
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
 from .user_profile import UserProfileStore
@@ -145,12 +153,86 @@ class RoutingParams:
     diversify: bool
 
 
-def routing_params(intent_label: str) -> RoutingParams:
+def routing_params(intent_label: str, belief: SessionBelief | None = None) -> RoutingParams:
     if intent_label == "buying":
-        return RoutingParams(BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, MIN_ENTROPY_BUYING, diversify=False)
-    return RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
+        params = RoutingParams(BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, MIN_ENTROPY_BUYING, diversify=False)
+    else:
+        params = RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
+    # Runtime re-orchestration (spec Pillar III, "Adaptive Orchestration"):
+    # once the customer has stopped producing new constraints, no further
+    # information is coming, so there is nothing left for the exploratory
+    # (dense/diverse) track to earn -- commit to precision on what was
+    # actually stated.
+    #
+    # Gated by an explicit flag, NOT by EXHAUSTED_BM25_BONUS == 0.0. An
+    # earlier revision keyed only off `belief.exhausted` and set diversify
+    # False unconditionally inside this branch, which meant the "all switches
+    # at identity" baseline silently lost the browsing MMR re-rank and scored
+    # 0.6154 instead of the shipped 0.6182. A knob whose zero value is not
+    # actually the identity is a measurement trap, not just a bug.
+    if BELIEF_REORCHESTRATION and belief is not None and belief.exhausted:
+        params = replace(params, bm25_weight=params.bm25_weight + EXHAUSTED_BM25_BONUS,
+                         diversify=False)
+    return params
 
 DIVERSIFY_LAMBDA = 0.5
+
+# --- Within-session adaptive layer (spec Pillar III, "Self-Evolution:
+# Dynamic Context Programming"; and 4.3's in-scope "slot decay over time").
+# All three switches below default to the pre-existing behaviour so each can
+# be A/B'd independently against a bit-reproducible baseline.
+
+# Drop a contentless clarifying reply from the query history instead of
+# searching the catalog with it. A session has a mean of only 2.09 answerable
+# attribute buckets left after turn 1 against an MTTC of ~5, so roughly three
+# asks in five come back empty and each one contributes its wording
+# ("preference", "judgment", the attribute name) to BM25 as if the customer
+# had said something. See session_belief.py for the derivation.
+#
+# MEASURED AND REJECTED -- do not re-enable without reading CLAUDE.md #19.
+# This costs -0.0410 TechnicalScore on the full public set (HitRate 0.7450 ->
+# 0.6850, i.e. 149 -> 137 of 200 sessions). The detector is not the problem:
+# every one of its false positives is the simulator's near-contentless
+# constraint template ("For that, what matters is: Imported; Pull On
+# closure."), which *looks* like boilerplate and is in fact an exact-match key
+# to the target, because 89.7% of customer text on this benchmark is a
+# verbatim substring of the target's own catalog record (CLAUDE.md #14). Here,
+# semantically contentless customer text is still retrieval signal, so query
+# pruning cannot be made safe by improving the classifier.
+#
+# The non-answer *observation* is kept and still feeds SessionBelief -- it is
+# the query surgery that fails, not the detection.
+SKIP_NON_ANSWERS_IN_QUERY = False
+
+# Geometric decay applied to a disclosed slot's boost per turn since it was
+# stated (_boost_by_disclosed). 1.0 == no decay == the shipped behaviour, and
+# is the identity setting the A/B baseline must reproduce exactly.
+#
+# Motivation: override handling is all-or-nothing -- respond() wipes
+# `disclosed` outright on a detected pivot -- and CLAUDE.md #17 measured that
+# the blunt form of that idea is structurally wrong (restarting the query from
+# the pivot message scored -0.0580, because turn 1 carries the category and
+# the pivot carries only the changed attribute). Decay is the graceful middle:
+# a stale early constraint fades rather than being kept at full strength or
+# discarded entirely.
+SLOT_DECAY = 1.0
+
+# Pick the next question by the session's own answerability belief rather than
+# the static FALLBACK_ATTRIBUTE_ORDER. The belief is *initialized* to that
+# order's marginals, so turn 1 behaviour is identical either way -- this
+# strictly generalizes the #9 reorder rather than replacing it.
+BELIEF_DRIVEN_QUESTIONS = False
+
+# Added to the BM25 leg's weight once the belief reports the card exhausted.
+# 0.0 disables the re-orchestration and is the identity setting.
+EXHAUSTED_BM25_BONUS = 0.0
+BELIEF_REORCHESTRATION = False
+
+# Prepend a plain-language rationale to `turn_response.message` (spec's
+# "transparent recommendation explanations"). Score-neutral by construction --
+# the evaluator never reads the message back -- so this is on by default and
+# judged on the demo, not the benchmark.
+EXPLAIN_RECOMMENDATIONS = True
 
 # Long-term profile carry-over (user_profile.py): a profile_key is a content
 # hash of an anonymized profile dict with no customer id, so two sessions
@@ -229,6 +311,15 @@ class SessionState:
     # identity for the long-term profile store; set once in reset().
     profile_key: str | None = None
     profile_session_index: int = 0
+    # Turn each disclosed attribute was stated on, for SLOT_DECAY. Parallel to
+    # `disclosed` rather than folded into it: `disclosed` is passed straight
+    # through to _retrieve and _infer_attributes, and keeping it a plain
+    # attribute->value mapping keeps those signatures unchanged.
+    disclosed_turn: dict[str, int] = field(default_factory=dict)
+    # Running within-session estimate of what this customer can still answer.
+    belief: SessionBelief = field(default_factory=SessionBelief)
+    # The attribute asked last turn, whose outcome this turn's reply reveals.
+    pending_ask: str | None = None
 
 
 MAX_QUERY_CHARS = 2000
@@ -252,6 +343,7 @@ def _next_attribute(
     candidate_pool: list[str],
     attribute_index: AttributeIndex,
     intent_label: str,
+    belief: SessionBelief | None = None,
 ) -> str | None:
     # Skip attributes already evidenced in the accumulated text (e.g. a
     # buying session's turn-1 message names a material) -- asking about it
@@ -277,7 +369,14 @@ def _next_attribute(
 
     # Nothing structural is worth asking about (either excluded, or the
     # current pool already agrees on material/color/budget) -- fall back to
-    # the fixed order for attributes we can't score entropy for.
+    # attributes we can't score entropy for, most-answerable first.
+    #
+    # The belief is initialized to exactly FALLBACK_ATTRIBUTE_ORDER's measured
+    # marginals (session_belief.ANSWERABILITY_PRIOR), so on turn 1 the two
+    # branches below agree by construction -- this generalizes the #9 reorder
+    # to react to what this customer actually does, it does not replace it.
+    if BELIEF_DRIVEN_QUESTIONS and belief is not None:
+        return belief.best(excluded)
     for attribute in FALLBACK_ATTRIBUTE_ORDER:
         if attribute not in excluded:
             return attribute
@@ -333,9 +432,11 @@ class Agent:
 
         self.intent_classifier: EmbeddingIntentClassifier | None = None
         self.override_detector: EmbeddingOverrideDetector | None = None
+        self.non_answer_detector: EmbeddingNonAnswerDetector | None = None
         if embedding_model is not None:
             self.intent_classifier = EmbeddingIntentClassifier(embedding_model)
             self.override_detector = EmbeddingOverrideDetector(embedding_model)
+            self.non_answer_detector = EmbeddingNonAnswerDetector(embedding_model)
 
         self._sessions: dict[str, SessionState] = {}
 
@@ -373,21 +474,36 @@ class Agent:
             if self.override_detector is not None and self.override_detector.is_override(user_message):
                 logger.debug("respond(%s, turn=%s): override detected, clearing disclosed/asked state", session_id, turn)
                 state.disclosed.clear()
+                state.disclosed_turn.clear()
                 state.profile_hint.clear()
                 state.asked_attributes.clear()
-            state.recent_messages.append(user_message)
-            del state.recent_messages[:-RECENT_WINDOW]
+            # Observe what last turn's question actually bought us -- the
+            # feedback signal the agent has never had. `asked_attributes`
+            # records that a question was asked; nothing recorded whether it
+            # was answered, and extract_disclosed_value covers only
+            # material/color/budget, so an answer about style or feature is
+            # invisible to it either way.
+            contentless = self._is_non_answer(user_message)
+            state.belief.observe(state.pending_ask, was_answered=not contentless)
+            # A contentless reply carries no constraint but real query noise:
+            # _build_query joins recent_messages into the BM25 and dense query,
+            # so "I don't have an additional preference for color." would be
+            # searched against the catalog as if the customer had said it.
+            if not (contentless and SKIP_NON_ANSWERS_IN_QUERY):
+                state.recent_messages.append(user_message)
+                del state.recent_messages[:-RECENT_WINDOW]
 
         for attribute in FILTERABLE_ATTRIBUTES:
             value = extract_disclosed_value(attribute, user_message)
             if value is not None:
                 state.disclosed[attribute] = value
+                state.disclosed_turn[attribute] = turn if isinstance(turn, int) else 1
                 self.profile_store.record_disclosure(state.profile_key, state.profile_session_index, attribute, value)
 
         query = _build_query(state)
 
         signal = self.intent_classifier.classify(query) if self.intent_classifier is not None else classify_intent(query)
-        routing = routing_params(signal.label)
+        routing = routing_params(signal.label, state.belief)
         logger.debug(
             "respond(%s, turn=%s): intent=%s score=%+.2f bm25_w=%.2f dense_w=%.2f mmr=%s min_entropy=%.2f asked=%s",
             session_id, turn, signal.label, signal.score,
@@ -399,16 +515,29 @@ class Agent:
         if inferred:
             logger.debug("respond(%s, turn=%s): LM-inferred %s", session_id, turn, inferred)
         candidate_pool = self._retrieve(
-            query, top_k, max(top_k, ENTROPY_POOL_SIZE), signal.label, state.disclosed, inferred
+            query, top_k, max(top_k, ENTROPY_POOL_SIZE), signal.label, state.disclosed, inferred,
+            state.disclosed_turn, turn if isinstance(turn, int) else 1, state.belief,
         )
         recommendations = candidate_pool[:top_k]
 
-        attribute = _next_attribute(state, query, candidate_pool, self.attribute_index, signal.label)
+        attribute = _next_attribute(state, query, candidate_pool, self.attribute_index,
+                                    signal.label, state.belief)
         if attribute is not None:
             state.asked_attributes.append(attribute)
             message = ATTRIBUTE_QUESTIONS[attribute]
         else:
             message = "Here are the closest matches I found so far."
+        state.pending_ask = attribute
+
+        if EXPLAIN_RECOMMENDATIONS:
+            try:
+                rationale = self._explain(state, signal, routing, attribute, len(recommendations))
+            except Exception:
+                # Never let the rationale cost a turn: evaluate() blanks the
+                # whole response if `message` is not a str.
+                logger.exception("explanation failed; falling back to the plain message")
+            else:
+                message = f"{rationale} {message}" if attribute is not None else rationale
 
         if attribute is not None and attribute not in ALLOWED_ATTRIBUTES:
             # docs/agent_api_contract.json constrains ask_attribute to an
@@ -458,6 +587,9 @@ class Agent:
         intent_label: str,
         disclosed: dict[str, str] | None = None,
         inferred: dict[str, str] | None = None,
+        disclosed_turn: dict[str, int] | None = None,
+        turn: int = 1,
+        belief: SessionBelief | None = None,
     ) -> list[str]:
         if not query.strip():
             return []
@@ -473,7 +605,7 @@ class Agent:
             except Exception:
                 logger.exception("dense search failed for query %r", query)
 
-        routing = routing_params(intent_label)
+        routing = routing_params(intent_label, belief)
         legs = [(bm25_ranked, routing.bm25_weight), (dense_ranked, routing.dense_weight)]
         rank_lists = [ranked for ranked, _ in legs if ranked]
         weights = [weight for ranked, weight in legs if ranked]
@@ -481,7 +613,8 @@ class Agent:
             return []
         fused = reciprocal_rank_fusion(rank_lists, top_n=pool_size, weights=weights)
 
-        candidates = self._boost_by_disclosed(fused, disclosed, inferred) if (disclosed or inferred) else fused
+        candidates = (self._boost_by_disclosed(fused, disclosed, inferred, disclosed_turn, turn)
+                      if (disclosed or inferred) else fused)
 
         if routing.diversify:
             return self._diversify(candidates, top_k)
@@ -530,11 +663,59 @@ class Agent:
         remainder = [cid for cid in candidate_ids if cid not in picked_set]
         return picked_ids + remainder
 
+    def _explain(self, state: SessionState, signal, routing: RoutingParams,
+                 attribute: str | None, n_recs: int) -> str:
+        """A one-line rationale for this turn's slate.
+
+        The spec lists "transparent recommendation explanations" as an
+        Innovation Direction and the contract leaves exactly one place to put
+        one: `turn_response.message` is a free string, while the response
+        object is additionalProperties:false and each recommendation admits
+        only parent_asin and score.
+
+        Score-neutral by construction -- the evaluator validates that
+        `message` is a str and then never reads it; `customer_reply()` keys
+        only off `ask_attribute`. So this is judged on the demo and the
+        report, not on TechnicalScore, and it must never raise: a non-str
+        `message` makes evaluate() blank the entire turn.
+        """
+        parts = []
+        if state.disclosed:
+            parts.append("matching on " + ", ".join(
+                f"{a}={v}" for a, v in sorted(state.disclosed.items())))
+        else:
+            parts.append("no hard constraints stated yet")
+        parts.append(f"{signal.label} track")
+        if routing.diversify:
+            parts.append("showing a deliberately varied slate")
+        if state.belief.exhausted:
+            parts.append("you've told me all you need to, so this is my best match on what I have")
+        elif attribute is not None:
+            parts.append(f"asking about {attribute} because it still splits these {n_recs} options")
+        return "Here are the closest matches. (" + "; ".join(parts) + ".)"
+
+    def _is_non_answer(self, text: str) -> bool:
+        """Did this reply decline to state a preference?
+
+        Embedding rule when available, lexical floor otherwise -- the offline
+        degrade is silent (CLAUDE.md #15), so a component with no fallback
+        just disappears. The error asymmetry runs opposite to the override
+        detector's: a false positive here discards a *real* disclosure, while
+        a false negative only leaves the previous behaviour in place, so both
+        rules are tuned toward precision and concrete attribute vocabulary
+        vetoes a non-answer verdict outright.
+        """
+        if self.non_answer_detector is not None:
+            return self.non_answer_detector.is_non_answer(text)
+        return classify_reply_lexically(text) == "non_answer"
+
     def _boost_by_disclosed(
         self,
         candidate_ids: list[str],
         disclosed: dict[str, str],
         inferred: dict[str, str] | None = None,
+        disclosed_turn: dict[str, int] | None = None,
+        turn: int = 1,
     ) -> list[str]:
         # Non-eliminating by construction: a stable resort, so nothing is
         # ever dropped -- unlike the hard-equality filter this replaced,
@@ -554,9 +735,21 @@ class Agent:
         # here. A short disclosed phrase dotted against a full-product
         # embedding is too diluted a signal; exact vocab agreement, even
         # imperfect, is the stronger one here.)
+        def slot_weight(attribute: str) -> float:
+            # Geometric decay in turns since the value was stated (spec 4.3,
+            # "slot decay over time"). SLOT_DECAY == 1.0 makes this the
+            # constant 1.0 and the whole resort bit-identical to before.
+            if SLOT_DECAY >= 1.0 or not disclosed_turn:
+                return 1.0
+            stated = disclosed_turn.get(attribute)
+            if stated is None:
+                return 1.0
+            return SLOT_DECAY ** max(0, turn - stated)
+
         def match_score(pid: str) -> float:
             score = 0.0
             for attribute, value in disclosed.items():
+                weight = slot_weight(attribute)
                 if attribute == "budget":
                     # A budget is a *bound*, not a value to match: "under $80"
                     # is satisfied by every product at or below $80, not only
@@ -571,12 +764,14 @@ class Agent:
                     satisfied = budget_constraint_satisfied(value, price)
                     if satisfied is None:
                         continue
-                    score += DISCLOSED_MATCH_BOOST if satisfied else -DISCLOSED_MISMATCH_PENALTY
+                    score += weight * (DISCLOSED_MATCH_BOOST if satisfied
+                                       else -DISCLOSED_MISMATCH_PENALTY)
                     continue
                 actual = self.attribute_index.value_for(attribute, pid)
                 if actual is None:
                     continue
-                score += DISCLOSED_MATCH_BOOST if actual == value else -DISCLOSED_MISMATCH_PENALTY
+                score += weight * (DISCLOSED_MATCH_BOOST if actual == value
+                                   else -DISCLOSED_MISMATCH_PENALTY)
             for attribute, value in (inferred or {}).items():
                 # Boost-only: agreement lifts, disagreement is ignored rather
                 # than penalized. See LM_INFERENCE_WEIGHT above for why the

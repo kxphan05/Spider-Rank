@@ -354,6 +354,142 @@ class EmbeddingOverrideDetector:
         return any(self._leans_override(vec) for vec in query_vecs)
 
 
+# Cue utterances for a reply that answers a clarifying question with *no new
+# information* -- the customer declines to state a preference for the attribute
+# that was asked about. This is a distinct question from override detection:
+# "no preference" is not a pivot, it is an exhausted slot.
+#
+# Deliberately NOT seeded from the local evaluator's templates. That simulator
+# emits two fixed non-answer strings ("I don't have an additional preference
+# for {a}." / "I don't have a preference for {a}; please use your judgment."),
+# and matching those literally would score perfectly locally while learning
+# nothing transferable -- the exact trap measured in CLAUDE.md #12/#13, where a
+# lexical rule hit 1.000 on turn-1 intent purely by memorizing two templates.
+# These are hand-written and varied in register for the same reason
+# PROTOTYPE_BUYING is.
+PROTOTYPE_NON_ANSWER = (
+    "I don't have a preference for that, up to you.",
+    "No preference there, whatever you think is best.",
+    "I'm not picky about that detail, it's fine either way.",
+    "No strong opinion on that one, doesn't matter much to me.",
+    "That's not something I care about, anything works.",
+    "I haven't thought about that, no requirement there.",
+    "Doesn't matter to me, you choose.",
+    "No idea honestly, surprise me.",
+    "I'll leave that one to your judgment.",
+    "Nothing specific in mind for that.",
+    "Anything is fine on that front.",
+    "I really don't mind either way.",
+)
+
+# The contrast class: a reply that *does* carry new constraint content. Kept
+# separate from PROTOTYPE_CONTINUATION rather than slicing it, because that
+# tuple is load-bearing for EmbeddingOverrideDetector and its composition is
+# pinned by the measured table in CLAUDE.md #7 -- editing it would silently
+# invalidate those numbers.
+PROTOTYPE_INFORMATIVE = (
+    "I also need it to be machine washable.",
+    "For that, what matters is a waterproof outer shell.",
+    "I'd like it in black, please.",
+    "Size medium works for me.",
+    "It should be under fifty dollars.",
+    "Cotton, ideally something breathable.",
+    "I need it for hiking in cold weather.",
+    "A slim fit would be best.",
+    "Leather, and preferably brown.",
+    "Something with a zip pocket on the inside.",
+    "I want a crew neck rather than a v-neck.",
+    "Stainless steel, nothing that tarnishes.",
+)
+
+# Lexical floor for the non-answer detector, used when the embedding model is
+# unavailable (CLAUDE.md #15: that degrade is silent, so every embedding
+# component needs a fallback or it disappears without a trace).
+_DECLINE_RE = re.compile(
+    r"\b(?:"
+    r"no (?:strong )?(?:preference|opinion|requirement|idea|thoughts?)"
+    r"|not? particular(?:ly)? (?:fussed|bothered)"
+    r"|(?:don'?t|do not|doesn'?t|does not) (?:have|really have|mind|care|matter)"
+    r"|not (?:picky|fussy|bothered|that fussed)"
+    r"|(?:doesn'?t|does not) matter"
+    r"|(?:up to|your) (?:you|judgment|judgement|call|choice)"
+    r"|(?:anything|whatever|either way|nothing specific) (?:works|is fine|goes)"
+    r"|haven'?t thought about"
+    r"|surprise me"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def classify_reply_lexically(text: str) -> str:
+    """Lexical floor: "non_answer" or "answer".
+
+    A reply that names concrete attribute vocabulary is informative whatever
+    else it says -- "I don't have a preference, but black is fine" discloses a
+    colour. Concrete content therefore overrides the decline cue rather than
+    the other way round, which is the safe direction: a false "non_answer"
+    would drop a real disclosure out of the query (the asymmetry that
+    CLAUDE.md #7 documents for the override detector, in the same shape).
+    """
+    if not isinstance(text, str) or not text.strip():
+        return "answer"
+    if detected_attributes(text):
+        return "answer"
+    return "non_answer" if _DECLINE_RE.search(text) else "answer"
+
+
+class EmbeddingNonAnswerDetector:
+    """Trimmed nearest-prototype detection of a contentless clarifying reply.
+
+    Answers "did that question actually buy us anything?" -- the observation
+    the agent has never had. `Agent.respond` appends every customer message to
+    `SessionState.recent_messages`, which `_build_query` joins into the BM25
+    and dense query, so a reply carrying no constraint is searched against the
+    catalog as though it were customer content.
+
+    That is not a rare edge case on this benchmark. Derived from the
+    evaluator's own reply policy over all 200 public samples, a session has a
+    mean of **2.09** distinct answerable attribute buckets left after turn 1,
+    against a measured MTTC of ~5 -- so roughly three questions in five come
+    back empty.
+
+    Same trimmed-prototype scoring as EmbeddingOverrideDetector (see
+    TOP_PROTOTYPES), and the same error asymmetry argument, pointing the other
+    way: a false positive here *discards a real disclosure*, which is the
+    expensive direction, while a false negative merely leaves today's
+    behaviour unchanged. So this rule is tuned toward precision, not recall --
+    the opposite of the override detector -- and concrete attribute vocabulary
+    vetoes a non-answer verdict outright.
+    """
+
+    def __init__(self, model) -> None:
+        self.model = model
+        self._non_answer_protos = self._encode(PROTOTYPE_NON_ANSWER)
+        self._informative_protos = self._encode(PROTOTYPE_INFORMATIVE)
+
+    def _encode(self, sentences: tuple[str, ...]) -> np.ndarray:
+        return self.model.encode(
+            list(sentences), normalize_embeddings=True, convert_to_numpy=True
+        )
+
+    def is_non_answer(self, text: str) -> bool:
+        if not isinstance(text, str) or not text.strip():
+            return False
+        # Concrete disclosure vetoes, before any embedding work: this is the
+        # precision guard, and it must not be reachable around.
+        if detected_attributes(text):
+            return False
+        try:
+            vec = self.model.encode(text, normalize_embeddings=True, convert_to_numpy=True)
+        except Exception:
+            logger.exception("non-answer detector failed on %r; falling back to lexical", text)
+            return classify_reply_lexically(text) == "non_answer"
+        return (
+            _top_prototype_similarity(vec, self._non_answer_protos)
+            > _top_prototype_similarity(vec, self._informative_protos)
+        )
+
+
 class EmbeddingIntentClassifier:
     """Nearest-centroid buying-vs-browsing classification via sentence embeddings.
 

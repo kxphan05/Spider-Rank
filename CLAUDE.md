@@ -929,8 +929,71 @@ Notable things confirmed empirically along the way, not just assumed:
     that early-turn diversity is not free on this benchmark — but the honest
     conclusion is that there is nothing here to revisit.
 
+19. **Query hygiene on non-answers: measured -0.0410, reverted. Contentless
+    customer text is still retrieval signal on this benchmark.** The gap was
+    real and is now quantified: the agent never observed whether its question
+    was answered, and `respond()` appended every reply to `recent_messages`,
+    which `_build_query` joins into the BM25 and dense query. Derived from the
+    evaluator's own reply policy, a session has a mean of **2.09** distinct
+    answerable attribute buckets left after turn 1 against an MTTC of ~5, so
+    roughly three asks in five come back empty
+    (`scripts/eval_dialogue_efficiency.py`).
+
+    `EmbeddingNonAnswerDetector` (classifier.py) detects those replies, reusing
+    the trimmed-prototype rule from #7. Offline quality:
+
+    ```
+    rule                  sim recall  sim FPR   probe recall  probe FPR
+    lexical floor              1.000    0.000          0.100      0.000
+    trimmed-prototype          1.000    0.168          1.000      0.000
+    ```
+
+    The lexical floor's perfect simulator score is #12/#13's trap again -- its
+    regex contains "don't have", which matches the template literally, and
+    probe recall of 0.100 confirms it learned nothing transferable.
+
+    **Full 200-sample A/B, both legs on one HEAD:**
+
+    ```
+                          HitRate     MRR     MTTC   Technical
+    identity               0.7450  0.4089   4.9900     0.6154
+    + skip non-answers     0.6850  0.3970   5.3600     0.5744   -0.0410
+    ```
+
+    HitRate falls 149 -> 137 sessions. **The prediction that was wrong, and
+    why it matters:** all 69 of the detector's false positives are the
+    simulator's near-contentless constraint template ("For that, what matters
+    is: Imported; Pull On closure."), and this was written up mid-session as
+    evidence that the FPR column was measuring the wrong thing -- that
+    `Imported` is catalog boilerplate with no retrieval value, so dropping it
+    was plausibly a gain. The A/B says the opposite, for a reason already in
+    this file: per #14, **89.7% of customer text is a verbatim substring of the
+    target's own catalog record**, so `Pull On closure` is not boilerplate here,
+    it is an exact-match key to the target. Deleting it deletes exactly what
+    BM25 wins with.
+
+    Generalize past the experiment: **no form of query pruning is safe on this
+    benchmark**, and improving the classifier cannot fix it, because the text
+    being pruned is contentless in meaning and load-bearing in retrieval. Same
+    shape as #17 -- an intervention that is semantically sensible and
+    structurally wrong for this task. The non-answer *observation* is kept and
+    feeds `SessionBelief`; only the query surgery is reverted.
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
+- **A feature flag whose zero value is not the identity silently corrupts
+  every A/B run against it.** The Pillar III re-orchestration branch in
+  `routing_params()` was gated on `belief.exhausted` and set
+  `diversify=False` *inside* that branch, while its magnitude knob
+  (`EXHAUSTED_BM25_BONUS`) was 0.0. So "all switches off" still disabled the
+  browsing MMR re-rank, and the control leg scored 0.6154 instead of the
+  shipped 0.6182 -- caught only because verification step 8 (confirm identity
+  reproduces the shipped number *before* trusting any swept point) was run.
+  Every stage measured against that control would have been off by an unknown
+  amount. The code comment at the time asserted "the label-only path is
+  unchanged", which was simply false. Lesson: an identity setting is a claim to
+  verify with a run, not to assert in a comment -- and check that *every*
+  effect in a gated branch is gated, not just the one with a numeric knob.
 - Diagnostic scripts assumed `public_set.jsonl` samples carried a raw query
   field (`first_message`, `query`, etc.) — they don't. Samples only have
   `category_bucket`, `difficulty_bucket`, `ground_truth`, `sample_id`,
