@@ -26,6 +26,7 @@ from _common import DEFAULT_CATALOG, DEFAULT_DATASET, REPO_ROOT  # noqa: F401
 
 # _common puts the repo root on sys.path as an import side effect, so the
 # starter/evaluator imports below resolve when this script is run directly.
+from starter.paths import catalog_fingerprint  # noqa: E402
 from starter.text_utils import product_passage  # noqa: E402
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
@@ -109,6 +110,11 @@ def build(catalog_path: Path, out_dir: Path, limit: int | None, batch_size: int)
         "count": int(embeddings.shape[0]),
         "max_chars": MAX_CHARS,
         "catalog_path": str(catalog_path),
+        # Content hash, not mtime: an index shipped to another machine is
+        # checked against a catalog checked out after it was built, so the
+        # mtime comparison fired on every correct setup. mtime is still
+        # recorded so an index built by an older revision stays readable.
+        "catalog_sha256": catalog_fingerprint(catalog_path),
         "catalog_mtime": catalog_path.stat().st_mtime,
         "limit": limit,
     }

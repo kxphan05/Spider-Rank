@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .paths import model_cache_dir
+from .paths import catalog_fingerprint, model_cache_dir
 from .text_utils import field_text, terms
 
 logger = logging.getLogger(__name__)
@@ -114,15 +114,33 @@ class DenseIndex:
                 meta.get("model_name"), DENSE_MODEL_NAME,
             )
         if catalog_path is not None and catalog_path.exists():
-            current_mtime = catalog_path.stat().st_mtime
-            built_mtime = meta.get("catalog_mtime")
-            if built_mtime is not None and current_mtime > built_mtime:
-                logger.warning(
-                    "dense index at %s was built from an older version of %s "
-                    "(index catalog_mtime=%s, current mtime=%s); embeddings may be stale. "
-                    "Re-run scripts/build_dense_index.py to refresh.",
-                    index_dir, catalog_path, built_mtime, current_mtime,
-                )
+            # Prefer the content hash. mtime is a property of *this* filesystem
+            # and says nothing once the index travels to another machine -- a
+            # prebuilt index shipped with a submission is always "older" than
+            # the catalog the organizer checked out, so the mtime rule warned
+            # on every correct setup while still missing a genuinely different
+            # catalog. mtime remains the fallback for indexes built before the
+            # hash was recorded.
+            built_sha = meta.get("catalog_sha256")
+            if built_sha is not None:
+                current_sha = catalog_fingerprint(catalog_path)
+                if current_sha != built_sha:
+                    logger.warning(
+                        "dense index at %s was built from a different %s "
+                        "(index catalog_sha256=%s, current=%s); embeddings are stale. "
+                        "Re-run scripts/build_dense_index.py to refresh.",
+                        index_dir, catalog_path, built_sha[:12], current_sha[:12],
+                    )
+            else:
+                current_mtime = catalog_path.stat().st_mtime
+                built_mtime = meta.get("catalog_mtime")
+                if built_mtime is not None and current_mtime > built_mtime:
+                    logger.warning(
+                        "dense index at %s predates %s and records no catalog_sha256 "
+                        "(index catalog_mtime=%s, current mtime=%s); embeddings may be "
+                        "stale. Re-run scripts/build_dense_index.py to refresh.",
+                        index_dir, catalog_path, built_mtime, current_mtime,
+                    )
         self.ids: list[str] = json.loads(ids_path.read_text(encoding="utf-8"))
         self.embeddings = np.load(embeddings_path)
         if self.embeddings.shape[0] != len(self.ids):
