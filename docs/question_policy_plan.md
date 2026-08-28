@@ -144,8 +144,8 @@ the decision-maker.
 
 ## 6. How to measure it
 
-Full 200-sample A/B against the current 0.6070 baseline, both legs on the same
-HEAD. Then:
+Full 200-sample A/B against the current **0.6182** baseline (HitRate 0.7500 /
+MRR 0.4096 / MTTC 4.985), both legs on the same HEAD. Then:
 
 - **Report absolute session counts, not just rates.** Per CLAUDE.md #16, 0.7500
   vs 0.7450 is one session; the benchmark's resolution is about +-0.0025.

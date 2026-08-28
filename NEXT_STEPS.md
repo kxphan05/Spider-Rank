@@ -12,7 +12,12 @@ attribute filtering, a filter-then-rerank buying track, embedding-similarity
 reranking, user-profile personalization, and a trained intent head were each
 built, measured, and rejected with numbers recorded.
 
-Current score on the 200-sample public set: **TechnicalScore 0.6070**
+Current score on the 200-sample public set: **TechnicalScore 0.6182**
+(HitRate 0.7500 / MRR 0.4096 / MTTC 4.985). Verified reproducible: with every
+adaptive-layer switch at its identity value the harness returns that line
+exactly, which is the check to run before trusting any new measurement.
+
+Old score line, for reading older notes below: **0.6070**
 (HitRate 0.745 / MRR 0.3876 / MTTC 5.09).
 
 ---
@@ -274,3 +279,53 @@ a pre-pivot question, which is intended but costs a turn.
 | Trained intent-classifier head | template memorization; worse out of distribution | #12 |
 | Trimmed prototypes for the intent classifier | worse on every pool | #13 |
 | Dropping the dense leg | +0.0147 locally, but on an exact-match-only benchmark | #14 |
+| Query rewriting on intent override | -0.0580; turn 1 carries the category | #17 |
+| Turn-annealed slate diversity | null; browsing metrics byte-identical | #18 |
+| Dropping non-answers from the query | -0.0410; contentless text is still an exact-match key | #19 |
+
+---
+
+## 6. Within-session adaptive layer — **built, one stage measured**
+
+Spec Pillar III's short-term half (`starter/session_belief.py`,
+`EmbeddingNonAnswerDetector` in `classifier.py`, wiring in `agent.py`). The
+agent now observes whether each clarifying question was answered, which it
+never did before.
+
+**Every switch ships at its identity value**, so each stage A/Bs independently
+against a baseline that reproduces 0.6182 exactly:
+
+| switch | identity | status |
+|---|---|---|
+| `SKIP_NON_ANSWERS_IN_QUERY` | `False` | **measured -0.0410, rejected (#19)** |
+| `SLOT_DECAY` | `1.0` | unmeasured — `scripts/sweep_slot_decay.py` is written |
+| `BELIEF_DRIVEN_QUESTIONS` | `False` | unmeasured |
+| `BELIEF_REORCHESTRATION` | `False` | unmeasured |
+| `EXHAUSTED_BM25_BONUS` | `0.0` | unmeasured |
+| `EXPLAIN_RECOMMENDATIONS` | `True` (on) | score-neutral by construction |
+
+Read #19 before touching the first row, and the blockers list before adding a
+switch: the re-orchestration branch originally disabled the browsing MMR
+re-rank even at its zero setting, so the control leg scored 0.6154 rather than
+0.6182 and every stage measured against it would have been wrong.
+
+## 7. Cross-encoder reranking — **downloaded, not wired**
+
+`Qwen/Qwen3-Reranker-0.6B` (1.2 GB, in `model/`) and `starter/reranker.py`
+exist; nothing calls them. This is the last named spec gap (#6, Pillar I's
+"LLM Semantic Ranking").
+
+Chosen at 0.6B for a measured reason, not a guess. On the target machine
+(i5-8365U, no CUDA, ~4.6 GB free RAM) a 2B *generative* model needs ~8.4 s per
+41-token scoring call, so an 8B model implies roughly 180 hours for one
+200-sample evaluation -- unmeasurable, and this project does not ship unmeasured
+changes. A cross-encoder is one forward pass per pair with no generation, which
+is the only reason it is tractable: decode here runs under 2 tok/s, prefill at
+~60 tok/s.
+
+Wire it behind a `RERANK_WEIGHT` defaulting to 0.0 so identity stays
+bit-reproducible, then sweep. **Expect it to measure flat or negative**: it is
+the same class of component as the dense leg, on a benchmark where the dense
+leg is net-negative for a documented reason (#14). If it does, the defensible
+move is #14's -- keep it, report the local cost, and say why the local set
+cannot price it.
