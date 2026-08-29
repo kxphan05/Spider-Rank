@@ -23,14 +23,16 @@ of it going stale.
 
 ## Current architecture (as of last commit)
 
-1. **Retrieval, dual-track by buying/browsing intent**: BM25 (SQLite FTS5) +
-   dense (bge-small cosine) run independently over the full catalog,
-   combined via weighted reciprocal rank fusion — both tracks fuse the same
-   two legs, but the weights are intent-conditioned: buying keeps the
-   original BM25-heavy weighting (2.0/1.0 — empirically tuned; equal
-   weights dropped MRR 0.450→0.385 on this catalog) for precision on stated
-   hard constraints, browsing shifts toward dense (1.25/1.5) for broader
-   semantic/cross-category matches, then gets an MMR diversity re-rank
+1. **Retrieval, three legs, dual-track by buying/browsing intent**: BM25
+   (SQLite FTS5, bag-of-words OR), **phrase-match** (FTS5 exact multi-word
+   spans, `PHRASE_WEIGHT = 2.0` — the largest measured win here, +0.0272,
+   see #20) and dense (bge-small cosine) run independently over the full
+   catalog, combined via weighted reciprocal rank fusion. The phrase leg's
+   weight is intent-*un*conditioned; the other two are: buying keeps the
+   original BM25-heavy weighting (2.0/0.5 after #16 — empirically tuned;
+   equal weights dropped MRR 0.450→0.385 on this catalog) for precision on
+   stated hard constraints, browsing shifts toward dense (1.25/1.5) for
+   broader semantic/cross-category matches, then gets an MMR diversity re-rank
    (`Agent._diversify`) on top of the fused+boosted pool before truncating
    to `top_k` — pinning the top `DIVERSIFY_PIN=2` items and only
    reordering within the top `DIVERSIFY_WINDOW=20`, so diversity can never
@@ -203,13 +205,20 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.750   MRR: 0.4096   MTTC: 4.985   Efficiency: 0.6015
-TechnicalScore: 0.6182
+HitRate@10: 0.790   MRR: 0.4176   MTTC: 4.745   Efficiency: 0.6255
+TechnicalScore: 0.6454
 ```
 
-(That line is with the buying dense:bm25 ratio at **0.25**, shipped after the
-sweep in #16 — the previous 0.50 scored 0.6070 on this same HEAD, so the
-change is worth +0.0112 and reproduced the sweep's prediction exactly.)
+(That line is with the **phrase-match retrieval leg at `PHRASE_WEIGHT = 2.0`**,
+shipped after the sweep in #20 — the previous 0.6182 is the same HEAD with the
+leg disabled, so the change is worth **+0.0272**, the largest single measured
+win in this project, and the only one that is a *recall* gain rather than a
+reordering.)
+
+(The 0.6182 line it replaced was with the buying dense:bm25 ratio at **0.25**,
+shipped after the sweep in #16 — the previous 0.50 scored 0.6070 on that same
+HEAD, so that change was worth +0.0112 and reproduced the sweep's prediction
+exactly.)
 
 (That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
 problems" #7, re-run on this HEAD. The centroid it replaced scored 0.6073 —
@@ -978,6 +987,50 @@ Notable things confirmed empirically along the way, not just assumed:
     shape as #17 -- an intervention that is semantically sensible and
     structurally wrong for this task. The non-answer *observation* is kept and
     feeds `SessionBelief`; only the query surgery is reverted.
+
+20. **Phrase-match retrieval leg: +0.0272, and the first change here that adds
+    recall.** A third RRF leg alongside bag-of-words BM25 and dense, matching
+    exact multi-word spans via FTS5 phrase queries
+    (`BM25Index.phrase_search`): n-grams of the query longest-first, weighted
+    `len(gram)**2`, discarding any span matching more than
+    `PHRASE_MAX_MATCHES = 150` products as non-discriminative.
+
+    The reasoning was stated *before* the sweep ran, and it is the reusable
+    part. Every retrieval-side change that has lost score on this benchmark
+    lost the same way — by adding semantic tolerance to a set where 89.7% of
+    customer text is a verbatim substring of the target's own catalog record
+    (#14 dense weight, #17 override rewrite, #19 query pruning). `search()`
+    ORs the query's unique tokens, so `"Buckle closure"` is two independent
+    terms against 50k products; the exact span is both present and rare. A
+    phrase leg runs *with* the confound instead of against it.
+
+    ```
+    weight   HitRate      hits      MRR     MTTC  Technical     delta
+      0.00    0.7500  150/200   0.4096    4.985     0.6182        --
+      0.50    0.7600  152/200   0.4278    4.945     0.6294   +0.0112
+      1.00    0.7700  154/200   0.4184    4.870     0.6331   +0.0149
+      2.00    0.7900  158/200   0.4176    4.745     0.6454   +0.0272   <- shipped
+      4.00    0.7850  157/200   0.4254    4.825     0.6436   +0.0254
+    ```
+
+    Identity reproduced 0.6182 exactly, so the points are comparable. Three
+    things worth carrying forward. **There is a real interior optimum** —
+    unlike #16's monotone fusion curve, this one turns over, though 2.00 and
+    4.00 are one session apart (158 vs 157) so the top is flat and the choice
+    between them is arbitrary; 2.00 is the lower-variance pick and the range
+    does not need extending. **The gain is +8 sessions of HitRate**, i.e. the
+    leg finds targets nothing else found — directly unlike the dense leg,
+    whose HitRate is identical to four decimals whether enabled or not (#14).
+    **MRR moves against it** (0.4278 at weight 0.5 down to 0.4176 at 2.0)
+    while MTTC improves, which is #9's trade again: converting a late hit into
+    an earlier, worse-ranked one costs MRR and pays more in Efficiency.
+
+    Supporting detail that is easy to get wrong: `phrase_tokens()` in
+    `text_utils.py` **keeps stopwords**, unlike `terms()`. With `terms()`,
+    `"pull on closure"` collapses to `"pull closure"`, which matches no
+    product — the stopword is load-bearing in a phrase query and noise in a
+    bag-of-words one.
+
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
