@@ -379,6 +379,43 @@ is **not** to revert the bug but to retune the boost weights against corrected
 coverage — the ±1/0 scheme was tuned when a fifth of colour labels were
 fictional.
 
+**#29 — Lexical override cues beside the embedding rule. Shipped; not measured
+end-to-end.** `EmbeddingOverrideDetector.is_override` now fires if *either* a
+closed list of literal discard phrases matches or the trimmed-prototype
+similarity leans override. Union, not a vote, because the two rules fail on
+disjoint inputs. A terse pivot is mostly its request half — the same shape
+pathology `TOP_PROTOTYPES` was tuned against in #7 — and a literal cue cannot
+be outvoted by the rest of the sentence. A paraphrase carrying no cue at all
+("My priorities changed…") has no list entry and needs the similarity.
+
+```
+pool                                        regex alone   combined
+PROTOTYPE_OVERRIDE (12)                         10/12         --
+#7 out-of-distribution probes (10)               9/10       11/11 *
+continuations + non-answers + templates (35)      0 FP        0 FP
+```
+
+\* the combined column was run on the 10 probes plus the one prototype the
+regex misses; it is a smoke test on 11 strings, not a measurement.
+
+Two constraints hold the false-positive side down, and both are #26's
+**closed-list discipline** rather than #19-style pruning. Bare "actually" and
+bare "no" are not cues — "actually I also need it waterproof" is a
+continuation, and "no preference there" is the evaluator's own non-answer
+shape. And a cue only counts **clause-initially**: matched anywhere, it would
+fire on catalog copy carried inside a reply ("For that, what matters is: …").
+
+**What is not measured, and why it matters here.** No full-set run — the box
+was saturated by a second session at load ~41. The regex is strictly
+recall-adding, so the risk is entirely false positives, and #23 inverted that
+error asymmetry: `respond()` now also clears `state.shown` on a detection, so
+a spurious clear re-offers slates already proven dead. The 0-FP column above
+is partly by construction, since the negative pool overlaps
+`PROTOTYPE_CONTINUATION` and `PROTOTYPE_NON_ANSWER`. **The honest FP number is
+`eval_override.py`'s harvested simulator turns, and it has not been run against
+this rule.** That script sweeps standalone rule classes and never calls
+`is_override`, so measuring the union means teaching it about the union first.
+
 ### Do not retry — measured and rejected
 
 **#5 — Personalization from `user_profile`. Three implementations, all
