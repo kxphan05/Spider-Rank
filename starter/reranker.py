@@ -48,23 +48,13 @@ from __future__ import annotations
 import logging
 
 from .paths import model_cache_dir
+from .config import (BATCH_SIZE, MAX_DOC_CHARS, MINILM_MAX_LENGTH, MINILM_MODEL_NAME, 
+    RERANK_MODEL_NAME)
 
 logger = logging.getLogger(__name__)
 
-RERANK_MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
-MINILM_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-MINILM_MAX_LENGTH = 256
 
-# Characters of product text shown to the reranker. Cost here is dominated by
-# prefill, which is linear in prompt length, so this is the main runtime knob.
-# Long enough to carry the title plus the first feature or two, which is where
-# material/colour/closure information actually lives in this catalog.
-MAX_DOC_CHARS = 400
 
-# Pairs scored per forward pass. Kept small: peak RSS matters more than
-# throughput on a 4.6 GB-free machine, and padding waste grows with batch size
-# when document lengths are uneven.
-BATCH_SIZE = 4
 
 INSTRUCTION = (
     "Given a shopper's request, judge whether the product satisfies it."

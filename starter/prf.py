@@ -40,22 +40,15 @@ import sqlite3
 from collections import Counter
 
 from .text_utils import STOPWORDS, terms
+# FEEDBACK_DOCS is re-exported deliberately: retrieval.py reads it as
+# `prf.FEEDBACK_DOCS` (module attribute, late-bound) so a sweep can patch it
+# on this module. Ruff cannot see that use, hence the noqa.
+from .config import (EXPANSION_TERMS, FEEDBACK_DOCS, MIN_FEEDBACK_DF,  # noqa: F401
+                     MIN_TERM_LENGTH)
 
-# How many top-ranked products are assumed relevant. Classic PRF uses 10-20;
-# smaller is safer here because a wrong assumption is what causes drift.
-FEEDBACK_DOCS = 10
 
-# How many expansion terms survive into the second query.
-EXPANSION_TERMS = 8
 
-# A term must appear in at least this many feedback documents to be
-# considered. A term in one document out of ten is that document's
-# idiosyncrasy, not a property of the result set.
-MIN_FEEDBACK_DF = 3
 
-# Terms shorter than this are dropped -- FTS5 tokenises aggressively and short
-# fragments are almost always noise.
-MIN_TERM_LENGTH = 3
 
 
 def _catalog_df(connection: sqlite3.Connection, term: str, cache: dict[str, int]) -> int:

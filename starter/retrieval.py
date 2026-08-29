@@ -21,14 +21,15 @@ from . import prf
 from .attributes import COLORS, MATERIALS
 from .text_utils import (STOPWORDS, field_text, normalize_query, phrase_clauses,
                          phrase_tokens, terms)
+from .config import (CATALOG_ROOT_MIN_SHARE, CATALOG_ROOT_SAMPLE, CATEGORY_TERM_MIN_DF, 
+    DEFAULT_FIELD_WEIGHTS, DENSE_MODEL_NAME, DENSE_QUERY_PREFIX, MAX_PHRASE_QUERIES, 
+    PHRASE_CLAUSE_SPANS, PHRASE_MAX_MATCHES, PHRASE_MAX_N, PHRASE_MIN_N)
 
 logger = logging.getLogger(__name__)
 
 # Words that describe a product rather than name a kind of product.
 ATTRIBUTE_WORDS = {word.lower() for word in COLORS} | {word.lower() for word in MATERIALS}
 
-DENSE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-DENSE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 
 def load_embedding_model():
@@ -43,85 +44,10 @@ def load_embedding_model():
     return SentenceTransformer(DENSE_MODEL_NAME, cache_folder=model_cache_dir())
 
 
-# Verbatim-span matching parameters (BM25Index.phrase_search).
-PHRASE_MIN_N = 2
-PHRASE_MAX_N = 5
-# Per-query budget on phrase lookups. Each is an indexed FTS5 phrase scan, so
-# they are cheap, but an accumulated 10-turn query has a long token tail.
-MAX_PHRASE_QUERIES = 24
-# A span appearing in more than this many products carries no identifying
-# information, so it is dropped rather than scored.
-PHRASE_MAX_MATCHES = 150
-# Build spans within a clause instead of across the whole query, and require
-# both edge tokens to carry content.
-#
-# The budget above is spent longest-first, on the assumption that a longer span
-# is a more specific one. That holds for catalog copy and fails for
-# conversation: the longest spans of a 10-turn query are sentences of filler
-# that match nothing. Measured on public_0008's final query -- 135 spans built,
-# and all 24 that fit the budget matched zero products, while "bras everyday
-# bras" (verbatim in the target) sat unqueried at 3-gram depth.
-#
-# Two rules, both properties of language rather than of this simulator's
-# wording -- a template blacklist would score well locally and transfer nothing
-# (CLAUDE.md #12/#13):
-#   1. no span crosses a clause boundary, since catalog text never does
-#   2. no span begins or ends on a stopword, which is the standard
-#      phrase-extraction heuristic for a span that is a fragment of one
-PHRASE_CLAUSE_SPANS = False
 
 
-# BM25F field weights, in the FTS5 column order declared above:
-#
-#   parent_asin, title, categories, features, details, store, description
-#
-# parent_asin is UNINDEXED so its weight is inert and pinned at 0.0. The rest
-# were hand-picked when the index was first built and have never been swept --
-# the IR literature is consistent that BM25F field weights are collection- and
-# query-dependent and need a grid search, so hand-picked values on a 50k
-# clothing catalog are unlikely to be right. `scripts/sweep_bm25_fields.py`
-# sweeps them; DEFAULT_FIELD_WEIGHTS is the identity and must reproduce the
-# shipped score exactly before any swept point is believed.
-DEFAULT_FIELD_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 
-# Every product in this catalog hangs off one root category
-# ("Clothing, Shoes & Jewelry", 49,990 of 50,000), so the three words in it
-# are present on essentially every document. BM25 gives a term appearing in
-# ~100% of documents an IDF of ~0, which means the customer's own category
-# word was worth nothing:
-#
-#     term      df with root      df with root dropped
-#     shoes           1.000                     0.235
-#     jewelry         1.000                     0.111
-#     clothing        1.000                     0.433
-#
-# So "show me shoes" could not rank a shoe above a t-shirt -- the only query
-# word that mattered was whatever conversational filler came with it (see
-# _REQUEST_STOPWORDS in text_utils.py). Dropping the root restores the IDF of
-# the leaf category words, which are the ones that actually discriminate.
-#
-# Detected rather than hardcoded: the root is whatever value leads
-# `categories` on at least CATALOG_ROOT_MIN_SHARE of the first
-# CATALOG_ROOT_SAMPLE products. Below that threshold nothing is stripped, so a
-# catalog without a universal root is left exactly as it was. The decision is
-# made from the first insert batch, which is still in memory, so this costs no
-# extra pass over the catalog file.
-CATALOG_ROOT_SAMPLE = 1000
-CATALOG_ROOT_MIN_SHARE = 0.95
 
-# What counts as naming a product category, for names_category() below.
-#
-# Only category nodes that are a SINGLE word qualify ("Shoes", "Jewelry",
-# "Dresses", "Watches"). Tokens drawn out of multi-word nodes do not, because
-# they are modifiers rather than product types: "Water Shoes" contributes
-# "water", "Hand Wash Only" contributes "only", and treating either as a
-# category pivot fires on ordinary attribute talk. Measured against the
-# evaluator's own 30 override turns, the loose token rule fired on 6 of them
-# and the single-word-node rule fires on 1.
-#
-# The df floor drops store names and one-off merchandising nodes ("Westlake",
-# "Toddler Test"), which are category-shaped strings naming no product type.
-CATEGORY_TERM_MIN_DF = 20
 
 # Category nodes that describe who a product is for, not what it is. A pivot
 # naming only one of these has not changed what the customer is shopping for.

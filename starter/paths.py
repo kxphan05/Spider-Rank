@@ -17,8 +17,8 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+from .config import MODEL_DIR_ENV
 
-MODEL_DIR_ENV = "TECHJAM_MODEL_DIR"
 _FINGERPRINT_CHUNK = 1 << 20
 _PACKAGE_PARENT = Path(__file__).resolve().parent.parent
 

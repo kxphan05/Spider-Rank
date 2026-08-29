@@ -49,25 +49,12 @@ import math
 from dataclasses import dataclass
 
 from .paths import model_cache_dir
+from .config import (LM_MODEL_NAME, MAX_CONFIDENT_ENTROPY)
 
 logger = logging.getLogger(__name__)
 
-LM_MODEL_NAME = "distilbert-base-uncased"
 
 
-# Beliefs at or above this normalized entropy are treated as "the model does
-# not know". Calibrated, not chosen by feel: measured against the true
-# target's extracted material over the 200-sample public set
-# (scripts/eval_lm_confidence.py), top-1 accuracy by entropy band was
-#
-#     H < 0.60      n= 61   0.787
-#     0.60-0.75     n=105   0.371
-#     0.75-0.85     n= 14   0.000
-#
-# -- monotonic, and steep. 0.60 is where the belief is still worth acting on;
-# above it the prediction is at or below the always-guess-the-mode baseline
-# of 0.322, so acting on it would be worse than doing nothing.
-MAX_CONFIDENT_ENTROPY = 0.60
 
 
 @dataclass(frozen=True)
