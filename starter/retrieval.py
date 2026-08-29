@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -75,7 +76,21 @@ class BM25Index:
     """FTS5-backed keyword retrieval over catalog text fields."""
 
     def __init__(self, catalog_path: Path) -> None:
-        self.connection = sqlite3.connect(":memory:")
+        # check_same_thread=False because the index is read-only after
+        # _build() and callers are not guaranteed to be single-threaded. The
+        # evaluator is, but any server front-end is not: Streamlit caches one
+        # Agent and serves turns from a pool of worker threads, which made
+        # every BM25 and phrase query raise ProgrammingError and silently fall
+        # back to the dense leg alone. The failure was invisible in the score
+        # because _retrieve catches per-leg exceptions and continues.
+        #
+        # sqlite3 itself is built serialized here, but the guard below makes
+        # the invariant explicit rather than relying on the build flag: every
+        # query holds the lock, so concurrent readers cannot interleave on one
+        # connection. Contention is irrelevant -- queries are sub-millisecond
+        # and the evaluator never contends at all.
+        self.connection = sqlite3.connect(":memory:", check_same_thread=False)
+        self._lock = threading.Lock()
         self.size = 0
         # Catalog document frequencies, memoised across the process for the
         # PRF leg (prf.py). Lives on the index rather than in prf.py so it is
@@ -130,11 +145,12 @@ class BM25Index:
         if not parent_asins:
             return {}
         placeholders = ",".join("?" * len(parent_asins))
-        rows = self.connection.execute(
-            f"SELECT parent_asin, title, categories, features FROM products "  # noqa: S608
-            f"WHERE parent_asin IN ({placeholders})",
-            parent_asins,
-        ).fetchall()
+        with self._lock:
+            rows = self.connection.execute(
+                f"SELECT parent_asin, title, categories, features FROM products "  # noqa: S608
+                f"WHERE parent_asin IN ({placeholders})",
+                parent_asins,
+            ).fetchall()
         return {str(r[0]): " ".join(str(part) for part in r[1:] if part) for r in rows}
 
     def phrase_search(self, query: str, top_n: int) -> list[str]:
@@ -176,11 +192,12 @@ class BM25Index:
         for gram in grams[:MAX_PHRASE_QUERIES]:
             expression = '"' + " ".join(gram) + '"'
             try:
-                rows = self.connection.execute(
-                    "SELECT parent_asin FROM products WHERE products MATCH ? "
-                    f"ORDER BY {_bm25_expression()} LIMIT ?",
-                    (expression, PHRASE_MAX_MATCHES + 1),
-                ).fetchall()
+                with self._lock:
+                    rows = self.connection.execute(
+                        "SELECT parent_asin FROM products WHERE products MATCH ? "
+                        f"ORDER BY {_bm25_expression()} LIMIT ?",
+                        (expression, PHRASE_MAX_MATCHES + 1),
+                    ).fetchall()
             except sqlite3.OperationalError:
                 # A gram can still form an invalid MATCH expression (an FTS5
                 # keyword like NEAR/AND/OR as a bare token). Skip it rather
@@ -201,11 +218,12 @@ class BM25Index:
         if not unique_terms:
             return []
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
-        rows = self.connection.execute(
-            "SELECT parent_asin FROM products WHERE products MATCH ? "
-            f"ORDER BY {_bm25_expression()} LIMIT ?",
-            (expression, top_n),
-        ).fetchall()
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM products WHERE products MATCH ? "
+                f"ORDER BY {_bm25_expression()} LIMIT ?",
+                (expression, top_n),
+            ).fetchall()
         return [str(row[0]) for row in rows]
 
     def prf_search(self, query: str, top_n: int, seed: list[str]) -> list[str]:
@@ -220,9 +238,12 @@ class BM25Index:
             return []
         feedback = seed[:prf.FEEDBACK_DOCS]
         documents = self.document_text(feedback)
-        expansion = prf.expansion_terms(
-            documents, query, self.connection, self._df_cache, max(1, self.size)
-        )
+        # Held across the whole call: expansion_terms issues one COUNT per
+        # uncached candidate term on this same connection.
+        with self._lock:
+            expansion = prf.expansion_terms(
+                documents, query, self.connection, self._df_cache, max(1, self.size)
+            )
         if not expansion:
             return []
         # Anchor the expansion to the original query rather than replacing it.
@@ -236,11 +257,12 @@ class BM25Index:
         original = list(dict.fromkeys(terms(query)))[:40]
         expression = " OR ".join(f'"{term}"' for term in original + expansion)
         try:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                f"ORDER BY {_bm25_expression()} LIMIT ?",
-                (expression, top_n),
-            ).fetchall()
+            with self._lock:
+                rows = self.connection.execute(
+                    "SELECT parent_asin FROM products WHERE products MATCH ? "
+                    f"ORDER BY {_bm25_expression()} LIMIT ?",
+                    (expression, top_n),
+                ).fetchall()
         except sqlite3.OperationalError:
             logger.debug("PRF expansion produced an invalid MATCH expression: %r", expression)
             return []

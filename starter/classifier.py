@@ -196,6 +196,16 @@ PROTOTYPE_BROWSING = (
     "I'm shopping around, no fixed idea yet.",
     "Just curious what's available for accessories.",
     "Not picky, whatever looks good works for me.",
+    # "Something for <occasion>" -- a use-case with no hard constraint. This
+    # shape was missing and the centroid mis-read it: "i want something for
+    # the summer" scored +0.0058 buying, i.e. a coin flip, because naming an
+    # occasion reads as stating a requirement while the sentence in fact
+    # states no attribute at all. The lexical fallback got these right, which
+    # is what flagged the gap.
+    "I want something for the summer.",
+    "I need something for a wedding, open to suggestions.",
+    "Something for the beach, whatever you think works.",
+    "Looking for something for work, I don't mind what.",
 )
 
 

@@ -1032,6 +1032,64 @@ Notable things confirmed empirically along the way, not just assumed:
     bag-of-words one.
 
 
+21. **BM25Index was single-thread-only, which silently disabled two of three
+    retrieval legs under any server front-end.** `sqlite3.connect(":memory:")`
+    defaults to `check_same_thread=True`. The evaluator is single-threaded so
+    this never showed up in a score, but Streamlit caches one `Agent` and
+    serves turns from a worker-thread pool, so every `search()` and
+    `phrase_search()` raised
+
+        sqlite3.ProgrammingError: SQLite objects created in a thread can only
+        be used in that same thread.
+
+    `_retrieve` catches per-leg exceptions and continues, so the agent kept
+    returning ten products **from the dense leg alone** with no error surfaced
+    to the caller -- the same silent-degrade class as #15, and it hid the
+    project's largest win (#20's phrase leg) completely.
+
+    Fixed with `check_same_thread=False` plus a `threading.Lock` held across
+    every query, including the PRF expansion path, which issues one COUNT per
+    uncached term on the same connection. The lock makes the invariant
+    explicit rather than relying on sqlite3's build-time threadsafety flag;
+    contention is irrelevant since queries are sub-millisecond and the
+    evaluator never contends. No behaviour change for the evaluator.
+
+22. **Intent prototypes were missing the "something for <occasion>" shape, and
+    the fix costs 2 of 160 on turn-1 accuracy.** Found by using the demo, not
+    by a sweep: "i want something for the summer" classified **buying** at
+    score **+0.0058** -- a coin flip, in the thin-margin regime #7 and #13
+    already describe. Naming an occasion reads as stating a requirement, while
+    the sentence states no attribute at all. The lexical fallback got it right,
+    which is what flagged it as a coverage gap rather than noise.
+
+    Four browsing prototypes of that shape were added. **Do not "fix" this
+    with a deadzone** -- one was already tried and measured to swallow real
+    signal broadly (buying turn-3 accuracy 96% -> 59%, see the note in
+    `classifier.py`), because the zero-crossing region is genuinely populated
+    by weakly-buying cases rather than only by noise.
+
+    Measured with `scripts/eval_intent.py` before shipping:
+
+    ```
+                        turn-1   accumulated   OOD probe
+    centroid (before)    0.988         0.708       1.000
+    centroid (after)     0.975         0.679       1.000
+
+    i want something for the summer   +0.0058 buying  ->  -0.0495 browsing
+    I need a leather belt for work    +0.0891 buying  ->  +0.0716 buying
+    ```
+
+    So this is a **deliberate, measured regression**: 2 extra turn-1 errors out
+    of 160. Both are buying sessions whose stated hard constraint is
+    contentless -- "A key requirement is: Imported." and "...: fabric." --
+    which #13 already identified as the centroid's only failures, and where
+    the browsing label is arguably not wrong. Accepted because #13 also
+    measured that the label is worth approximately nothing to TechnicalScore
+    (dual-track routing was net flat, 0.600 -> 0.601), while a visibly wrong
+    route in a live demo costs credibility with a judge. **This trade is only
+    valid while that remains true** -- if the label ever starts driving
+    something score-bearing, re-measure before keeping these prototypes.
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
 - **A feature flag whose zero value is not the identity silently corrupts

@@ -1,0 +1,20 @@
+# Streamlit config for the demo UI (demo/streamlit_app.py). Demo-only; nothing
+# here affects the scored agent.
+
+[server]
+# Streamlit's default watcher walks every imported module's __path__ to decide
+# what to hot-reload. `transformers` uses lazy submodule imports, so touching
+# that attribute *executes* image-processor modules for models we never use
+# (vitpose, yolos, zoedepth). Those import torchvision, which this project
+# does not depend on, and each one prints a full ModuleNotFoundError traceback
+# at startup. Nothing is broken -- but it buries the real logs in noise.
+#
+# "none" turns the watcher off: the app no longer hot-reloads on edit, which
+# costs nothing for a demo and removes ~40 lines of spurious traceback.
+fileWatcherType = "none"
+# Keep the demo on this machine. The default binds every interface, which on a
+# conference network means anyone can reach it.
+address = "127.0.0.1"
+
+[browser]
+gatherUsageStats = false
