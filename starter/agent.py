@@ -16,6 +16,7 @@ from .classifier import (
     classify_reply_lexically,
     detected_attributes,
 )
+from .reranker import CrossEncoderReranker, QwenReranker
 from .session_belief import SessionBelief
 from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attribute
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
@@ -228,6 +229,90 @@ BELIEF_DRIVEN_QUESTIONS = False
 EXHAUSTED_BM25_BONUS = 0.0
 BELIEF_REORCHESTRATION = False
 
+# Third RRF leg: verbatim-span matching (BM25Index.phrase_search). 0.0 is the
+# identity setting and disables the leg entirely, including its lookup cost.
+#
+# Rationale is the measured shape of this task rather than a general IR
+# preference. Every retrieval-side change that has *lost* score here lost the
+# same way -- by adding semantic tolerance to a benchmark where 89.7% of
+# customer text is a verbatim substring of the target's own catalog record
+# (#14 dense weight, #17 override rewrite, #19 query pruning). A phrase leg
+# runs the other direction: it rewards exact spans, which is the signal that
+# measurement says actually carries here. Sweep before shipping; the fusion is
+# scale-invariant per leg, so only this weight's ratio to the other two
+# matters.
+#
+# Swept (scripts/sweep_phrase_weight.py, 200 samples/point, identity
+# reproduced 0.6182 exactly). Unlike every other retrieval knob here, this
+# curve has a real interior optimum and the gain is *recall*, not reordering:
+#
+#   weight   HitRate      hits      MRR     MTTC  Technical     delta
+#     0.00    0.7500  150/200   0.4096    4.985     0.6182        --
+#     0.50    0.7600  152/200   0.4278    4.945     0.6294   +0.0112
+#     1.00    0.7700  154/200   0.4184    4.870     0.6331   +0.0149
+#     2.00    0.7900  158/200   0.4176    4.745     0.6454   +0.0272  <- shipped
+#     4.00    0.7850  157/200   0.4254    4.825     0.6436   +0.0254
+#
+# +8 sessions of hit rate. Contrast the dense leg (#14), which adds no recall
+# at all. 2.00 and 4.00 are one session apart, so the top is flat and the
+# choice between them is arbitrary; 2.00 is the lower-variance pick.
+PHRASE_WEIGHT = 2.0
+
+# Cross-encoder reranking (reranker.py, Qwen3-Reranker-0.6B). Closes the one
+# remaining named gap against spec Pillar I, "Multi-Route Retrieval -> LLM
+# Semantic Ranking" (CLAUDE.md #6): until now nothing learned or generative
+# ever scored a (query, product) pair jointly.
+#
+# 0.0 is the identity and skips the model entirely, including its load cost.
+# The reranked order is fused with the incoming order by RRF rather than
+# replacing it, so the leg can be weighted rather than trusted outright --
+# same treatment as the dense leg, and for the same reason: this is a semantic
+# component on a benchmark that measurement says favours exact matching (#14),
+# so it should be able to lose gracefully.
+RERANK_WEIGHT = 0.0
+# Which backend scores the pairs. "minilm" is the shipped, measurable stage;
+# "qwen" is the LLM-scale variant kept for the report and the demo. See
+# reranker.py -- Qwen judges well but needs ~27 s per pair on this hardware,
+# which is ~75 hours for one 200-sample evaluation and therefore cannot be
+# A/B'd at all.
+RERANK_BACKEND = "minilm"
+# Depth of the pool handed to the cross-encoder. Cost is linear in this and
+# dominated by prefill; reranking beyond the returned slate cannot change
+# HitRate, only which of the top items lead.
+RERANK_TOP_N = 10
+
+# Do not re-recommend a product that has already been shown and rejected.
+#
+# This is a deduction from the scoring rule, not a heuristic. `evaluate()` in
+# the local evaluator breaks the session the moment the target appears in the
+# returned slate, so being *asked for another turn at all* is proof that none
+# of the items shown so far was the target. Re-offering them spends slots that
+# are known-dead: with ~3 replies in 5 carrying no new constraint
+# (session_belief.py), the query barely moves between turns and the next slate
+# largely repeats the one just disproven. Across a 10-turn session the
+# evaluator affords up to 100 distinct guesses; without this the agent spends
+# them on far fewer distinct products.
+#
+# THE EXCEPTION THAT MAKES THIS SUBTLE, and why it is wired to the override
+# detector: the evaluator suppresses the hit check until a pivot lands --
+#
+#     override_applied = sample["scenario_type"] != "intent_override"
+#     if override_applied and target in ranked: ... break
+#
+# -- so in an intent_override session (15% of the public set) an item shown
+# *before* the pivot may still be the target, and excluding it would be
+# actively wrong. `respond()` therefore clears the shown set on exactly the
+# signal that clears `disclosed`, and the pre-pivot turns become admissible
+# again. This also inverts the override detector's error asymmetry: a missed
+# override now risks permanently excluding the true target, where before it
+# only left stale constraints (see CLAUDE.md #7, whose rule was tuned toward
+# precision under the old cost model).
+#
+# Assumption worth stating in the report: this relies on first-hit-ends-the-
+# session, which the spec implies by defining MTTC as turns-to-conversion but
+# which is only *verified* against the local evaluator.
+EXCLUDE_SHOWN = False
+
 # Prepend a plain-language rationale to `turn_response.message` (spec's
 # "transparent recommendation explanations"). Score-neutral by construction --
 # the evaluator never reads the message back -- so this is on by default and
@@ -320,6 +405,10 @@ class SessionState:
     belief: SessionBelief = field(default_factory=SessionBelief)
     # The attribute asked last turn, whose outcome this turn's reply reveals.
     pending_ask: str | None = None
+    # Products already offered this session. Proven non-targets while the
+    # session continues -- see EXCLUDE_SHOWN. Cleared on a detected override,
+    # because the evaluator does not count pre-pivot turns as hits.
+    shown: set[str] = field(default_factory=set)
 
 
 MAX_QUERY_CHARS = 2000
@@ -422,6 +511,16 @@ class Agent:
                 # any of them should degrade to BM25-only, not crash Agent init.
                 logger.error("dense index unavailable, falling back to BM25-only: %s", exc)
 
+        self.reranker: CrossEncoderReranker | QwenReranker | None = None
+        if RERANK_WEIGHT > 0.0:
+            try:
+                self.reranker = (QwenReranker() if RERANK_BACKEND == "qwen"
+                                 else CrossEncoderReranker())
+            except Exception as exc:
+                # Same degrade-don't-crash policy as every other optional
+                # component here (CLAUDE.md #15).
+                logger.error("cross-encoder reranker unavailable, skipping: %s", exc)
+
         self.lm_scorer: MaskedLMScorer | None = None
         try:
             self.lm_scorer = MaskedLMScorer()
@@ -475,6 +574,9 @@ class Agent:
                 logger.debug("respond(%s, turn=%s): override detected, clearing disclosed/asked state", session_id, turn)
                 state.disclosed.clear()
                 state.disclosed_turn.clear()
+                # Pre-pivot slates were never eligible to hit, so they carry
+                # no proof of non-membership and must become offerable again.
+                state.shown.clear()
                 state.profile_hint.clear()
                 state.asked_attributes.clear()
             # Observe what last turn's question actually bought us -- the
@@ -514,11 +616,30 @@ class Agent:
         inferred = self._infer_attributes(query, state.disclosed)
         if inferred:
             logger.debug("respond(%s, turn=%s): LM-inferred %s", session_id, turn, inferred)
+        # Excluding already-shown items only works if retrieval reaches deep
+        # enough to replace them. Growing the pool by exactly len(shown) keeps
+        # roughly ENTROPY_POOL_SIZE candidates alive after the exclusion, so
+        # the attribute-entropy question picker sees a pool of stable size and
+        # is not silently confounded by this feature.
+        pool_size = max(top_k, ENTROPY_POOL_SIZE)
+        if EXCLUDE_SHOWN:
+            pool_size += len(state.shown)
         candidate_pool = self._retrieve(
-            query, top_k, max(top_k, ENTROPY_POOL_SIZE), signal.label, state.disclosed, inferred,
+            query, top_k, pool_size, signal.label, state.disclosed, inferred,
             state.disclosed_turn, turn if isinstance(turn, int) else 1, state.belief,
         )
+        if EXCLUDE_SHOWN and state.shown:
+            fresh = [pid for pid in candidate_pool if pid not in state.shown]
+            # Never return a short slate: the evaluator scores the first
+            # `top_k` valid ids, so an under-filled slate is strictly worse
+            # than one padded with known-dead items. Padding only happens when
+            # the pool is exhausted, which is a retrieval-depth problem rather
+            # than a reason to abandon the exclusion.
+            if len(fresh) < top_k:
+                fresh += [pid for pid in candidate_pool if pid in state.shown]
+            candidate_pool = fresh
         recommendations = candidate_pool[:top_k]
+        state.shown.update(recommendations)
 
         attribute = _next_attribute(state, query, candidate_pool, self.attribute_index,
                                     signal.label, state.belief)
@@ -593,20 +714,35 @@ class Agent:
     ) -> list[str]:
         if not query.strip():
             return []
+        # Each leg must retrieve at least as deep as the fused pool needs to be,
+        # or the fusion simply cannot fill it -- with EXCLUDE_SHOWN the pool
+        # grows every turn, so a fixed CANDIDATE_N would quietly cap the whole
+        # mechanism after a few turns.
+        leg_n = max(CANDIDATE_N, pool_size * 2)
         try:
-            bm25_ranked = self.bm25.search(query, CANDIDATE_N)
+            bm25_ranked = self.bm25.search(query, leg_n)
         except Exception:
             logger.exception("BM25 search failed for query %r", query)
             bm25_ranked = []
         dense_ranked: list[str] = []
         if self.dense is not None:
             try:
-                dense_ranked = self.dense.search(query, CANDIDATE_N)
+                dense_ranked = self.dense.search(query, leg_n)
             except Exception:
                 logger.exception("dense search failed for query %r", query)
+        phrase_ranked: list[str] = []
+        if PHRASE_WEIGHT > 0.0:
+            try:
+                phrase_ranked = self.bm25.phrase_search(query, leg_n)
+            except Exception:
+                logger.exception("phrase search failed for query %r", query)
 
         routing = routing_params(intent_label, belief)
-        legs = [(bm25_ranked, routing.bm25_weight), (dense_ranked, routing.dense_weight)]
+        legs = [
+            (bm25_ranked, routing.bm25_weight),
+            (dense_ranked, routing.dense_weight),
+            (phrase_ranked, PHRASE_WEIGHT),
+        ]
         rank_lists = [ranked for ranked, _ in legs if ranked]
         weights = [weight for ranked, weight in legs if ranked]
         if not rank_lists:
@@ -616,9 +752,36 @@ class Agent:
         candidates = (self._boost_by_disclosed(fused, disclosed, inferred, disclosed_turn, turn)
                       if (disclosed or inferred) else fused)
 
+        candidates = self._rerank(query, candidates)
+
         if routing.diversify:
             return self._diversify(candidates, top_k)
         return candidates
+
+    def _rerank(self, query: str, candidate_ids: list[str]) -> list[str]:
+        """Fuse a cross-encoder ordering of the pool head into the current one.
+
+        Runs after the attribute boost and before the diversity re-rank:
+        reranking is a relevance judgement, diversity is a presentation choice
+        on top of the final relevance order.
+
+        Only the head is scored. Cost is linear in RERANK_TOP_N and dominated
+        by prefill, and an item outside the returned slate cannot affect
+        HitRate no matter how it is ordered.
+        """
+        if self.reranker is None or RERANK_WEIGHT <= 0.0 or not candidate_ids:
+            return candidate_ids
+        head, tail = candidate_ids[:RERANK_TOP_N], candidate_ids[RERANK_TOP_N:]
+        try:
+            texts = self.bm25.document_text(head)
+            scored = self.reranker.scores(query, [texts.get(pid, "") for pid in head])
+        except Exception:
+            logger.exception("reranking failed; keeping the retrieval order")
+            return candidate_ids
+        reranked = [pid for _, pid in sorted(zip(scored, head, strict=True), key=lambda pair: -pair[0])]
+        fused = reciprocal_rank_fusion([head, reranked], top_n=len(head),
+                                       weights=[1.0, RERANK_WEIGHT])
+        return fused + tail
 
     def _diversify(self, candidate_ids: list[str], head_n: int) -> list[str]:
         """Greedy MMR re-rank of the pool's front, browsing-track only.

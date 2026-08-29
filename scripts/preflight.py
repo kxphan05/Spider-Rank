@@ -88,7 +88,8 @@ def check_live(require_lm: bool) -> list[str]:
 
     print("\n-- instantiating the agent with network access disabled --")
     try:
-        from starter.agent import Agent
+        from starter.agent import Agent, RERANK_WEIGHT
+        rerank_on = RERANK_WEIGHT > 0.0
         agent = Agent()
     except Exception as exc:  # pragma: no cover - a hard init failure is itself the finding
         line(FAIL, "agent init", f"raised {type(exc).__name__}: {exc}")
@@ -98,7 +99,11 @@ def check_live(require_lm: bool) -> list[str]:
         ("dense retrieval", agent.dense is not None, True),
         ("intent classifier", agent.intent_classifier is not None, True),
         ("override detector", agent.override_detector is not None, True),
-        ("masked LM", agent.lm_scorer is not None, require_lm),
+        ("non-answer detector", agent.non_answer_detector is not None, True),
+        # Only required when the stage is actually switched on: at
+        # RERANK_WEIGHT == 0.0 the agent deliberately never constructs it, so
+        # "dark" is the correct state rather than a degrade to report.
+        ("cross-encoder reranker", agent.reranker is not None, rerank_on),
     ):
         if live:
             line(OK, name, "live")

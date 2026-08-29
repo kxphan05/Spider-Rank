@@ -29,6 +29,17 @@ def terms(text: str) -> list[str]:
     ]
 
 
+def phrase_tokens(text: str) -> list[str]:
+    """Contiguous tokens with stopwords KEPT, for verbatim span matching.
+
+    `terms()` drops stopwords, which is right for bag-of-words retrieval and
+    wrong here: "pull on closure" would collapse to "pull closure" and stop
+    matching the span as it actually appears in the catalog. A phrase is only
+    a phrase with its function words in place.
+    """
+    return [token.lower() for token in TOKEN_RE.findall(text)]
+
+
 def product_passage(product: dict, max_chars: int = 700) -> str:
     """Build the text a product is embedded from for dense retrieval.
 

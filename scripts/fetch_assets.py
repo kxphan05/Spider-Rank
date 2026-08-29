@@ -44,10 +44,14 @@ CATALOG = DEFAULT_CATALOG
 
 ENCODER = "BAAI/bge-small-en-v1.5"
 MASKED_LM = "distilbert-base-uncased"
+# Cross-encoder reranking stage (starter/reranker.py). Small enough that it is
+# fetched by default, unlike the masked LM: ~90 MB and 17 ms per pair, against
+# the masked LM's 256 MB for a measured +0.001.
+RERANKER = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 def fetch_encoder() -> None:
-    print(f"[1/3] fetching {ENCODER} into {MODEL_DIR}/ ...")
+    print(f"[1/4] fetching {ENCODER} into {MODEL_DIR}/ ...")
     from sentence_transformers import SentenceTransformer
 
     # cache_folder must match starter/retrieval.py:load_embedding_model().
@@ -55,8 +59,17 @@ def fetch_encoder() -> None:
     print("      done.")
 
 
+def fetch_reranker() -> None:
+    print(f"[2/4] fetching {RERANKER} into {MODEL_DIR}/ ...")
+    from sentence_transformers import CrossEncoder
+
+    # cache_folder must match starter/reranker.py:CrossEncoderReranker.
+    CrossEncoder(RERANKER, cache_folder=str(MODEL_DIR))
+    print("      done.")
+
+
 def fetch_masked_lm() -> None:
-    print(f"[2/3] fetching {MASKED_LM} into {MODEL_DIR}/ ...")
+    print(f"[3/4] fetching {MASKED_LM} into {MODEL_DIR}/ ...")
     from transformers import AutoModelForMaskedLM, AutoTokenizer
 
     AutoTokenizer.from_pretrained(MASKED_LM, cache_dir=str(MODEL_DIR))
@@ -65,7 +78,7 @@ def fetch_masked_lm() -> None:
 
 
 def build_index() -> int:
-    print(f"[3/3] building the dense index into {INDEX_DIR}/ ...")
+    print(f"[4/4] building the dense index into {INDEX_DIR}/ ...")
     if not CATALOG.exists():
         print(f"      SKIPPED: {CATALOG} is missing. Download the catalog first "
               "(see README.md 'Download the Catalog'), then re-run this script.",
@@ -82,19 +95,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--with-lm", action="store_true",
                         help="also fetch distilbert for masked-LM attribute inference (+256 MB, ~noise)")
+    parser.add_argument("--skip-reranker", action="store_true",
+                        help="don't fetch the cross-encoder reranker (~90 MB)")
     parser.add_argument("--skip-index", action="store_true",
                         help="fetch weights only, don't build the dense index")
     args = parser.parse_args()
 
     fetch_encoder()
+    if args.skip_reranker:
+        print(f"[2/4] skipping {RERANKER} (--skip-reranker)")
+    else:
+        fetch_reranker()
     if args.with_lm:
         fetch_masked_lm()
     else:
-        print(f"[2/3] skipping {MASKED_LM} (pass --with-lm to include it)")
+        print(f"[3/4] skipping {MASKED_LM} (pass --with-lm to include it)")
 
     code = 0 if args.skip_index else build_index()
     if args.skip_index:
-        print("[3/3] skipping the dense index build (--skip-index)")
+        print("[4/4] skipping the dense index build (--skip-index)")
 
     print("\nNow verify with:  uv run python3 scripts/preflight.py --strict")
     return code

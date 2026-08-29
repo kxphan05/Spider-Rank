@@ -14,13 +14,30 @@ and no token generation**, which is the only reason this is tractable here --
 generation on this hardware runs at under 2 tokens/second, while a
 prefill-only pass over a few hundred tokens is roughly a second.
 
-Why 0.6B and not something larger: measured on the target machine (i5-8365U,
-no CUDA, ~4.6 GB free RAM), a 2B *generative* model needs ~8.4 s of wall time
-for a single 41-token scoring call. An 8B model would need roughly 180 hours
-for one 200-sample evaluation, which does not merely make it slow, it makes it
-unmeasurable -- and this project does not ship unmeasured changes. A 0.6B
-cross-encoder scoring the pool head is the largest version of this idea that
-can actually be A/B'd on the full public set.
+Two backends ship, and the split is a measured decision rather than
+indecision.
+
+`CrossEncoderReranker` (ms-marco-MiniLM-L-6-v2, 22M parameters, ~90 MB) is the
+**shipped, measured** stage. `QwenReranker` (Qwen3-Reranker-0.6B) is kept for
+the report and the demo as the LLM-scale variant.
+
+The reason is arithmetic, not preference. Measured on the target machine
+(i5-8365U, no CUDA, ~4.6 GB free RAM), the Qwen reranker scores a
+(query, product) pair in **~27 s** loaded as fp32 through `transformers`. Its
+judgements are good -- 0.999 for an exact match, 0.679 for a same-category
+alternative, 0.001 for off-category -- but reranking a 10-item slate across
+~1000 evaluation turns is roughly 75 hours for a *single* configuration, so it
+cannot be A/B'd, let alone swept. An unmeasurable component is one this
+project will not ship on by default (see CLAUDE.md #14/#19 for what happens
+when plausible retrieval changes go unverified here).
+
+The same argument already excluded larger models: an 8B generative model
+implies ~180 hours per evaluation on this hardware.
+
+A classic cross-encoder is the version of this idea that can actually be
+measured, and it closes the same structural gap -- nothing in the pipeline
+previously scored a (query, product) pair *jointly*, which is what
+distinguishes a reranker from the bi-encoder dense leg.
 
 Degrades like every other optional component here (CLAUDE.md #15): if the
 weights are missing the agent logs and runs without reranking, rather than
@@ -35,6 +52,8 @@ from .paths import model_cache_dir
 logger = logging.getLogger(__name__)
 
 RERANK_MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
+MINILM_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+MINILM_MAX_LENGTH = 256
 
 # Characters of product text shown to the reranker. Cost here is dominated by
 # prefill, which is linear in prompt length, so this is the main runtime knob.
@@ -102,3 +121,38 @@ class QwenReranker:
             probs = torch.log_softmax(pair.float(), dim=1).exp()
             out.extend(probs[:, 1].tolist())
         return out
+
+
+class CrossEncoderReranker:
+    """Classic cross-encoder relevance scoring (ms-marco-MiniLM-L-6-v2).
+
+    Same interface as QwenReranker and the same structural role -- query and
+    document go through the model *together*, so the score can depend on their
+    interaction, unlike the dense leg where each is embedded independently and
+    compared by cosine. That joint scoring is the whole point of a reranking
+    stage and is what CLAUDE.md #6 recorded as missing.
+
+    Trained on MS MARCO passage ranking, so it is a purpose-built reranker
+    rather than a general LM steered into the role, which is also why it is
+    roughly three orders of magnitude cheaper per pair than the Qwen backend.
+    """
+
+    def __init__(self, model_name: str = MINILM_MODEL_NAME, cache_dir: str | None = None) -> None:
+        from sentence_transformers import CrossEncoder
+
+        self._model = CrossEncoder(
+            model_name, max_length=MINILM_MAX_LENGTH, cache_folder=cache_dir or model_cache_dir()
+        )
+        logger.info("CrossEncoderReranker: loaded %s", model_name)
+
+    def scores(self, query: str, documents: list[str]) -> list[float]:
+        """Relevance logit per document, in input order.
+
+        Returned unnormalized: the consumer only ranks by these, and RRF
+        fusion in `Agent._rerank` uses the resulting *order*, never the
+        magnitudes.
+        """
+        if not documents:
+            return []
+        pairs = [(query, doc[:MAX_DOC_CHARS]) for doc in documents]
+        return [float(value) for value in self._model.predict(pairs)]

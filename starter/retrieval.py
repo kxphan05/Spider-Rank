@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .paths import catalog_fingerprint, model_cache_dir
-from .text_utils import field_text, terms
+from .text_utils import STOPWORDS, field_text, phrase_tokens, terms
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,17 @@ def load_embedding_model():
 
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     return SentenceTransformer(DENSE_MODEL_NAME, cache_folder=model_cache_dir())
+
+
+# Verbatim-span matching parameters (BM25Index.phrase_search).
+PHRASE_MIN_N = 2
+PHRASE_MAX_N = 5
+# Per-query budget on phrase lookups. Each is an indexed FTS5 phrase scan, so
+# they are cheap, but an accumulated 10-turn query has a long token tail.
+MAX_PHRASE_QUERIES = 24
+# A span appearing in more than this many products carries no identifying
+# information, so it is dropped rather than scored.
+PHRASE_MAX_MATCHES = 150
 
 
 class BM25Index:
@@ -76,6 +87,83 @@ class BM25Index:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
         logger.info("BM25Index: indexed %d products", count)
+
+    def document_text(self, parent_asins: list[str]) -> dict[str, str]:
+        """Title + categories + features for the given products.
+
+        The cross-encoder needs the product text, and the FTS table is already
+        the one place it lives in memory -- rereading the catalog file per turn
+        would be the only alternative. Ordered title-first because the reranker
+        truncates, and the title is the strongest disambiguator.
+        """
+        if not parent_asins:
+            return {}
+        placeholders = ",".join("?" * len(parent_asins))
+        rows = self.connection.execute(
+            f"SELECT parent_asin, title, categories, features FROM products "  # noqa: S608
+            f"WHERE parent_asin IN ({placeholders})",
+            parent_asins,
+        ).fetchall()
+        return {str(r[0]): " ".join(str(part) for part in r[1:] if part) for r in rows}
+
+    def phrase_search(self, query: str, top_n: int) -> list[str]:
+        """Rank products by how much of the query they contain *verbatim*.
+
+        Motivation is a measured property of this task, not a general IR
+        preference: 89.7% of the local simulator's turn-1 hard constraints are
+        verbatim substrings of the target product's own catalog text
+        (CLAUDE.md #14). `search()` above dissolves that structure -- it ORs
+        the query's unique tokens, so "Buckle closure" is two independent
+        terms against 50k products and any item mentioning either scores.
+        FTS5 can match the span itself, which is a far sharper signal when the
+        span is genuinely present.
+
+        Each contiguous n-gram is run as an FTS5 phrase query and contributes
+        `len(gram) ** 2` to every product containing it, so a five-word span
+        outweighs six unrelated two-word ones. A phrase matching more than
+        `PHRASE_MAX_MATCHES` products is discarded as non-discriminative
+        rather than counted, which is what keeps common filler ("shoes and",
+        "for the") from drowning the rare spans that actually identify a
+        product.
+        """
+        tokens = phrase_tokens(query)
+        grams: list[tuple[str, ...]] = []
+        seen: set[tuple[str, ...]] = set()
+        # Longest first, so the per-query budget is spent on the most
+        # specific spans available.
+        for size in range(PHRASE_MAX_N, PHRASE_MIN_N - 1, -1):
+            for start in range(len(tokens) - size + 1):
+                gram = tuple(tokens[start:start + size])
+                if gram in seen or all(token in STOPWORDS for token in gram):
+                    continue
+                seen.add(gram)
+                grams.append(gram)
+        if not grams:
+            return []
+
+        scores: dict[str, float] = {}
+        for gram in grams[:MAX_PHRASE_QUERIES]:
+            expression = '"' + " ".join(gram) + '"'
+            try:
+                rows = self.connection.execute(
+                    "SELECT parent_asin FROM products WHERE products MATCH ? "
+                    "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                    (expression, PHRASE_MAX_MATCHES + 1),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # A gram can still form an invalid MATCH expression (an FTS5
+                # keyword like NEAR/AND/OR as a bare token). Skip it rather
+                # than lose the whole leg.
+                continue
+            if len(rows) > PHRASE_MAX_MATCHES:
+                continue
+            weight = float(len(gram) ** 2)
+            for row in rows:
+                pid = str(row[0])
+                scores[pid] = scores.get(pid, 0.0) + weight
+        if not scores:
+            return []
+        return [pid for pid, _ in sorted(scores.items(), key=lambda kv: -kv[1])][:top_n]
 
     def search(self, query: str, top_n: int) -> list[str]:
         unique_terms = list(dict.fromkeys(terms(query)))[:40]
