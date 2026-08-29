@@ -313,8 +313,8 @@ contributions").
 
 | member | contribution to Track 4 |
 |---|---|
-| **[PRIMARY_AUTHOR]** | All of it: architecture, retrieval design, every experiment and measurement, the evaluation tooling, and this report. |
-| **[TEAMMATE]** | Registered team member. No implementation on this track. |
+| **Phan Kang Xun** | All of it: architecture, retrieval design, every experiment and measurement, the evaluation tooling, and this report. |
+| **Lloyd Wang** | Registered team member. |
 
 Stated plainly because the specification asks for it: this track's system was
 designed, built, measured and written up by one person. The division is not a

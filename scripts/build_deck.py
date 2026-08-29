@@ -14,7 +14,6 @@ from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 OUT = Path(__file__).resolve().parent.parent / "dist" / "techjam_track4.pptx"
@@ -71,7 +70,10 @@ def heading(slide, title, kicker=None):
     _rule(slide, Inches(1.58))
 
 
-def bullets(slide, items, top=Inches(1.9), size=16, width=Inches(11.9), left=Inches(0.7)):
+def bullets(slide, items, top=None, size=16, width=None, left=None):
+    top = Inches(1.9) if top is None else top
+    width = Inches(11.9) if width is None else width
+    left = Inches(0.7) if left is None else left
     frame = _textbox(slide, left, top, width, Inches(5.0))
     first = True
     for item in items:
@@ -86,7 +88,8 @@ def bullets(slide, items, top=Inches(1.9), size=16, width=Inches(11.9), left=Inc
              bold=(level == 0 and color is INK), color=color)
 
 
-def two_col(slide, left_title, left_items, right_title, right_items, top=Inches(1.95)):
+def two_col(slide, left_title, left_items, right_title, right_items, top=None):
+    top = Inches(1.95) if top is None else top
     for offset, title, items, tint in (
         (Inches(0.7), left_title, left_items, GOOD),
         (Inches(6.85), right_title, right_items, BAD),
@@ -119,6 +122,10 @@ def build() -> Path:
     run = frame.paragraphs[0].add_run()
     run.text = "TechJam Conversational Search — Track 4"
     _set(run, size=19, color=MUTED)
+    para = frame.add_paragraph()
+    run = para.add_run()
+    run.text = "Phan Kang Xun · Lloyd Wang"
+    _set(run, size=15, color=MUTED)
     para = frame.add_paragraph()
     run = para.add_run()
     run.text = "Find a hidden product in a 50,000-item catalog, in 10 turns or fewer."
@@ -311,8 +318,8 @@ def build() -> Path:
     slide = _blank(prs)
     heading(slide, "Team and process", "credits")
     bullets(slide, [
-        ("[PRIMARY_AUTHOR] — architecture, retrieval, all experiments, evaluation tooling, report.", 0),
-        ("[TEAMMATE] — registered team member.", 0),
+        ("Phan Kang Xun — architecture, retrieval, all experiments, evaluation tooling, report.", 0),
+        ("Lloyd Wang — registered team member.", 0),
         ("Built with heavy use of an AI coding assistant for implementation and documentation.", 0),
         ("The rules permit this. We state it because it is true.", 1, MUTED),
         ("Every experiment was accepted or rejected on its measured number.", 0, ACCENT),
