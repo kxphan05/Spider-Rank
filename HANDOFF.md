@@ -13,13 +13,17 @@ is believable. `CLAUDE.md` "Progress" and entry #23 now say so.
 ## What is running right now
 
 ```
-scripts/ab_phrase_query.py   PID 107690 107701 117981 117990 125500 125509 126569 126571    log: logs/ab_phrase_query.log
+scripts/ab_phrase_query.py   PID 126962   log: logs/ab_phrase_query.log
 ```
 
 Five legs, in order: `identity`, `filter only`, `clause+edge only`,
 `filter + clause+edge`, `budget 96 (control)`. It had printed only its header
-when this session ended, so **no leg has landed yet**. Roughly five full evals;
-it now has the box to itself.
+when this session ended, so **no leg has landed yet**. Roughly five full evals.
+
+It was restarted at 14:07 with `TECHJAM_THREADS=6` after the other two runs
+were stopped — the first attempt ran 1h20 pinned to 3 threads on an 8-core box
+it no longer had to share, and had not finished leg 1. That first log is kept
+as `logs/ab_phrase_query.3thread.log`; it contains nothing but a header.
 
 Read it with:
 
