@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .attributes import (AttributeIndex, COLORS, FILTERABLE_ATTRIBUTES, MATERIALS,
-                         budget_constraint_satisfied, extract_disclosed_value,
-                         select_dynamic_attribute)
+                         STRUCTURAL_ATTRIBUTES, budget_constraint_satisfied,
+                         extract_disclosed_value, select_dynamic_attribute)
 from .classifier import (
     EmbeddingIntentClassifier,
     EmbeddingNonAnswerDetector,
@@ -29,8 +30,8 @@ from .config import (BELIEF_DRIVEN_QUESTIONS, BELIEF_REORCHESTRATION, BROWSING_B
     ENTROPY_POOL_SIZE, EXCLUDE_SHOWN, EXHAUSTED_BM25_BONUS, EXPLAIN_RECOMMENDATIONS, 
     FALLBACK_ATTRIBUTE_ORDER, LM_INFERENCE_WEIGHT, MAX_QUERY_CHARS, MIN_ENTROPY_BROWSING, 
     MIN_ENTROPY_BUYING, PHRASE_QUERY_SKIP_NON_ANSWERS, PHRASE_WEIGHT, PRF_WEIGHT, 
-    RECENT_WINDOW, RERANK_BACKEND, RERANK_TOP_N, RERANK_WEIGHT, SKIP_NON_ANSWERS_IN_QUERY, 
-    SLOT_DECAY)
+    RECENT_WINDOW, RERANK_BACKEND, RERANK_TOP_N, RERANK_WEIGHT, SCOPED_OVERRIDE_CLEAR, 
+    SKIP_NON_ANSWERS_IN_QUERY, SLOT_DECAY)
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,18 @@ class SessionState:
     first_message: str | None = None
     recent_messages: list[str] = field(default_factory=list)
     asked_attributes: list[str] = field(default_factory=list)
+    # Attribute values the customer stated and then explicitly took back on a
+    # scoped pivot. Erasing the slot is not enough on its own: the *text* the
+    # slot was read from stays in first_message/recent_messages and keeps
+    # feeding BM25 and dense, so "i want white shoes" -> "never mind i want
+    # yellow" searched for white and yellow at once, with white the heavier
+    # term of the two (df 0.0848 against 0.0251).
+    #
+    # This is the narrow form of the rewrite that cost 0.058 in CLAUDE.md #17.
+    # That one dropped whole messages and threw away the category with them;
+    # this drops individual vocabulary values the customer has contradicted in
+    # so many words, and never touches anything they did not retract.
+    retracted_values: set[str] = field(default_factory=set)
     # attribute -> extracted value, from a message THIS session (asked or
     # volunteered). Used to filter/rerank the candidate pool in _retrieve,
     # not just as extra query text. Never seeded from cross-session history --
@@ -199,15 +212,25 @@ class SessionState:
 
 
 
+def _strip_retracted(text: str, retracted: set[str]) -> str:
+    """Remove withdrawn attribute values from query text, word-bounded.
+
+    Word-bounded for the #10 reason: a substring pass would take the "lace"
+    out of "necklace".
+    """
+    if not retracted:
+        return text
+    for value in retracted:
+        text = re.sub(rf"\b{re.escape(value)}\b", " ", text, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 def _build_query(state: SessionState) -> str:
-    # Recent messages carry the freshest signal (and matter most for intent
-    # override); if the budget is tight, trim the first message first, and
-    # only cut into `recent` (keeping its tail -- the most recent text) if
-    # recent alone still exceeds the cap.
-    recent = " ".join(state.recent_messages)[-MAX_QUERY_CHARS:]
-    first = state.first_message or ""
-    budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
-    parts = [first[:budget_for_first], recent]
+    # Prioritise first query over clarifications
+    recent = _strip_retracted(" ".join(state.recent_messages), state.retracted_values)[-MAX_QUERY_CHARS:]
+    first = _strip_retracted(state.first_message or "", state.retracted_values)
+    budget_for_recent = max(0, MAX_QUERY_CHARS - len(first) - 1)
+    parts = [first, recent[:budget_for_recent]]
     # Normalized once, here, so BM25, phrase, PRF and dense all see the same
     # string -- the dense leg embeds the raw text and never passes through
     # terms(), so a spelling fix applied in text_utils.terms() alone would
@@ -224,10 +247,10 @@ def _build_phrase_query(state: SessionState) -> str:
     """
     if not PHRASE_QUERY_SKIP_NON_ANSWERS:
         return _build_query(state)
-    recent = " ".join(state.informative_messages)[-MAX_QUERY_CHARS:]
-    first = state.first_message or ""
-    budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
-    parts = [first[:budget_for_first], recent]
+    recent = _strip_retracted(" ".join(state.informative_messages), state.retracted_values)[-MAX_QUERY_CHARS:]
+    first = _strip_retracted(state.first_message or "", state.retracted_values)
+    budget_for_recent = max(0, MAX_QUERY_CHARS - len(first) - 1)
+    parts = [first, recent[:budget_for_recent]]
     return normalize_query(" ".join(part for part in parts if part))
 
 
@@ -239,22 +262,11 @@ def _next_attribute(
     intent_label: str,
     belief: SessionBelief | None = None,
 ) -> str | None:
-    # Skip attributes already evidenced in the accumulated text (e.g. a
-    # buying session's turn-1 message names a material) -- asking about it
-    # again just wastes a turn, since the evaluator's customer policy only
-    # reveals values not already marked "disclosed". Deliberately NOT
-    # excluding (or boosting ranking with) state.profile_hint -- see its
-    # comment on SessionState and user_profile.py's module docstring: three
-    # different ways of using a cross-session profile_hint were each tried
-    # and measured to regress the full 200-sample public set, because a
-    # profile_key match is frequently a coincidental template collision
-    # rather than a genuine returning shopper, and a wrong guess is costly
-    # however it's used (sinks true-target ranking, or -- worse than
-    # expected -- permanently blinds the session to ever asking about that
-    # attribute, since exclusion here would persist for the rest of the
-    # session same as a genuine disclosure).
+    # skips attributes that are already asked, or are already extracted in query
     excluded = set(state.asked_attributes) | detected_attributes(query)
 
+    # select attribute with highest diveristy
+    # return None if max entropy is below threshold
     dynamic_pick = select_dynamic_attribute(
         candidate_pool, attribute_index, excluded, min_entropy=routing_params(intent_label).min_entropy
     )
@@ -376,39 +388,71 @@ class Agent:
             state.first_message = user_message
         else:
             if self.override_detector is not None and self.override_detector.is_override(user_message):
-                logger.debug("respond(%s, turn=%s): override detected, clearing disclosed/asked state", session_id, turn)
-                state.disclosed.clear()
-                state.disclosed_turn.clear()
-                # Pre-pivot slates were never eligible to hit, so they carry
-                # no proof of non-membership and must become offerable again.
-                state.shown.clear()
-                state.informative_messages.clear()
-                state.profile_hint.clear()
-                state.asked_attributes.clear()
-                # Erasing the slots is only half of what a pivot asks for
-                # (spec 4.2.II says "slot erasure and rewriting"): the text
-                # the slots were extracted from still feeds _build_query, so
-                # the discarded preference keeps driving BM25 and dense.
-                #
-                # It is only half-safe to act on, though. CLAUDE.md #17
-                # measured that restarting the query from the pivot message
-                # costs 0.058, because in the local simulator the *category*
-                # is stated once in turn 1 and the pivot carries only the
-                # changed attribute -- "What I need is: leather" against a
-                # turn 1 that said "Belts". Dropping turn 1 there searches
-                # 50k products for "leather".
-                #
-                # So the history is dropped only when the pivot names a
-                # product category itself, i.e. when the customer has changed
-                # *what they are shopping for* rather than a property of it.
-                # "Actually, forget that, show me jewellery" replaces the
-                # framing and turn 1 is genuinely obsolete; "What I need is:
-                # leather" does not, and turn 1 stays. Measured against the
-                # evaluator's own 30 override turns, this fires on 2.
-                if self.bm25.names_category(user_message):
+                # What the pivot itself names decides how much of the session
+                # it is allowed to erase.
+                # A category word only signals a *changed* category if it
+                # isn't the one already in play. "never mind, i want white
+                # shoes" repeats "shoes" from turn 1 -- the customer changed
+                # a colour and restated what they are shopping for, which is
+                # the scoped case, not the full-restart one. Without this,
+                # naming the product you are already looking at triggers the
+                # destructive path, and typed input restates the noun
+                # constantly.
+                prior_text = " ".join(
+                    [state.first_message or ""] + list(state.recent_messages)
+                )
+                prior_categories = self.bm25.names_category(prior_text)
+                names_category = self.bm25.names_category(user_message) - prior_categories
+                pivoted_attributes = [
+                    attribute for attribute in FILTERABLE_ATTRIBUTES
+                    if extract_disclosed_value(attribute, user_message) is not None
+                ]
+                scoped = bool(SCOPED_OVERRIDE_CLEAR and pivoted_attributes and not names_category)
+                if scoped:
+                    # "never mind, i want white": one slot is replaced and the
+                    # rest of the session still stands. Erase only the named
+                    # slots -- the extraction loop below refills them with the
+                    # new value on this same turn. `shown` in particular is
+                    # kept: the hidden target does not move when the customer
+                    # changes their mind, so a slate that already missed still
+                    # misses, and re-offering it would spend the win in #23.
+                    logger.debug(
+                        "respond(%s, turn=%s): scoped override, clearing %s only",
+                        session_id, turn, pivoted_attributes,
+                    )
+                    for attribute in pivoted_attributes:
+                        # Record the withdrawn value before dropping it, so
+                        # _build_query stops searching for it. Only the
+                        # structural attributes: a budget slot holds a
+                        # comparison token ("<=80"), not a word that appears
+                        # in the customer's text.
+                        superseded = state.disclosed.get(attribute)
+                        replacement = extract_disclosed_value(attribute, user_message)
+                        if (
+                            attribute in STRUCTURAL_ATTRIBUTES
+                            and superseded
+                            and superseded != replacement
+                        ):
+                            state.retracted_values.add(superseded)
+                        state.disclosed.pop(attribute, None)
+                        state.disclosed_turn.pop(attribute, None)
+                        state.profile_hint.pop(attribute, None)
+                else:
+                    logger.debug("respond(%s, turn=%s): override detected, clearing disclosed/asked state", session_id, turn)
+                    state.disclosed.clear()
+                    state.disclosed_turn.clear()
+                    # Pre-pivot slates were never eligible to hit, so they carry
+                    # no proof of non-membership and must become offerable again.
+                    state.shown.clear()
+                    state.informative_messages.clear()
+                    state.profile_hint.clear()
+                    state.asked_attributes.clear()
+                    state.retracted_values.clear()
+                # change recent messages, and first message if user wants to change intent
+                if names_category:
                     logger.debug(
                         "respond(%s, turn=%s): pivot names a new category %s; dropping prior query text",
-                        session_id, turn, self.bm25.names_category(user_message),
+                        session_id, turn, names_category,
                     )
                     state.first_message = user_message
                     state.recent_messages.clear()
@@ -434,6 +478,8 @@ class Agent:
         for attribute in FILTERABLE_ATTRIBUTES:
             value = extract_disclosed_value(attribute, user_message)
             if value is not None:
+                # Coming back to a value un-retracts it.
+                state.retracted_values.discard(value)
                 state.disclosed[attribute] = value
                 state.disclosed_turn[attribute] = turn if isinstance(turn, int) else 1
                 self.profile_store.record_disclosure(state.profile_key, state.profile_session_index, attribute, value)
@@ -790,10 +836,8 @@ class Agent:
                 score += weight * (DISCLOSED_MATCH_BOOST if actual == value
                                    else -DISCLOSED_MISMATCH_PENALTY)
             for attribute, value in (inferred or {}).items():
-                # Boost-only: agreement lifts, disagreement is ignored rather
-                # than penalized. See LM_INFERENCE_WEIGHT above for why the
-                # asymmetry is load-bearing and not just caution.
-                if self.attribute_index.value_for(attribute, pid) == value:
+                # boost only if attribute is not disclosed
+                if attribute not in disclosed.keys() and self.attribute_index.value_for(attribute, pid) == value:
                     score += LM_INFERENCE_WEIGHT
             return score
 

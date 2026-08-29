@@ -38,6 +38,16 @@ _REQUEST_STOPWORDS = {
     "hello", "hey", "hi", "instead", "need", "needs", "nevermind", "purchase",
     "recommend", "scratch", "show", "shopping", "something", "suggest",
     "thanks", "thank",
+    # Pivot discourse. "nevermind" was already here as one word, but a
+    # customer typing "never mind i want yellow" produces the tokens `never`
+    # and `mind`, and both are *rarer* in a product catalog than the colour
+    # they were retracting with:
+    #
+    #     mind 0.0169   never 0.0278   yellow 0.0251   wait 0.0022
+    #
+    # so BM25 ranked "never mind" as the most informative thing in the
+    # sentence. Same shape as the "Buy Caps and Hats" bug, one layer up.
+    "mind", "never", "nope", "wait",
 }
 
 STOPWORDS = _FUNCTION_STOPWORDS | _REQUEST_STOPWORDS

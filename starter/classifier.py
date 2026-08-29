@@ -74,8 +74,34 @@ PRICE_RE = re.compile(r"(\$\s?\d+|\bunder\s+\$?\d+|\bbudget\s+(?:of\s+)?\$?\d+|\
 # "isn't", the "n" is preceded by a word character (o, s, ...) with no
 # boundary there -- only a trailing boundary (before the space/punctuation
 # after "t") actually exists.
-NEGATION_RE = re.compile(r"\b(?:not|no|never|without)\b|n't\b")
+NEGATION_RE = re.compile(
+    r"\b(?:not|no|never|without)\b|n't\b"
+    # Apostrophe-less contractions, as an explicit closed list. This cannot be
+    # written as `n'?t\b`: that also matches the "nt" ending "want", "print",
+    # "garment" and "different", so every "i want black" would read as
+    # negated. Typed input drops the apostrophe constantly, and without these
+    # "i dont want black" left `black` un-negated -- and since
+    # extract_disclosed_value scans MATERIALS/COLORS in *vocab* order rather
+    # than text order, "i dont want black i want white" returned the
+    # *retracted* value.
+    r"|\b(?:dont|doesnt|didnt|isnt|arent|wasnt|werent|wont|cant|cannot"
+    r"|couldnt|wouldnt|shouldnt|havent|hasnt|hadnt)\b"
+)
 CLAUSE_BREAK_RE = re.compile(r"[.,;!?]")
+
+# Discourse markers that open a pivot. The negation word inside them is
+# retracting *the previous turn*, not the attribute that follows, so
+# "never mind i want white" states white -- it does not decline it. Written
+# out because punctuation is what normally stops the leak ("never mind, i
+# want white" already works, the comma being a clause break) and typed input
+# frequently has none.
+#
+# Closed list on purpose, per the #26 finding: a hand-listed set of function
+# words is safe here where a corpus-derived one is not.
+PIVOT_CUE_RE = re.compile(
+    r"\b(?:never ?mind|no wait|wait no|nope|scratch that|forget (?:that|it)"
+    r"|on second thought|come to think of it)\b"
+)
 
 
 def _is_negated(text: str, match_start: int) -> bool:
@@ -87,9 +113,14 @@ def _is_negated(text: str, match_start: int) -> bool:
     ("I'm not picky. Exactly this color, please." should still count).
     """
     window = text[max(0, match_start - NEGATION_WINDOW_CHARS):match_start]
+    # A pivot cue ends the negating span exactly the way punctuation does:
+    # whatever follows "never mind" is the new request, not part of what was
+    # just retracted. Take whichever boundary sits closest to the match.
     last_break = None
-    for break_match in CLAUSE_BREAK_RE.finditer(window):
-        last_break = break_match.end()
+    for pattern in (CLAUSE_BREAK_RE, PIVOT_CUE_RE):
+        for break_match in pattern.finditer(window):
+            if last_break is None or break_match.end() > last_break:
+                last_break = break_match.end()
     if last_break is not None:
         window = window[last_break:]
     return bool(NEGATION_RE.search(window))
@@ -191,10 +222,6 @@ PROTOTYPE_BUYING = (
     "I want a wool sweater, crew neck, for under $50.",
     "Show me a leather handbag, brown, with a shoulder strap.",
     "I need a size 8 sandal, preferably suede.",
-    # Explicit purchase framing with no attribute stated. Kept separate in
-    # intent from the "something for <occasion>" browsing shape added below:
-    # naming an occasion states no requirement, but saying "buy" states that
-    # the customer is past the exploring stage even when the item is bare.
     "I want to buy a pair of shoes.",
     "I'm here to buy a watch today.",
     "Ready to purchase a handbag.",
@@ -210,24 +237,12 @@ PROTOTYPE_BROWSING = (
     "I'm shopping around, no fixed idea yet.",
     "Just curious what's available for accessories.",
     "Not picky, whatever looks good works for me.",
-    # "Something for <occasion>" -- a use-case with no hard constraint. This
-    # shape was missing and the centroid mis-read it: "i want something for
-    # the summer" scored +0.0058 buying, i.e. a coin flip, because naming an
-    # occasion reads as stating a requirement while the sentence in fact
-    # states no attribute at all. The lexical fallback got these right, which
-    # is what flagged the gap.
     "I want something for the summer.",
     "I need something for a wedding, open to suggestions.",
     "Something for the beach, whatever you think works.",
     "Looking for something for work, I don't mind what.",
 )
 
-
-# Cue utterances for a mid-session pivot: the customer discards what they
-# said earlier and states a new/different requirement. There's no structured
-# signal for this in the agent API (docs/agent_api_contract.json only has
-# reset_request, which starts a brand-new session, not a mid-session
-# change) -- so, like buying-vs-browsing, this has to be inferred from text.
 PROTOTYPE_OVERRIDE = (
     "Actually, ignore my earlier preference. What I need is a leather jacket.",
     "Never mind what I said before, I want something different now.",
@@ -242,10 +257,7 @@ PROTOTYPE_OVERRIDE = (
     "Actually, disregard my last message.",
     "Sorry, I meant something completely different than what I said.",
 )
-# Ordinary continuing turns: answering a question, adding a detail, reacting
-# to results -- the contrast class the centroid needs to separate override
-# cues from normal conversational drift (which also mentions new details,
-# just without discarding anything already stated).
+
 PROTOTYPE_CONTINUATION = (
     "Yes, that sounds good, please continue.",
     "I also need it to be machine washable.",
@@ -281,14 +293,6 @@ LEAD_CLAUSE_RE = re.compile(r"^(.{0,60}?)[.,;:!?]\s")
 
 def lead_clause(text: str) -> str:
     """The message's opening clause, or the whole message if it has no break.
-
-    An override cue is a short prefix; what follows can be arbitrarily long
-    ("Actually, ignore my earlier preference. What I need is: " + up to 180
-    characters of verbatim catalog copy, in this evaluator's template). Mean
-    pooling over that whole string washes the cue out -- which is exactly
-    the shape of the override turns every scoring rule otherwise misses.
-    Terse pivots have no tail to strip, so scoring the lead clause too costs
-    them nothing.
     """
     match = LEAD_CLAUSE_RE.match(text.strip())
     return match.group(1) if match else text
@@ -396,6 +400,8 @@ class EmbeddingOverrideDetector:
         self.model = model
         self._override_protos = self._encode(PROTOTYPE_OVERRIDE)
         self._continuation_protos = self._encode(PROTOTYPE_CONTINUATION)
+        self._buying_protos = self._encode(PROTOTYPE_BUYING)
+        self._browsing_protos = self._encode(PROTOTYPE_BROWSING)
 
     def _encode(self, sentences: tuple[str, ...]) -> np.ndarray:
         return self.model.encode(
@@ -405,8 +411,11 @@ class EmbeddingOverrideDetector:
     def _leans_override(self, vec: np.ndarray) -> bool:
         return (
             _top_prototype_similarity(vec, self._override_protos)
-            > _top_prototype_similarity(vec, self._continuation_protos)
-        )
+            > max([_top_prototype_similarity(vec, self._continuation_protos),
+                   _top_prototype_similarity(vec, self._buying_protos),
+                   _top_prototype_similarity(vec, self._browsing_protos)
+            ]
+        ))
 
     def is_override(self, text: str) -> bool:
         if not isinstance(text, str) or not text.strip():
@@ -434,17 +443,7 @@ class EmbeddingOverrideDetector:
 
 # Cue utterances for a reply that answers a clarifying question with *no new
 # information* -- the customer declines to state a preference for the attribute
-# that was asked about. This is a distinct question from override detection:
-# "no preference" is not a pivot, it is an exhausted slot.
-#
-# Deliberately NOT seeded from the local evaluator's templates. That simulator
-# emits two fixed non-answer strings ("I don't have an additional preference
-# for {a}." / "I don't have a preference for {a}; please use your judgment."),
-# and matching those literally would score perfectly locally while learning
-# nothing transferable -- the exact trap measured in CLAUDE.md #12/#13, where a
-# lexical rule hit 1.000 on turn-1 intent purely by memorizing two templates.
-# These are hand-written and varied in register for the same reason
-# PROTOTYPE_BUYING is.
+# that was asked about.
 PROTOTYPE_NON_ANSWER = (
     "I don't have a preference for that, up to you.",
     "No preference there, whatever you think is best.",
@@ -487,7 +486,7 @@ _DECLINE_RE = re.compile(
     r"\b(?:"
     r"no (?:strong )?(?:preference|opinion|requirement|idea|thoughts?)"
     r"|not? particular(?:ly)? (?:fussed|bothered)"
-    r"|(?:don'?t|do not|doesn'?t|does not) (?:have|really have|mind|care|matter)"
+    r"|(?:don'?t|do not|doesn'?t|does not|never) (?:have|really have|mind|care|matter)"
     r"|not (?:picky|fussy|bothered|that fussed)"
     r"|(?:doesn'?t|does not) matter"
     r"|(?:up to|your) (?:you|judgment|judgement|call|choice)"
@@ -603,12 +602,5 @@ class EmbeddingIntentClassifier:
         sim_buying = float(query_vec @ self._buying_centroid)
         sim_browsing = float(query_vec @ self._browsing_centroid)
         score = sim_buying - sim_browsing
-        # NOTE: tried a small deadzone around 0 to suppress near-boundary
-        # noise (e.g. plain decline text drifting to score~+0.02); measured
-        # against the full public set it swallowed real signal broadly
-        # (buying turn-3 accuracy 96%->59%), not just the noise it targeted.
-        # The zero-crossing region is genuinely populated by weakly-buying
-        # cases, not just noise, so a flat scalar threshold doesn't separate
-        # them -- reverted to a plain tie-break.
         label = "buying" if score > 0 else "browsing"
         return IntentSignal(label=label, score=score, buying_evidence=sim_buying, browsing_evidence=sim_browsing)

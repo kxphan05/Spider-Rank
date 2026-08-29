@@ -81,13 +81,5 @@ class SessionBelief:
 
     @property
     def exhausted(self) -> bool:
-        """True once no remaining attribute looks answerable.
-
-        NOTE this is the load-bearing output of the whole belief, and the
-        per-attribute values largely are not: `SessionState.asked_attributes`
-        already prevents re-asking, so zeroing the attribute just asked is
-        mostly redundant with machinery that already exists. What is genuinely
-        new is the aggregate -- knowing the card is spent, which no other part
-        of the agent can currently tell.
-        """
+        """True once no remaining attribute looks answerable."""
         return all(v < EXHAUSTED_THRESHOLD for v in self.answerable.values())
