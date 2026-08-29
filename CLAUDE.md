@@ -1184,10 +1184,11 @@ Notable things confirmed empirically along the way, not just assumed:
     weighting that manufactures signal the query never carried. Further
     retrieval *tuning* cannot fix these; only more information can.
 
-25. **Phrase-leg query hygiene: implemented, shipped dark, unmeasured.** Two
-    changes aimed at the phrase leg's span budget, both behind flags that
-    default to the identity value. **The A/B measuring them did not finish
-    before the session ended — do not enable either without running it.**
+25. **Phrase-leg query hygiene: measured, +0.0280 — but the dumb control
+    matches it, so the win is a cost win, not a score win.** Two changes aimed
+    at the phrase leg's span budget, both still behind flags defaulting to the
+    identity value. The A/B has now run; the table is at the end of this entry.
+    **Read the control row before enabling either.**
 
     The budget (`MAX_PHRASE_QUERIES = 24`) is spent longest-first, assuming a
     longer span is a more specific one. True of catalog copy, false of
@@ -1232,6 +1233,57 @@ Notable things confirmed empirically along the way, not just assumed:
     both, and `MAX_PHRASE_QUERIES = 96` as a control. The control matters —
     if simply raising the budget matches the fixes, the fixes have not earned
     their complexity.
+
+    **Measured, full public set, all five legs on one HEAD.** Identity
+    reproduced the shipped 0.7020 exactly, so the legs are comparable:
+
+    ```
+    leg                     HitRate      hits      MRR     MTTC  Technical    delta
+    identity                 0.8550  171/200   0.4622    4.205     0.7020       --
+    filter only              0.8700  174/200   0.4826    4.090     0.7180   +0.0159
+    clause+edge only         0.8800  176/200   0.4946    3.915     0.7301   +0.0280
+    filter + clause+edge     0.8850  177/200   0.4981    3.900     0.7339   +0.0319
+    budget 96 (control)      0.8850  177/200   0.4998    3.995     0.7326   +0.0305
+    ```
+
+    **The prediction was right about the mechanism and wrong about the
+    remedy.** Span budget starvation is real and it was costing ~6 sessions:
+    every leg that relieves it gains, and the static `public_0008` count
+    predicted the direction correctly. But the *blunt* relief works just as
+    well — the control matches the best fix at the same 177/200 and a 0.0013
+    TechnicalScore difference, which is well inside this benchmark's
+    one-session resolution. By the rule stated when the control was designed,
+    the fixes did not beat it and have not earned their complexity **on
+    score**.
+
+    They do earn it on **cost**, which is the axis the rule did not name. The
+    control buys its gain by quadrupling `MAX_PHRASE_QUERIES` to 96, i.e. up
+    to four times the FTS5 phrase lookups per turn, every turn. The fixes reach
+    the same place at the original budget of 24 by *not building* the useless
+    spans in the first place (135 -> 38 on `public_0008`, and 11 with both).
+    Same score, roughly a quarter of the phrase-leg work. That is the honest
+    reason to prefer them, and it should be stated that way rather than as a
+    score claim.
+
+    **Of the two fixes, only `clause+edge` is established.** It is +0.0280 on
+    its own, five sessions above identity and comfortably outside the noise
+    floor. Adding the non-answer filter on top moves 176 -> 177, one session,
+    which this benchmark cannot resolve — #16's rule (convert rates to absolute
+    session counts before believing a small delta) says that is not evidence.
+    The filter is worth +0.0159 alone, so it does something; what is unmeasured
+    is whether it adds anything *given* clause+edge. Note the filter degrades
+    safely: with the detector dark, nothing is ever marked contentless, so
+    `informative_messages` equals `recent_messages` and the flag becomes a
+    no-op rather than a hazard.
+
+    **Do not enable either flag on a tree that also carries #26 without
+    re-measuring.** The edge rule at `retrieval.py` reads `STOPWORDS`
+    directly — a span may not begin or end on a stopword — and #26 adds ~24
+    request verbs and discourse markers to that same set. The two changes are
+    therefore not independent: #26 silently changes which spans the edge rule
+    admits, so the +0.0280 above was measured against a `STOPWORDS` that no
+    longer exists once #26 lands. Measure them together, with identity
+    re-established on that HEAD.
 
 26. **The catalog's root category destroyed the IDF of every category word,
     and conversational filler inherited the ranking. Two user-reported demo

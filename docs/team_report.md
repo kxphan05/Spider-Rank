@@ -25,17 +25,17 @@ By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 0.8250 | 0.4700 | 4.29 |
-| buying | 80 | 0.6875 | 0.3310 | 5.10 |
-| intent_override | 30 | 0.8000 | 0.5330 | 5.90 |
-| boundary | 10 | 0.5000 | 0.1860 | 6.90 |
+| browsing | 80 | 0.9250 | 0.5360 | 3.64 |
+| buying | 80 | 0.8125 | 0.4030 | 4.19 |
+| intent_override | 30 | 0.8667 | 0.4570 | 5.23 |
+| boundary | 10 | 0.6000 | 0.3570 | 5.80 |
 
-> **Note:** the per-scenario table above is from an earlier shipped
-> configuration (TechnicalScore 0.6182), two changes back. The aggregate line
-> is current; the per-scenario split is being re-measured and will be refreshed
-> before submission. Flagged rather than silently carried forward, because a
-> stale breakdown under a fresh headline is exactly the kind of number a reader
-> would reasonably assume was re-run.
+Re-measured at the current configuration, not carried forward from the
+previous one. The ordering is stable and matches the miss census: `boundary`
+is hardest and `browsing` easiest, and the two scenarios where the customer
+states a hard constraint up front — `buying` and `intent_override` — sit in
+between. `boundary` is n=10, so a single session moves it 0.1; read it as
+directional only.
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).

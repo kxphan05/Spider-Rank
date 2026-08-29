@@ -1,4 +1,4 @@
-# Handoff — 2026-08-29, ~14:15
+# Handoff — 2026-08-29, updated ~16:45
 
 Written for a fresh session picking this up on the same machine.
 
@@ -10,50 +10,44 @@ is believable. `CLAUDE.md` "Progress" and entry #23 now say so.
 
 `results.json` in the repo is **stale** (Aug 28, 0.615212). Ignore it.
 
-## What is running right now
+## The phrase-query A/B has finished
 
 ```
-scripts/ab_phrase_query.py   PID 126962   log: logs/ab_phrase_query.log
+leg                     HitRate      hits      MRR     MTTC  Technical    delta
+identity                 0.8550  171/200   0.4622    4.205     0.7020       --
+filter only              0.8700  174/200   0.4826    4.090     0.7180   +0.0159
+clause+edge only         0.8800  176/200   0.4946    3.915     0.7301   +0.0280
+filter + clause+edge     0.8850  177/200   0.4981    3.900     0.7339   +0.0319
+budget 96 (control)      0.8850  177/200   0.4998    3.995     0.7326   +0.0305
 ```
 
-Five legs, in order: `identity`, `filter only`, `clause+edge only`,
-`filter + clause+edge`, `budget 96 (control)`. It had printed only its header
-when this session ended, so **no leg has landed yet**. Roughly five full evals.
+**Identity reproduced 0.7020 exactly**, so the legs are comparable and this
+also proves the run was on clean HEAD, not on the uncommitted #26 work that
+appeared in the tree after it started.
 
-It was restarted at 14:07 with `TECHJAM_THREADS=6` after the other two runs
-were stopped — the first attempt ran 1h20 pinned to 3 threads on an 8-core box
-it no longer had to share, and had not finished leg 1. That first log is kept
-as `logs/ab_phrase_query.3thread.log`; it contains nothing but a header.
+The verdict is not the one the flags were hoping for, and CLAUDE.md #25 now
+carries it in full. Short version: **the control matches the best fix** —
+177/200 both, 0.0013 apart, inside one session of resolution — so the fixes did
+not beat it on score. They win on *cost* instead: same result at the original
+budget of 24 lookups instead of 96. Of the two, only `clause+edge` is
+established (+0.0280, five sessions); the filter adds one session on top of it,
+which this benchmark cannot resolve.
 
-Read it with:
+**Neither flag has been flipped, deliberately.** The edge rule reads
+`STOPWORDS`, and the uncommitted #26 work adds ~24 words to that set, so the
+two changes interact and +0.0280 was measured against a `STOPWORDS` that no
+longer exists once #26 lands. The next measurement should be #26 and
+`PHRASE_CLAUSE_SPANS` together, with identity re-established on that HEAD.
 
-```
-grep -av "it/s" logs/ab_phrase_query.log
-```
+## Another session is working in this tree
 
-**The identity leg must print 0.7020 before any other leg is believed.** If it
-does not, stop and find out why — every other number in that table is then
-meaningless. This rule has already caught one real bug in this project (see the
-first bullet of CLAUDE.md "Blockers").
-
-If it died, rerun it alone: `TECHJAM_THREADS=6 uv run python3 scripts/ab_phrase_query.py`.
-Do not start a second full eval beside it.
-
-## What that A/B decides
-
-Both changes are committed but **flagged off**, so HEAD behaves exactly as the
-0.7020 measurement. Full rationale in CLAUDE.md #25.
-
-| flag | file | default |
-|---|---|---|
-| `PHRASE_CLAUSE_SPANS` | `starter/retrieval.py` | `False` |
-| `PHRASE_QUERY_SKIP_NON_ANSWERS` | `starter/agent.py` | `False` |
-
-Ship a flag only if its leg beats identity **and** beats the `budget 96`
-control. The control exists because raising the budget is the dumb fix; if it
-matches the clever fixes, the clever fixes have not earned their complexity.
-Convert rates to session counts before believing anything — 0.8550 vs 0.8500 is
-one session.
+`starter/agent.py`, `classifier.py`, `retrieval.py` and `text_utils.py` carry
+uncommitted changes that are **not** from this handoff — a root-category IDF
+fix, request-verb stopwords, en-GB spelling normalization, purchase verbs in
+the intent classifier, and a narrow category-naming override rewrite. They are
+written up as CLAUDE.md #26 and were verified in the REPL, but **never measured
+on the 200-sample set**. `_REQUEST_STOPWORDS` removes tokens from every query,
+which is the shape that cost -0.041 in #19. Measure before shipping.
 
 ## Do these before any more tuning
 

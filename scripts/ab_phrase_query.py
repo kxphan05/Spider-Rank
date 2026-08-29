@@ -77,7 +77,7 @@ def main() -> None:
         for name in sorted(report["scenario_metrics"]):
             metrics = report["scenario_metrics"][name]
             print(f"    {name:18s} hit {metrics['hit_rate_at_10']:.3f}  "
-                  f"mrr {metrics['mrr']:.3f}  mttc {metrics['mttc']:.3f}")
+                  f"mrr {metrics['mrr']:.3f}  mttc {metrics['mttc']:.3f}", flush=True)
 
 
 if __name__ == "__main__":
