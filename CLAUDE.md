@@ -224,11 +224,34 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.855   MRR: 0.4622   MTTC: 4.205   Efficiency: 0.6795
-TechnicalScore: 0.7020
+HitRate@10: 0.850   MRR: 0.4567   MTTC: 4.210   Efficiency: 0.6790
+TechnicalScore: 0.6978
 ```
 
-(That line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
+**This is HEAD (`5889828`), measured 2026-08-29, and it is the first scored run
+that includes #26.** Per-scenario: browsing 0.925 hit / 0.5235 MRR / 3.613 MTTC
+(80), buying 0.8125 / 0.4204 / 4.213 (80), intent_override 0.8333 / 0.4084 /
+5.267 (30), boundary 0.600 / 0.3569 / 5.800 (10). `results.json` is this run.
+
+(The 0.7020 below was measured at `3ef2028`, before #26. HEAD is that exact
+configuration plus #26 and nothing else — every feature flag was re-checked at
+its identity value (`PHRASE_CLAUSE_SPANS = False`,
+`PHRASE_QUERY_SKIP_NON_ANSWERS = False`, `MAX_PHRASE_QUERIES = 24`,
+`RERANK_WEIGHT = 0.0`, `EXCLUDE_SHOWN = True`, `PHRASE_WEIGHT = 2.0`), and the
+only `starter/` diff in the range is #26 itself. So **#26 costs -0.0042, which
+is one session**: 171/200 hits to 170/200. Apply this file's own rule and that
+is below the benchmark's resolution — it is flat, not a regression.
+
+That result is worth recording because it was the specific risk flagged before
+the run. `_REQUEST_STOPWORDS` deletes tokens from **every** query, which is
+structurally the same intervention that cost **-0.0410** in #19, and the
+argument that this list is safe — it holds ways of *asking*, never things to
+ask about — was a prediction of exactly the shape #19 stands as a warning
+against. The prediction held: one session, not twelve. #26 keeps its place on
+the strength of the two demo bugs it fixes, and it is now measured rather than
+merely reasoned about.)
+
+(That 0.7020 line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
 the same HEAD without it scores 0.6366, so the change is worth **+0.0837**, by
 a factor of three the largest win in this project. Note it lands on top of the
 phrase leg, not instead of it.)
@@ -1331,7 +1354,38 @@ Notable things confirmed empirically along the way, not just assumed:
 
 26. **The catalog's root category destroyed the IDF of every category word,
     and conversational filler inherited the ranking. Two user-reported demo
-    bugs, one root cause.** Reported from live use, not from a sweep:
+    bugs, one root cause. Measured 2026-08-29: -0.0042, one session — flat.**
+
+    **Score first, since this entry was written before it had one.** Full
+    public set at HEAD (`5889828`) against the 0.7020 measured at `3ef2028`,
+    with every feature flag re-checked at its identity value and #26 the only
+    `starter/` diff between the two commits:
+
+    ```
+                  HitRate      hits      MRR     MTTC  Technical    delta
+    before (#25)   0.8550   171/200   0.4622    4.205     0.7020       --
+    HEAD (+#26)    0.8500   170/200   0.4567    4.210     0.6978   -0.0042
+    ```
+
+    One session of HitRate, and MTTC is unmoved. By this file's own rule —
+    convert rates to session counts before believing a small delta — that is
+    below the benchmark's resolution in either direction.
+
+    **The pre-registered risk did not materialize, and that is the finding.**
+    `_REQUEST_STOPWORDS` strips tokens from *every* query, which is the same
+    intervention shape that cost -0.0410 in #19, and the handoff flagged it as
+    such before the run. The distinction drawn at the time — this list holds
+    ways of *asking*, never things to ask about — was a prediction, and #19 is
+    the standing reminder that predictions of that shape have been wrong here.
+    This one held. Note what that does and does not license: it vindicates the
+    *closed-list* discipline, not query pruning generally, and the corpus-driven
+    generalization of the same list is still measured unsafe (see the end of
+    this entry).
+
+    Kept on the same reasoning as #22: it costs nothing measurable and fixes
+    two bugs a judge can reproduce in one sentence at the demo.
+
+    Original write-up follows. Reported from live use, not from a sweep:
     "i want to buy shoes" returned t-shirts and baseball caps, and
     "actually forget that, show me jewellery" (after a browsing turn) returned
     no jewellery.

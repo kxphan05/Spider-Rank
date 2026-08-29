@@ -13,9 +13,15 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.855    MRR  0.4622    MTTC  4.205   Efficiency  0.6795
-TechnicalScore  0.7020
+HitRate@10  0.850    MRR  0.4567    MTTC  4.210   Efficiency  0.6790
+TechnicalScore  0.6978
 ```
+
+Measured on the full 200-sample public set at the submitted configuration
+(commit `5889828`, 2026-08-29), with `preflight.py --strict` confirming
+beforehand that dense retrieval and all three embedding classifiers come up
+live with the network disabled — so this is the whole pipeline, not a silently
+degraded one.
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
 HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.8x improvement in hit
@@ -25,10 +31,10 @@ By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 0.9250 | 0.5360 | 3.64 |
-| buying | 80 | 0.8125 | 0.4030 | 4.19 |
-| intent_override | 30 | 0.8667 | 0.4570 | 5.23 |
-| boundary | 10 | 0.6000 | 0.3570 | 5.80 |
+| browsing | 80 | 0.9250 | 0.5235 | 3.61 |
+| intent_override | 30 | 0.8333 | 0.4084 | 5.27 |
+| buying | 80 | 0.8125 | 0.4204 | 4.21 |
+| boundary | 10 | 0.6000 | 0.3569 | 5.80 |
 
 Re-measured at the current configuration, not carried forward from the
 previous one. The ordering is stable and matches the miss census: `boundary`
@@ -284,6 +290,12 @@ one session of every other), so it was left alone.
 | phrase 0.0 (identity) | 0.7550 | 151/200 | 0.3989 | 4.940 | 0.6184 |
 | phrase 2.0 | 0.7800 | 156/200 | 0.4103 | 4.825 | 0.6366 |
 | **phrase 2.0 + shown-item exclusion** | **0.8550** | **171/200** | **0.4622** | **4.205** | **0.7020** |
+
+That ablation was measured at `3ef2028`. The submitted configuration adds one
+further change on top of it — the category-IDF and request-stopword fix — which
+was measured separately at **-0.0042, a single session** (171/200 to 170/200),
+i.e. flat within this benchmark's resolution. It ships because it fixes two
+reproducible query bugs at no measurable cost, not because it scores.
 
 Measured with all three legs on one HEAD (`scripts/ab_phrase_exclude.py`); the
 identity leg reproduced the then-shipped 0.6184 first, which is what makes the

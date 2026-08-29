@@ -1,38 +1,79 @@
-# Handoff — 2026-08-29, ~17:15
+# Handoff — 2026-08-29, ~21:30
 
-Written for a fresh session picking this up on the same machine. Everything is
-pushed; `git status` is clean and `main` is level with `origin/main` at
-`5403717`.
+Written for a fresh session picking this up on the same machine.
 
-## Read this first: HEAD has no measured score
+## HEAD is measured. #26 is flat.
 
-**0.7020 is not HEAD's number.** It was measured at `3ef2028`
-(HitRate 0.8550, 171/200; MRR 0.4622; MTTC 4.205), with identity reproducing
-0.6184 first, so that figure is sound *for that commit*.
-
-`56f9df0` landed afterwards. It is CLAUDE.md #26 — a root-category IDF fix in
-`BM25Index._build`, request-verb stopwords, en-GB spelling normalization,
-purchase verbs in the intent classifier, and a narrow category-naming override
-rewrite. It was found by using the demo and verified in the REPL, but it has
-**never been scored on the 200-sample set**. It changes how the catalog is
-indexed and how every query is tokenized, which are the two things BM25 is made
-of, on a benchmark BM25 carries.
-
-**So the first job is a plain full eval of HEAD:**
+The previous handoff's lead item — "no number in this repo describes the code
+in it" — is resolved. Full public set at `5889828`:
 
 ```
-uv run python3 -m evaluator.local_evaluator
+HitRate@10: 0.850  (170/200)   MRR: 0.4567   MTTC: 4.210
+Efficiency: 0.6790             TechnicalScore: 0.6978
 ```
 
-Roughly 30 minutes on this box. Until it finishes, no number in this repo
-describes the code in it. Watch one thing in particular: `_REQUEST_STOPWORDS`
-removes tokens from **every** query, which is the shape that cost -0.041 in
-#19. The argument that this list is different — ways of *asking*, never things
-to ask about — is a prediction, and #19 is the standing reminder that
-predictions of exactly that shape have been wrong here before.
+`results.json` is this run, and is no longer stale.
 
-`results.json` in the repo is stale (Aug 28, 0.615212). The eval above
-overwrites it, which is the tidiest way to fix it.
+Against the 0.7020 measured at `3ef2028`, that is **-0.0042, which is one
+session** (171 hits to 170). Every feature flag was re-checked at its identity
+value first (`PHRASE_CLAUSE_SPANS = False`, `PHRASE_QUERY_SKIP_NON_ANSWERS =
+False`, `MAX_PHRASE_QUERIES = 24`, `RERANK_WEIGHT = 0.0`, `EXCLUDE_SHOWN =
+True`, `PHRASE_WEIGHT = 2.0`), and #26 is the only `starter/` diff in the
+range, so this is a clean before/after for #26 and nothing else.
+
+**Treat #26 as flat, not as a regression.** The specific worry going in was
+that `_REQUEST_STOPWORDS` removes tokens from every query, the same shape that
+cost -0.0410 in #19. It did not repeat: one session, not twelve. The
+closed-list discipline held. That does *not* reopen query pruning generally —
+the corpus-driven version of the same list is still measured unsafe, at the end
+of CLAUDE.md #26.
+
+Per-scenario, for anyone hunting the remaining 30 misses:
+
+```
+scenario           n    hit     MRR    MTTC
+browsing          80  0.925  0.5235   3.613
+intent_override   30  0.833  0.4084   5.267
+buying            80  0.813  0.4204   4.213
+boundary          10  0.600  0.3569   5.800
+```
+
+Buying and boundary are where the misses concentrate, which is what #24 and #27
+already said. `preflight.py --strict` passed on this HEAD before the run: all
+four embedding components come up live offline, so this is the full pipeline
+and not a silent degrade.
+
+## `user_profile` is closed, with a judge-facing writeup
+
+Asked afresh this session, tested afresh, still no — but on two *new* tests
+that #5's original evidence did not cover. `docs/user_profile_decision.md` is
+the defensible version, and it explains every statistic it uses.
+
+The one worth knowing: `average_prior_rating` -> target `average_rating` gives
+r = 0.1824 at permutation p = 0.0094, which **passes significance and is still
+rejected**. It explains 3.3% of the variance, it runs backwards between its two
+largest cells (prior 1.0 -> 4.393 vs prior 5.0 -> 4.413), and dropping the one
+9-sample cell collapses it to r = 0.0929, inside the null band. About a dozen
+tests were run across three fields, so one pass at 0.05 is what chance
+produces. `preference_tags` -> target category is flatly null: every conditional
+sits on the 0.590 marginal, and the top four tags appear on 50-82% of samples,
+so they cannot separate customers even in principle.
+
+**The live direction that came out of it is not the profile.** `rating_number`
+is the only 100%-covered catalog field, and targets come overwhelmingly from
+the popular tail — catalog median 12 reviews, target median 7,078; the top 5.9%
+of the catalog by review count holds 83% of all targets, a 14x lift.
+`scripts/sweep_prior_leg.py` was built for exactly this and **has never been
+run** — no result in CLAUDE.md, no log in `logs/`. Its `popularity` variant was
+designed as the *control* for the profile idea, and the control is the leg with
+the effect size.
+
+Two things to hold it to. It is a re-ranker inside an existing pool, so it
+cannot touch the elicitation gap #27 identifies as the real remaining limit.
+And the concentration is a property of how the samples were drawn, not a fact
+about shopping, so it transfers only if the hidden set was drawn the same way —
+a stronger scorer-semantics dependency than anything shipped except #23. Run
+`--weights 0` first and confirm it reproduces 0.6978.
 
 ## The phrase-query A/B finished, and the answer is "no"
 
@@ -106,13 +147,14 @@ themselves.
 
 ## Deliverables still outstanding
 
-Ordered. None has been run against current HEAD.
+Ordered. Steps 1 and 2 are **done on this HEAD**; the rest are not.
 
-1. `uv run python3 -m evaluator.local_evaluator` — see above; everything else
-   is meaningless until this exists.
-2. `uv run python3 scripts/preflight.py --strict` — passed at `3ef2028`, not
-   re-run since #26. The offline degrade is silent (#15), so this is not
-   optional before a scored run.
+1. ~~`uv run python3 -m evaluator.local_evaluator`~~ — **done**, 0.6978, top of
+   this file. `results.json` holds it.
+2. ~~`uv run python3 scripts/preflight.py --strict`~~ — **done**, passed on this
+   HEAD: dense retrieval, both classifiers and the non-answer detector all come
+   up live with the network disabled. The one warning is the expected
+   `RERANK_WEIGHT = 0.0` cross-encoder note.
 3. `uv run python3 scripts/build_submission.py --verify` — itself a full eval,
    so do not run it beside step 1.
 4. `uv run python3 scripts/measure_latency.py --limit 20` — the numbers in
