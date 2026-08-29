@@ -24,42 +24,10 @@ belief updates from what this particular customer actually does.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from .config import (ANSWERABILITY_PRIOR, EXHAUSTED_THRESHOLD, NON_ANSWER_SPILLOVER)
 
-# Share of the 200 public samples where the customer can still answer a
-# question about each attribute after turn 1, computed from the evaluator's
-# reply policy: a constraint is disclosable only when classify_constraint()
-# buckets it as the asked attribute. Measured, not chosen --
-# scripts/eval_dialogue_efficiency.py recomputes this table, and it reproduces
-# the independently-derived figures in CLAUDE.md #9 exactly.
-#
-# Two caveats carried from #9. `feature` is classify_constraint()'s catch-all
-# return -- the bucket every unmatched value falls into -- so its 0.960 is
-# partly a local-simulator artifact and may not hold for the hidden grader.
-# And `budget` is never bucketed at all locally (intent_card() truncates the
-# price candidate out), which is why it sits last rather than being dropped:
-# it may be a local quirk, so it stays available as a last resort.
-ANSWERABILITY_PRIOR: dict[str, float] = {
-    "feature": 0.960,
-    "material": 0.725,
-    "color": 0.255,
-    "style": 0.085,
-    "size": 0.045,
-    "use_case": 0.020,
-    "budget": 0.001,
-}
 
-# Multiplier applied to every *other* remaining attribute when one comes back
-# empty. A non-answer is evidence about this card as a whole, not only about
-# the attribute asked: the card holds at most four constraints
-# (hard_constraints[:2] + soft_preferences[2:4]), so each empty reply makes it
-# likelier the rest are exhausted too. 1.0 disables the cross-attribute update
-# and is the identity setting for A/B purposes.
-NON_ANSWER_SPILLOVER = 0.6
 
-# Below this, an attribute is treated as not worth asking about. Set so the
-# prior alone never suppresses anything (the smallest prior, budget, is 0.001)
-# -- only *observed* non-answers can push an attribute under it.
-EXHAUSTED_THRESHOLD = 0.0005
 
 
 @dataclass

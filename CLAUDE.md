@@ -224,11 +224,34 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.855   MRR: 0.4622   MTTC: 4.205   Efficiency: 0.6795
-TechnicalScore: 0.7020
+HitRate@10: 0.850   MRR: 0.4567   MTTC: 4.210   Efficiency: 0.6790
+TechnicalScore: 0.6978
 ```
 
-(That line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
+**This is HEAD (`5889828`), measured 2026-08-29, and it is the first scored run
+that includes #26.** Per-scenario: browsing 0.925 hit / 0.5235 MRR / 3.613 MTTC
+(80), buying 0.8125 / 0.4204 / 4.213 (80), intent_override 0.8333 / 0.4084 /
+5.267 (30), boundary 0.600 / 0.3569 / 5.800 (10). `results.json` is this run.
+
+(The 0.7020 below was measured at `3ef2028`, before #26. HEAD is that exact
+configuration plus #26 and nothing else — every feature flag was re-checked at
+its identity value (`PHRASE_CLAUSE_SPANS = False`,
+`PHRASE_QUERY_SKIP_NON_ANSWERS = False`, `MAX_PHRASE_QUERIES = 24`,
+`RERANK_WEIGHT = 0.0`, `EXCLUDE_SHOWN = True`, `PHRASE_WEIGHT = 2.0`), and the
+only `starter/` diff in the range is #26 itself. So **#26 costs -0.0042, which
+is one session**: 171/200 hits to 170/200. Apply this file's own rule and that
+is below the benchmark's resolution — it is flat, not a regression.
+
+That result is worth recording because it was the specific risk flagged before
+the run. `_REQUEST_STOPWORDS` deletes tokens from **every** query, which is
+structurally the same intervention that cost **-0.0410** in #19, and the
+argument that this list is safe — it holds ways of *asking*, never things to
+ask about — was a prediction of exactly the shape #19 stands as a warning
+against. The prediction held: one session, not twelve. #26 keeps its place on
+the strength of the two demo bugs it fixes, and it is now measured rather than
+merely reasoned about.)
+
+(That 0.7020 line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
 the same HEAD without it scores 0.6366, so the change is worth **+0.0837**, by
 a factor of three the largest win in this project. Note it lands on top of the
 phrase leg, not instead of it.)
@@ -350,6 +373,37 @@ Notable things confirmed empirically along the way, not just assumed:
    script first if the hidden set's profiles look different. Full write-up,
    including all three experiments and the store-contamination landmine:
    `.claude/skills/retrieval-experiments/SKILL.md`.
+
+   **Judge-facing justification: `docs/user_profile_decision.md`.** Written
+   2026-08-29 with two *new* tests that #5's original evidence did not cover,
+   both null: `preference_tags` -> target coarse category (every conditional
+   within noise of the 0.590 marginal, and the top four tags appear on 50-82%
+   of samples so they cannot separate customers anyway), and
+   `average_prior_rating` -> target `average_rating`. The second is worth
+   knowing about because it **passes significance and should still be
+   rejected**: r = 0.1824, permutation p = 0.0094 over 20,000 shuffles, which
+   clears p < 0.05 — but it explains 3.3% of the variance (a 1.7% improvement
+   in predictive precision), it is non-monotone (prior 1.0 -> 4.393 vs prior
+   5.0 -> 4.413, reversed between the two largest cells), and dropping the one
+   9-sample cell at prior = 2.0 collapses it to r = 0.0929, below the null's
+   own 95th percentile of 0.1389. It is the canonical "significant but neither
+   robust nor large enough to act on" case, and about a dozen tests were run
+   across the three fields, so one pass at p < 0.05 is what chance produces.
+   Two fields never needed testing: `purchase_frequency` is the constant
+   `"3-4 prior purchases"` on all 200 samples, and `summary` is a template
+   restatement of `preference_tags` + `rating_style`.
+
+   That doc also records the signal the same analysis *did* find, which is
+   profile-independent: `rating_number` is the only 100%-covered catalog field
+   and targets come overwhelmingly from the popular tail (catalog median 12
+   reviews, target median 7,078; the top 5.9% of the catalog by review count
+   holds 83% of the targets, a 14x lift). `scripts/sweep_prior_leg.py` was
+   built for exactly this and **has never been run** — no result in this file,
+   no log in `logs/`. Its `popularity` variant was designed as the *control*
+   for the profile idea, and the control is the leg with the effect size.
+   Caveat before shipping it: the concentration is a property of how the
+   evaluation samples were drawn, not of shopping, so it transfers only if the
+   hidden set was drawn the same way.
 6. Remaining gaps from the original spec analysis (`TODO.md` has the full
    competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
@@ -1300,7 +1354,38 @@ Notable things confirmed empirically along the way, not just assumed:
 
 26. **The catalog's root category destroyed the IDF of every category word,
     and conversational filler inherited the ranking. Two user-reported demo
-    bugs, one root cause.** Reported from live use, not from a sweep:
+    bugs, one root cause. Measured 2026-08-29: -0.0042, one session — flat.**
+
+    **Score first, since this entry was written before it had one.** Full
+    public set at HEAD (`5889828`) against the 0.7020 measured at `3ef2028`,
+    with every feature flag re-checked at its identity value and #26 the only
+    `starter/` diff between the two commits:
+
+    ```
+                  HitRate      hits      MRR     MTTC  Technical    delta
+    before (#25)   0.8550   171/200   0.4622    4.205     0.7020       --
+    HEAD (+#26)    0.8500   170/200   0.4567    4.210     0.6978   -0.0042
+    ```
+
+    One session of HitRate, and MTTC is unmoved. By this file's own rule —
+    convert rates to session counts before believing a small delta — that is
+    below the benchmark's resolution in either direction.
+
+    **The pre-registered risk did not materialize, and that is the finding.**
+    `_REQUEST_STOPWORDS` strips tokens from *every* query, which is the same
+    intervention shape that cost -0.0410 in #19, and the handoff flagged it as
+    such before the run. The distinction drawn at the time — this list holds
+    ways of *asking*, never things to ask about — was a prediction, and #19 is
+    the standing reminder that predictions of that shape have been wrong here.
+    This one held. Note what that does and does not license: it vindicates the
+    *closed-list* discipline, not query pruning generally, and the corpus-driven
+    generalization of the same list is still measured unsafe (see the end of
+    this entry).
+
+    Kept on the same reasoning as #22: it costs nothing measurable and fixes
+    two bugs a judge can reproduce in one sentence at the demo.
+
+    Original write-up follows. Reported from live use, not from a sweep:
     "i want to buy shoes" returned t-shirts and baseball caps, and
     "actually forget that, show me jewellery" (after a browsing turn) returned
     no jewellery.

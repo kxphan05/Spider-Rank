@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 
 import numpy as np
+from .config import (NEGATION_WINDOW_CHARS, TOP_PROTOTYPES)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,6 @@ PRICE_RE = re.compile(r"(\$\s?\d+|\bunder\s+\$?\d+|\bbudget\s+(?:of\s+)?\$?\d+|\
 # after "t") actually exists.
 NEGATION_RE = re.compile(r"\b(?:not|no|never|without)\b|n't\b")
 CLAUSE_BREAK_RE = re.compile(r"[.,;!?]")
-NEGATION_WINDOW_CHARS = 20
 
 
 def _is_negated(text: str, match_start: int) -> bool:
@@ -273,18 +273,6 @@ PROTOTYPE_CONTINUATION = (
 )
 
 
-# How many best-matching prototypes each class averages over. A plain
-# centroid (k = len(prototypes)) is dominated by the prototypes' shared
-# sentence *shape* -- every PROTOTYPE_OVERRIDE entry is a long two-clause
-# sentence that names the discarded prior statement, so a terse pivot
-# ("never mind, give me white shoes") is judged mostly on its
-# imperative-request half and lands nearer the continuation centroid. The
-# opposite extreme, k=1 (nearest prototype), fixes terse pivots but is at the
-# mercy of a single badly-placed prototype: measured 0.151 false-positive
-# rate on the simulator's own continuation turns, versus 0.007 at k=3. A
-# small trimmed mean gets the shape-robustness without that fragility.
-# Swept in scripts/eval_override.py; see CLAUDE.md open problem #7.
-TOP_PROTOTYPES = 4
 
 # An opening clause up to this many characters is scored on its own as well
 # as in context -- see EmbeddingOverrideDetector.is_override.
