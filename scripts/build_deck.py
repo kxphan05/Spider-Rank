@@ -130,10 +130,15 @@ def build() -> Path:
     run = para.add_run()
     run.text = "Find a hidden product in a 50,000-item catalog, in 10 turns or fewer."
     _set(run, size=15, color=MUTED)
-    frame = _textbox(slide, Inches(0.9), Inches(5.6), Inches(11.5), Inches(0.6))
+    frame = _textbox(slide, Inches(0.9), Inches(5.5), Inches(11.5), Inches(0.9))
     run = frame.paragraphs[0].add_run()
     run.text = "TechnicalScore 0.6454     HitRate@10 0.790     MTTC 4.75"
     _set(run, size=17, bold=True, color=ACCENT)
+    para = frame.add_paragraph()
+    run = para.add_run()
+    run.text = ("Five ideas shipped. Four measured and thrown away. "
+                "This talk is mostly about the four.")
+    _set(run, size=14, color=MUTED)
 
     # ---- 2. the task ----------------------------------------------------
     slide = _blank(prs)
@@ -314,7 +319,38 @@ def build() -> Path:
         ("Our dense leg adds no recall on this benchmark. We kept it as insurance against paraphrasing.", 0, MUTED),
     ])
 
-    # ---- 15. team -------------------------------------------------------
+    # ---- 15. bugs the score could not catch -----------------------------
+    slide = _blank(prs)
+    heading(slide, "Three problems a score could never have shown us", "engineering")
+    bullets(slide, [
+        ("A good number can hide a broken system. All three of these did.", 0),
+        ("Our index could only be used from one thread.", 0, BAD),
+        ("The evaluator is single-threaded, so it never complained.", 1),
+        ("In the demo, two of our three retrieval legs failed silently every turn.", 1),
+        ("The agent still returned 10 products. Nothing raised an error.", 1),
+        ("A flag whose \"off\" value was not actually off.", 0, BAD),
+        ("It quietly changed the control leg of a whole experiment.", 1),
+        ("Re-ranking exactly the 10 items we already show.", 0, BAD),
+        ("It can reorder them. It can never add a hit. We caught that by reasoning.", 1),
+    ], size=15)
+
+    # ---- 16. what we would tune -----------------------------------------
+    slide = _blank(prs)
+    heading(slide, "What we would tune with more time", "known open work")
+    bullets(slide, [
+        ("Every point on a tuning curve is a full 200-sample run. About 15 minutes each.", 0, MUTED),
+        ("That budget, not the ideas, is what stopped us.", 0, MUTED),
+        ("BM25 field weights — never swept once.", 0),
+        ("Title, category and description are weighted by hand. We guessed.", 1),
+        ("This should matter most: BM25 carries this benchmark, and our phrase leg reuses the same ranking function.", 1),
+        ("Attribute boost strength — set to +1 / -1 by assumption.", 0),
+        ("Chosen when 40% of our colour labels were fictional. We fixed the labels and never retuned the weights.", 1),
+        ("Pseudo-relevance feedback — built and committed, switched off.", 0),
+        ("It expands a thin query using the words of its own top results.", 1),
+        ("We can show it drifts: \"leather\" for shoes pulls in jackets. Unmeasured, so unshipped.", 1),
+    ], size=14)
+
+    # ---- 17. team -------------------------------------------------------
     slide = _blank(prs)
     heading(slide, "Team and process", "credits")
     bullets(slide, [
@@ -324,6 +360,8 @@ def build() -> Path:
         ("The rules permit this. We state it because it is true.", 1, MUTED),
         ("Every experiment was accepted or rejected on its measured number.", 0, ACCENT),
         ("Including the four we threw away.", 1),
+        ("What we would want judged is the reasoning, not only the number.", 0),
+        ("We can tell you why each idea should have worked, and why four of them did not.", 1, MUTED),
     ])
 
     OUT.parent.mkdir(parents=True, exist_ok=True)

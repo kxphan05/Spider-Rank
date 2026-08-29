@@ -42,8 +42,14 @@ from _common import DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store, sco
 from evaluator.local_evaluator import catalog_index, load_jsonl  # noqa: E402
 from starter import agent as agent_module  # noqa: E402
 
-DEFAULT_WEIGHTS = (0.5, 1.0, 2.0)
+# Cut from a 3x2 grid to the four points that answer the actual question.
+# Each point is a full 200-sample evaluation at ~15 minutes, and the question
+# is not "what is the optimal weight" but "does scoring deeper than the slate
+# buy recall". Identity, then weight 1.0 at both depths to isolate depth, then
+# 2.0 at depth 20 to show the direction of the weight axis.
+DEFAULT_WEIGHTS = (1.0,)
 DEFAULT_DEPTHS = (10, 20)
+EXTRA_POINTS = ((2.0, 20),)
 
 
 def main() -> None:
@@ -93,6 +99,9 @@ def main() -> None:
 
     for depth in args.depths:
         for weight in args.weights:
+            run(weight, depth)
+    for weight, depth in EXTRA_POINTS:
+        if weight not in args.weights or depth not in args.depths:
             run(weight, depth)
 
 
