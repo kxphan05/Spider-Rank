@@ -1,17 +1,7 @@
-"""Per-scenario A/B for the phrase leg, plus the shown-item exclusion.
+"""Full-set A/B for the phrase leg and shown-item exclusion (CLAUDE.md #20, #23).
 
-Two questions in one run, because both need the same full-set legs.
-
-1. *Where* does the phrase leg's +0.0272 come from? Prediction made before
-   the numbers landed (CLAUDE.md, buying diagnostic): it cannot help buying,
-   because the median buying hard constraint is one word and PHRASE_MIN_N=2,
-   so the only multi-word span a buying session offers is its category
-   string. Expect the gain concentrated in browsing / intent_override.
-
-2. Does excluding already-shown products help? A session ends the moment the
-   target enters the top 10, so every product still on screen at turn N+1 is
-   *proven* not to be the target -- re-offering it is a slot spent on a
-   known-wrong answer. Measured churn: 5.33 of 10 slots repeat each turn.
+Both need the same legs, so they run together. Measured churn before the fix:
+5.33 of 10 slots repeated each turn.
 
     uv run python3 scripts/ab_phrase_exclude.py
 """

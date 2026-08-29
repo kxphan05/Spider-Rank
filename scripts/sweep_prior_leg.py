@@ -1,45 +1,26 @@
 """Sweep a third RRF leg built from catalog priors, and from the user profile.
 
-Motivation. Two facts measured on the public set:
+Never run. rating_number is the only 100%-covered catalog field and targets come
+overwhelmingly from the popular tail: the top 1% of the catalog holds 63% of all
+200 targets, median target rank 275 of 50,000.
 
-  * `rating_number` (popularity) is present on 100% of the catalog -- the only
-    fully-covered field; material is 70.9%, colour 39.9%, price ~21%. And
-    targets are drawn overwhelmingly from the popular tail: the **top 500
-    products, 1% of the catalog, contain 63% of all 200 targets**, and the
-    median target sits at popularity rank 275 of 50,000.
-  * `average_rating` behaves the same way but far more weakly (target mean
-    4.372 vs catalog 4.087).
+    popularity      rank the pool by rating_number desc      (profile-independent)
+    rating          rank the pool by average_rating desc     (profile-independent)
+    profile_rating  rank by closeness to a rating the profile predicts
 
-Neither is used anywhere in retrieval today.
+**The controls are the point**: a gain from profile_rating means nothing unless
+it beats `rating`, since it could be entirely the global quality prior underneath.
+A weighted RRF leg avoids the pathology that killed the three earlier profile
+attempts (CLAUDE.md #5) -- each leg only ever adds weight/(k+rank), so an unranked
+item scores zero rather than sinking below every neutral candidate.
 
-Separately, `user_profile` was asked to carry a ranking signal. Three earlier
-attempts merged it into `_boost_by_disclosed`, whose +-1 scoring *penalizes* a
-mismatch -- and CLAUDE.md #5 records the structural reason they failed: any
-nonzero mismatch penalty sinks a candidate below every neutral one, so the cost
-does not shrink with the weight. A weighted RRF leg has no such pathology, since
-each leg only ever *adds* `weight / (k + rank)` and an unranked item simply
-scores zero from it. So the mechanism deserves a fresh test even though the
-earlier uses are closed.
+The leg re-ranks the union of the BM25 and dense candidates, never the catalog: a
+leg ordering all 50k by popularity injects the same constant bias into every
+session and cannot discriminate.
 
-The variants, and why the controls matter: a gain from `profile_rating` means
-nothing on its own, because it could be entirely the global quality prior
-underneath it. `rating` is that control. `popularity` is the prior we actually
-expect to move the number.
+Run --weights 0 first and confirm it reproduces the shipped score.
 
-  popularity      rank the pool by rating_number desc       (profile-independent)
-  rating          rank the pool by average_rating desc      (profile-independent)
-  profile_rating  rank by closeness to a rating the profile predicts
-
-The leg re-ranks the **union of the BM25 and dense candidates**, never the whole
-catalog: a leg that ordered all 50k products by popularity would inject the same
-constant bias into every session and could not discriminate. Ranking within the
-already-retrieved pool keeps it a tie-breaker among plausible candidates, which
-is what the effect size supports.
-
-Usage:
-    uv run python3 scripts/sweep_prior_leg.py --variant popularity
-    uv run python3 scripts/sweep_prior_leg.py --variant rating --weights 0,0.5,1
-    uv run python3 scripts/sweep_prior_leg.py --variant profile_rating
+    uv run python3 scripts/sweep_prior_leg.py --variant popularity [--weights 0,0.5,1]
 """
 from __future__ import annotations
 

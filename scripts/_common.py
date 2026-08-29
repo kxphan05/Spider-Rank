@@ -1,18 +1,13 @@
-"""Shared bootstrap for the scripts in this directory.
+"""Shared bootstrap for scripts/.
 
-Every script here needs the same few things, and each used to re-derive them:
-the repo root on `sys.path` (so `starter` / `evaluator` import when the script
-is run directly), the two dataset paths, an isolated user-profile store for
-anything that constructs an `Agent`, and -- for the sweeps -- one scored run.
+Import this first: it puts the repo root on sys.path as a side effect, so the
+`starter` / `evaluator` imports that follow resolve from any working directory.
 
-Import this first; it puts the repo root on `sys.path` as an import side
-effect, so the `starter` / `evaluator` imports that follow resolve:
-
-    from _common import REPO_ROOT, DEFAULT_CATALOG, DEFAULT_DATASET  # noqa: F401
+    from _common import DEFAULT_CATALOG, DEFAULT_DATASET  # noqa: F401
     from starter.agent import Agent  # noqa: E402
 
-Paths are anchored to the repo root rather than the working directory, so
-scripts work from anywhere instead of only from the repo root.
+Also exports isolate_profile_store() (a fresh profile store per run, so repeated
+runs are independent) and score_once() (one scored run, for the sweeps).
 """
 from __future__ import annotations
 
@@ -70,7 +65,7 @@ def isolate_profile_store(path: str | None = None, *, announce: bool = True) -> 
 
     A store carried across runs is a measured contamination source: history
     accumulated by an earlier run changes what later runs see (CLAUDE.md
-    "Known open problems" #5). Diagnostics should start clean unless they are
+    CLAUDE.md #5). Diagnostics should start clean unless they are
     deliberately testing accumulation, so this is the default everywhere.
 
     Returns the path that was set, so callers can report or reuse it.

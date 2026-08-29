@@ -1,14 +1,10 @@
-"""Precompute dense (bge-small-en-v1.5) embeddings for the frozen catalog.
+"""Precompute bge-small-en-v1.5 embeddings for the frozen catalog.
 
-Run once (or whenever the catalog / model / passage format changes); the
-agent loads the cached .npy/.json artifacts at init time instead of
-re-encoding 50k products on every evaluator run.
+Run once, or whenever the catalog, model or passage format changes. The agent
+loads the cached .npy/.json instead of re-encoding 50k products at init.
 
-Smoke test (fast, ~500 products) before committing to the full run:
-    uv run python3 scripts/build_dense_index.py --limit 500
-
-Full build:
-    uv run python3 scripts/build_dense_index.py
+    uv run python3 scripts/build_dense_index.py --limit 500   # smoke test
+    uv run python3 scripts/build_dense_index.py               # full build
 """
 from __future__ import annotations
 

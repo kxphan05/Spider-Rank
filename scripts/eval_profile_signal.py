@@ -1,51 +1,21 @@
-"""Does `user_profile` carry any signal worth acting on?
+"""Does `user_profile` carry any signal worth acting on? Measured: no.
 
-`starter/user_profile.py` persists a long-term, cross-session profile store
-(TODO.md III, "continuously updating ... long-term user profiles"), but its
-carried value (`SessionState.profile_hint`) is deliberately inert: every way
-of consuming it that has been tried regressed the full public set (CLAUDE.md
-"Known open problems" #5). This script asks the prior question those
-experiments skipped -- *is there signal in the profile at all?* -- so the
-answer is a measurement rather than a sequence of failed A/Bs.
+Asks the prior question the three failed personalization A/Bs skipped (CLAUDE.md
+#5). Four read-only checks, seconds rather than minutes:
 
-Four independent checks, all read-only (no Agent, no retrieval, so it runs in
-seconds rather than the minutes a full eval takes):
+    tags       does preference_tags predict which attribute buckets the customer
+               can answer? Needs no cross-session assumption. Cells compared
+               against Binomial(tag support, bucket marginal).
+    scenario   does any profile field predict scenario_type?
+    collision  do two sessions sharing a profile_key want similar products? This
+               is the load-bearing assumption behind the whole store, and it is
+               false: 0.5% share a coarse category against a 1.2% +- 0.5% baseline.
+    store      how fast does re-running the eval contaminate the write-through
+               store?
 
-  tags      Does a session's own `preference_tags` predict which attribute
-            buckets its customer can actually answer? This is the one profile
-            use CLAUDE.md #5 left open, precisely because it needs no
-            cross-session identity assumption -- it only uses the profile
-            handed to reset() this session. Compares each (tag, bucket) count
-            against Binomial(tag support, bucket marginal) -- the null in
-            which the tag tells you nothing -- and flags any cell more than
-            SIGMA_THRESHOLD standard errors away.
-            "Answerable" is computed from the evaluator's own reply policy:
-            customer_reply() only ever discloses a constraint whose
-            classify_constraint() bucket equals the asked attribute, so the
-            buckets present in a sample's undisclosed constraints are exactly
-            the questions that can pay off.
+Run this before wiring up any new personalization idea.
 
-  scenario  Does any profile field predict scenario_type (buying / browsing /
-            intent_override / boundary)? If it did, it would be a cheaper and
-            far more robust intent router than the nearest-centroid embedding
-            classifier, whose margins are documented as sitting inside the
-            noise floor (CLAUDE.md #7).
-
-  collision Do two sessions sharing a profile_key actually want similar
-            products? This is the load-bearing assumption behind the whole
-            cross-session store: with no customer id in the API contract, the
-            key is a content hash of the anonymized profile, so it is only
-            useful if a shared key implies a shared shopper. Compares the rate
-            at which within-key target pairs share a coarse_category against a
-            random-pair baseline.
-
-  store     How fast does re-running the eval contaminate the store? The store
-            is write-through and outlives the process, so run N+1 reads
-            history written by run N.
-
-Usage:
-    uv run python3 scripts/eval_profile_signal.py
-    uv run python3 scripts/eval_profile_signal.py --check tags --check collision
+    uv run python3 scripts/eval_profile_signal.py [--check tags --check collision]
 """
 from __future__ import annotations
 

@@ -294,6 +294,65 @@ def lead_clause(text: str) -> str:
     return match.group(1) if match else text
 
 
+# Explicit discard cues, as a closed list. The embedding rule is a similarity
+# comparison, so a terse pivot whose whole content is the cue ("never mind,
+# white shoes") is judged mostly on its request half -- the same shape
+# pathology TOP_PROTOTYPES was tuned against (CLAUDE.md #7). A literal cue is
+# not a similarity at all, so it cannot be outvoted by the rest of the
+# sentence.
+#
+# Two rules keep this from becoming query pruning's failure mode (#19/#26):
+#
+#   1. Closed list. Every alternative below is a phrase that discards a prior
+#      statement and nothing else. "actually" and "no" are not cues on their
+#      own -- "actually I also need it waterproof" and "no preference there"
+#      are ordinary continuations, and the latter is the evaluator's own
+#      non-answer template shape.
+#   2. Clause-initial only. A cue is a *prefix* to the new request; matched
+#      anywhere it would fire on catalog copy carried in a reply ("For that,
+#      what matters is: ..."). CLAUSE_SPLIT_RE cuts on the same punctuation
+#      LEAD_CLAUSE_RE uses, and each clause is anchored with match().
+#
+# The false-positive cost is no longer symmetric with a missed override, so
+# the list is deliberately narrow: respond() now also clears state.shown on a
+# detection, and in an intent_override session the evaluator keeps scoring a
+# re-shown item, so a spurious clear costs re-offered dead slates. See the
+# EXCLUDE_SHOWN note in config.py.
+CLAUSE_SPLIT_RE = re.compile(r"[.,;:!?]+")
+
+OVERRIDE_CUE_RE = re.compile(
+    r"""\s*
+    (?: never\s?mind
+      | nvm\b
+      | scratch\s+that
+      | strike\s+that
+      | cancel\s+that
+      | forget\s+(?:that|it|those|what\s+i\s+said|my\b|the\s+\w+|about\b)
+      | disregard\b
+      | ignore\s+(?:that|it|all\s+that|what\s+i\s+said|my\b|the\s+\w+
+                  |previous|earlier)
+      | on\s+second\s+thoughts?
+      | (?:i\s*(?:'ve|\s+have)?\s+)?changed\s+my\s+mind
+      | (?:let'?s\s+)?start\s+over\b
+      | actually,?\s*no\b
+      | i\s+don'?t\s+want\s+(?:that|it|those|any\s+of\s+that)\s+anymore
+      | instead\s+of\s+what\s+i\s+said
+      | different\s+idea
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def matches_override_cue(text: str) -> bool:
+    """True when any clause of `text` opens with a literal discard cue."""
+    return any(
+        OVERRIDE_CUE_RE.match(clause)
+        for clause in CLAUSE_SPLIT_RE.split(text)
+        if clause.strip()
+    )
+
+
 def _top_prototype_similarity(query_vec: np.ndarray, prototypes: np.ndarray) -> float:
     """Mean cosine similarity to the `TOP_PROTOTYPES` closest prototypes."""
     similarities = prototypes @ query_vec
@@ -352,6 +411,13 @@ class EmbeddingOverrideDetector:
     def is_override(self, text: str) -> bool:
         if not isinstance(text, str) or not text.strip():
             return False
+        # Union, not a vote: the two rules fail on disjoint inputs. The
+        # closed list catches terse pivots the similarity comparison loses
+        # in the request half; the similarity catches paraphrases the list
+        # has no entry for ("my priorities changed"). It also runs before
+        # the encoder, so an explicit cue is decided without an embed call.
+        if matches_override_cue(text):
+            return True
         variants = [text]
         lead = lead_clause(text)
         if lead != text:

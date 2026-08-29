@@ -1,18 +1,8 @@
-"""Measure the agent's runtime cost: startup, per-turn latency, memory, tokens.
+"""Measure per-turn latency, peak memory and token usage.
 
-`docs/submission_rules.md` requires a disclosure of latency, token usage, and
-estimated model cost. This script produces those numbers rather than
-estimating them, and is the source for the corresponding section of
-`docs/team_report.md` -- re-run it if the pipeline changes.
+Produces the runtime-disclosure numbers in docs/team_report.md section 4.
 
-It wraps the real `Agent` in a timing proxy and drives it through the real
-`evaluate()` session loop, so the per-turn numbers include everything a
-scored turn actually does (retrieval, fusion, boost, classifiers, question
-selection) and nothing it doesn't.
-
-Usage:
     uv run python3 scripts/measure_latency.py --limit 20
-    uv run python3 scripts/measure_latency.py --limit 20 --no-lm
 """
 from __future__ import annotations
 

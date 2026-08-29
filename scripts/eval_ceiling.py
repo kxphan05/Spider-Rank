@@ -1,25 +1,16 @@
-"""How many targets are findable *at all*, given everything the customer knows?
+"""Is the target findable at all, given everything the customer could say?
 
-The question this answers is "why can't we hit 100%", and it is not a question
-about ranking. The simulator's customer has a fixed, small vocabulary: the
-whole session, all ten turns, can only ever convey
+The simulator's customer has a fixed, small vocabulary -- the whole session can
+only ever convey coarse_category(target) + hard_constraints[:2] +
+soft_preferences[2:4]. This hands the agent all of it in one turn-1 message.
 
-    coarse_category(target)  +  hard_constraints[:2]  +  soft_preferences[2:4]
+Result (CLAUDE.md #27): 173/200, and no target is unreachable -- some leg puts
+every one of the 200 inside the top 192. Use it to ask "is this findable", never
+"is this the most we could score": it returns one slate of ten where a live
+session returns up to ten, and the two conditions differ on 34 samples, 17 in
+each direction.
 
--- at most four constraint strings, drawn from the target's own features,
-details, material, colour and price (`intent_card()` in the evaluator). There
-is nothing else the customer is able to say. So there is a ceiling on what any
-dialogue policy can achieve, and it is measurable directly: hand the agent
-every one of those strings at once, on turn 1, and see whether the target
-comes back.
-
-A miss under that condition cannot be fixed by asking better questions, asking
-more of them, or re-ranking -- the information needed to identify the target
-was never available to the customer. A miss the agent makes on a sample that
-*is* oracle-reachable is ours.
-
-Read-only with respect to the evaluator, and one turn per sample rather than
-ten, so it costs a fraction of a scored run.
+One turn per sample, so far cheaper than a scored run. Writes logs/ceiling.json.
 
     uv run python3 scripts/eval_ceiling.py [--limit N]
 """

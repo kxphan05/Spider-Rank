@@ -1,80 +1,23 @@
-"""Train a buying-vs-browsing classifier head on frozen bge-small embeddings.
+"""Train a buying-vs-browsing head on frozen bge-small embeddings. Do not ship it.
 
-Scope note: TODO.md 4.3 puts "training or full-parameter fine-tuning of base
-foundational LLMs" OUT of scope, so the encoder is never touched -- bge-small
-stays frozen and is used exactly as it already is for dense retrieval. What is
-trained here is a logistic-regression head over its 384-d output, which falls
-under the explicitly IN-scope "designing highly sensitive intent-detection
-modules to split traffic into Buying and Browsing tracks". The artifact is a
-few KB of numpy weights (model/intent_head.npz); loading it at runtime needs
-numpy only, not scikit-learn.
+Scope: the encoder is never touched. TODO.md 4.3 bars fine-tuning base models
+while intent modules are explicitly in scope, so a logistic head over the frozen
+384-d output is the only allowed version of this idea.
 
-Why a trained head at all: EmbeddingIntentClassifier scores by nearest
-*centroid*, and CLAUDE.md #7 documents the failure mode -- decision margins
-are ~0.03 in a space where both centroids sit at 0.65-0.80 similarity to
-almost anything, so the boundary is inside the noise floor. A learned boundary
-can weight the dimensions that actually separate the classes instead of
-averaging them away.
+**Measured verdict, CLAUDE.md #12: it is worse than the centroid it would
+replace.** The simulator has exactly two turn-1 templates, so a high
+in-distribution CV score is the head memorizing "still exploring". Three checks
+confirm it: a regularization sweep is flat at chance on held-out surface forms
+across five orders of magnitude of C; OOD accuracy *rises* with C, the opposite of
+a generalization story; and training on the 20 hand-written prototypes alone, with
+no simulator text, reaches OOD 1.000 while 640 labelled simulator turns drag it to
+0.812.
 
-THE THING TO WATCH: the local simulator's turn-1 templates are trivially
-separable --
+Kept as a diagnostic. Re-run it only if the hidden set's phrasing turns out more
+varied than the local templates -- the one condition that would change the answer.
+Saving is opt-in.
 
-    buying    "I'm looking for {category}. A key requirement is: {constraint}."
-    browsing  "I'm looking for {category}, but I'm still exploring."
-
--- so a head trained on them can hit ~100% locally by memorizing "still
-exploring" and still be worthless (or harmful) on the hidden grader's
-phrasing. This script therefore reports three numbers, and only the last two
-mean anything:
-
-  in-dist CV      grouped 5-fold over samples. Expect ~1.0. Ignore it.
-  template-held-out  train on turn-1 text only, test on accumulated multi-turn
-                  text (and vice versa), so the test half has a different
-                  surface form from the training half.
-  OOD probes      hand-written utterances in neither template's vocabulary.
-                  This is the only evidence about generalization, and it is
-                  hand-picked -- treat it as a smoke test, not a measurement.
-
-The centroid classifier is scored on the same three pools as a control. If the
-head does not beat the centroid on the OOD probes, it has learned the
-simulator and should not ship.
-
-MEASURED CONCLUSION: it does not ship. Results as of 2026-08-27 --
-
-    pool                        head    centroid
-    in-distribution 5-fold CV   0.984      0.778     <- memorization, ignore
-    train turn1 -> test accum   0.521      0.708     <- chance
-    out-of-distribution probes  0.812      1.000
-
-  regularization sweep (is the transfer gap just a bad C?)
-        C   in-dist CV  turn1->accum  OOD probe
-    0.001        0.511         0.537      0.688
-     0.01        0.556         0.521      0.688
-      0.1        0.883         0.519      0.750
-      1.0        0.984         0.521      0.812
-     10.0        0.988         0.523      0.812
-
-  control: train on the 20 hand-written PROTOTYPES only, no simulator text
-    C=0.01   OOD probe 1.000   simulator turns 0.761
-    C=1.0    OOD probe 1.000   simulator turns 0.775
-
-Three things follow. The held-out column is flat at chance across five orders
-of magnitude of regularization, so the transfer failure is the data, not a
-hyperparameter. OOD accuracy *rises* with C -- the more the head overfits the
-templates, the better it does out of distribution, which is the opposite of a
-generalization story and means the trend is noise on 16 probes. And the
-control settles it: the 20 hand-written prototypes alone reach OOD 1.000,
-while 640 labelled simulator turns drag it to 0.812. The simulator's labels
-are real but its *surface forms* are two templates, so the head learns
-"contains 'still exploring'" and nothing transferable.
-
-Kept as a diagnostic, not a build step: re-run it if the hidden set's phrasing
-turns out to be more varied than the local templates, which is the one
-condition that would change the answer. Saving is opt-in (--save).
-
-Usage:
-    uv run python3 scripts/train_intent_head.py            # measure only
-    uv run python3 scripts/train_intent_head.py --save     # also write the head
+    uv run python3 scripts/train_intent_head.py [--save]
 """
 from __future__ import annotations
 

@@ -1,30 +1,17 @@
-"""Offline validation of the mid-session intent-override detector.
+"""Sweep scoring rules for EmbeddingOverrideDetector. Verdict in CLAUDE.md #7.
 
-Open problem #7 in CLAUDE.md: EmbeddingOverrideDetector's nearest-*centroid*
-rule misses terse pivots ("never mind, give me white shoes") because every
-PROTOTYPE_OVERRIDE entry is a long two-clause sentence that names the
-discarded prior statement, so the mean vector encodes that sentence *shape*.
-This script measures candidate scoring rules on three pools:
+Three pools:
 
-  simulator  -- the local evaluator's own turns, harvested the same way
-                scripts/eval_classifier.py reconstructs them. Positives are
-                behavior["override"]["message"], negatives are every reply
-                shape customer_reply() can emit. NOTE: the simulator emits
-                exactly ONE override template
-                ("Actually, ignore my earlier preference. What I need is: X."),
-                which is near-verbatim PROTOTYPE_OVERRIDE[0] -- so recall here
-                is trivial and the informative number is the false-positive
-                rate on the negatives.
-  probe      -- hand-written out-of-distribution pivots (the terse ones from
-                CLAUDE.md #7 plus the long ones that already worked). This is
-                the pool the simulator cannot test, and it is hand-picked:
-                treat it as a smoke test, not a measurement.
-  probe_neg  -- hand-written continuations that share override vocabulary
-                ("don't", "no", "not") without discarding anything.
+    simulator  the evaluator's own turns. It emits exactly ONE override template,
+               near-verbatim PROTOTYPE_OVERRIDE[0], so recall here is trivial by
+               construction and the informative column is the false-positive rate.
+    probe      hand-written out-of-distribution pivots -- the only evidence about
+               phrasings the hidden grader might use, and hand-picked.
+    probe_neg  continuations sharing override vocabulary ("don't", "no") without
+               discarding anything.
 
-Read-only: does not modify the evaluator, does not construct an Agent.
+Read-only and Agent-free. Run this before touching the detector.
 
-Usage:
     uv run python3 scripts/eval_override.py
 """
 from __future__ import annotations

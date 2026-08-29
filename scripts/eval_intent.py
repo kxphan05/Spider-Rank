@@ -1,35 +1,18 @@
 """Sweep scoring rules for EmbeddingIntentClassifier (buying vs browsing).
 
-Companion to scripts/eval_override.py, same shape and same reason to exist:
-the classifier scores against class *centroids*, and CLAUDE.md #7 documents
-why that is fragile -- both centroids sit at 0.65-0.80 similarity to almost
-anything, so the decision margin is inside the noise floor. The trimmed
-nearest-prototype rule fixed exactly that for the override detector; this
-measures whether it helps here too.
+Companion to eval_override.py. Verdict is in CLAUDE.md #13: every trimmed-prototype
+variant is worse than the centroid, and there is no headroom to chase -- the
+centroid is at 0.988 on turn-1 and the label is worth ~nothing to the score.
 
-Note on what the classifier's output actually is: `signal.score` is used
-nowhere except a log line (agent.py:310). Every consumer -- fusion weights,
-the MMR diversity re-rank, the entropy threshold, _next_attribute -- branches
-on `signal.label`. So this is a binary decision, not a continuous score, and
-it is measured the same way the override detector is.
+Three pools, two of which mean anything. `turn-1` is the honest in-distribution
+number. `accumulated` is reported for shape only and is **not** an accuracy:
+scenario_type stops being ground truth once answers land, because the classifier
+is built to drift buying-ward (classifier.py:14). `OOD probes` are hand-written
+and hand-picked -- they can falsify a rule but must not rank two rules that both
+pass. The lexical fallback's 1.000 on turn-1 is template memorization.
 
-Three pools, and only two of them mean anything:
+Read-only and Agent-free.
 
-  turn-1        the simulator's opening message vs its scenario_type. This is
-                the one honest in-distribution number.
-  accumulated   opening message plus clarifying answers. Reported for shape
-                only: scenario_type is NOT valid ground truth here, because
-                the classifier is *designed* to drift buying-ward as concrete
-                attributes land (classifier.py:14). A "browsing" session whose
-                text now names a material and a size should read as buying,
-                so disagreement in this pool is partly correct behaviour.
-  OOD probes    hand-written utterances in neither template's vocabulary --
-                the only evidence about the hidden grader's phrasing, and
-                hand-picked, so a smoke test rather than a measurement.
-
-Read-only and Agent-free. Run before touching the classifier.
-
-Usage:
     uv run python3 scripts/eval_intent.py
 """
 from __future__ import annotations

@@ -1,26 +1,21 @@
-"""Sweep PRF_WEIGHT -- the pseudo-relevance-feedback expansion leg's RRF weight.
+"""Sweep PRF_WEIGHT, the pseudo-relevance-feedback leg's RRF weight.
 
-Background and the honest prior are in `starter/prf.py`'s module docstring.
-Short version: buying scores 0.688 hit rate against browsing's 0.825 because
-the median turn-1 hard constraint is *one very common token* (`cotton` alone
-matches 18.8% of the catalog). That is an information problem, and every other
-lever in this project redistributes weight among signal that already exists.
-PRF is the one classical technique that adds vocabulary.
+Background in starter/prf.py. PRF is the one classical technique here that *adds*
+vocabulary rather than redistributing weight among signal that already exists,
+which is what the buying track needs: its median turn-1 hard constraint is one
+very common token ("cotton" alone matches 18.8% of the catalog).
 
-The prediction to check, stated before the run: **if PRF helps at all, the
-gain should be concentrated in `buying`.** Browsing queries are already
-verbose, so they have less to gain and more to drift. If a gain shows up
-uniformly, or lands in browsing, the mechanism is not the one described above
-and the result should be distrusted even if the number is positive.
+Prediction to check, stated before the run: **if PRF helps, the gain should
+concentrate in buying.** A uniform gain, or one landing in browsing, means the
+mechanism is not the one described and the result should be distrusted even if
+positive.
 
-The known failure mode is query drift, and it is visible by inspection here:
-for "Men's Shoes ... leather" the harvested terms are `coats, jackets, faux,
-jacket, genuine, collar, zipper`, because leather in this catalog is dominated
-by outerwear. `prf_search` anchors the expansion to the original query for
-that reason. Expect drift to still cost something.
+Known failure mode, visible by inspection: for "Men's Shoes ... leather" the
+harvested terms are coats, jackets, faux, zipper, because leather in this catalog
+is dominated by outerwear. prf_search anchors the expansion to the original query
+for that reason; expect drift to still cost something.
 
-`PRF_WEIGHT = 0.0` is the exact identity and must reproduce the shipped score
-before any other row is believed.
+PRF_WEIGHT = 0.0 is the exact identity and must reproduce the shipped score first.
 
     uv run python3 scripts/sweep_prf_weight.py
 """

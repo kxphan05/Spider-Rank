@@ -1,17 +1,15 @@
-"""Dump and classify the sessions the shipped agent fails.
+"""Dump and classify the sessions the shipped agent misses.
 
-Replays the evaluator's own loop (evaluate() in evaluator/local_evaluator.py,
-copied turn-for-turn so the outcomes match a scored run), then for every miss
-probes each retrieval leg at depth PROBE_N with that session's final query to
-answer one question: *why* did we miss?
+Replays the evaluator's loop turn-for-turn, then probes each retrieval leg to
+depth PROBE_N with that session's final query:
 
-    unreachable   no leg ranks the target in the top PROBE_N -- the query
-                  simply does not describe the target
-    lost-in-fusion  some leg finds it deep but the fused pool at pool depth
-                  does not
-    ranked-11+    the fused pool has it, but outside the ten we returned
-    excluded      the target sat in state.shown and was pushed out by
-                  EXCLUDE_SHOWN (only reachable when an override is missed)
+    unreachable       no leg ranks the target in the top PROBE_N
+    lost-in-fusion    a leg finds it deep, the fused pool does not
+    ranked-11+        in the pool, outside the ten returned
+    excluded          pushed out by EXCLUDE_SHOWN (only if an override is missed)
+
+Read CLAUDE.md #24 before trusting `lost-in-fusion`: it means "not in the pool",
+not "fusion dropped it". Takes about an hour. Writes logs/failures.json.
 
     uv run python3 scripts/eval_failures.py [--limit N] [--out failures.json]
 """

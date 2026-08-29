@@ -2,1694 +2,781 @@
 
 ## What this is
 
-An AI shopping agent for the TechJam Conversational Search Hackathon. The
-task: given a frozen 50k-product Amazon Clothing/Shoes/Jewelry catalog and a
-simulated customer, find the customer's hidden target product within 10
-conversational turns, asking clarifying questions along the way.
-
-Scoring (`evaluator/local_evaluator.py`, full rules in `README.md`):
+An AI shopping agent for the TechJam Conversational Search Hackathon. Given a
+frozen 50k-product Amazon Clothing/Shoes/Jewelry catalog and a simulated
+customer, find the customer's hidden target within 10 turns, asking clarifying
+questions along the way.
 
 ```
 TechnicalScore = 0.50 * HitRate@10 + 0.30 * MRR + 0.20 * Efficiency
-Efficiency = clip((11 - MTTC) / 10, 0, 1)
+Efficiency     = clip((11 - MTTC) / 10, 0, 1)
 ```
 
-A session ends the moment the target first appears in the top-10
-recommendations (MRR uses the rank at that first hit, not the best rank ever
-achieved). A miss after 10 turns scores MTTC as turn 11. All of this is
-implemented in `evaluate()` in `evaluator/local_evaluator.py` — read that file
-directly before changing scoring-adjacent behavior, don't rely on summaries
-of it going stale.
+A session ends the moment the target first appears in the top 10. MRR uses the
+rank at that first hit, not the best rank ever. A miss after 10 turns scores
+MTTC as turn 11. Read `evaluate()` in `evaluator/local_evaluator.py` directly
+before changing anything scoring-adjacent — that file, not this summary, is the
+authority. Full rules in `README.md`.
 
-## Current architecture (as of last commit)
+## Architecture
 
-1. **Retrieval, three legs, dual-track by buying/browsing intent**: BM25
-   (SQLite FTS5, bag-of-words OR), **phrase-match** (FTS5 exact multi-word
-   spans, `PHRASE_WEIGHT = 2.0` — the largest measured win here, +0.0272,
-   see #20) and dense (bge-small cosine) run independently over the full
-   catalog, combined via weighted reciprocal rank fusion. The phrase leg's
-   weight is intent-*un*conditioned; the other two are: buying keeps the
-   original BM25-heavy weighting (2.0/0.5 after #16 — empirically tuned;
-   equal weights dropped MRR 0.450→0.385 on this catalog) for precision on
-   stated hard constraints, browsing shifts toward dense (1.25/1.5) for
-   broader semantic/cross-category matches, then gets an MMR diversity re-rank
-   (`Agent._diversify`) on top of the fused+boosted pool before truncating
-   to `top_k` — pinning the top `DIVERSIFY_PIN=2` items and only
-   reordering within the top `DIVERSIFY_WINDOW=20`, so diversity can never
-   evict the best match(es). See "Known open problems" #4 for what was
-   tried and measured to get here (a hard filter-then-rerank buying track
-   was tried first and measured worse).
-2. **Disclosure extraction**: every customer message (including the first)
-   is scanned for material/color (vocab match, negation-aware) and budget
-   (`$` amount → price bucket) and stored in `SessionState.disclosed`.
-3. **Boost, don't filter**: if anything's disclosed, the fused candidate pool
-   is stably resorted by a categorical match score against
-   `AttributeIndex` — +1 per disclosed attribute where the candidate's
-   extracted value agrees, −1 where it's known and disagrees, 0 where it's
-   unextractable — so confident matches float to the front and confident
-   mismatches sink to the back, but nothing is ever dropped from the pool
-   (`Agent._boost_by_disclosed`). This replaced an earlier hard-equality
-   filter that eliminated candidates outright on disagreement; see
-   "Known open problems" below for why and what was measured.
-4. **Question selection**: entropy-based dynamic pick between `material`/
-   `color` (whichever has higher value-diversity in the *current*,
-   already-filtered candidate pool — recalculated fresh every turn, so it
-   naturally stops asking about an attribute once the pool has converged on
-   it). Falls back to a fixed order (`style, size, use_case, feature,
-   budget`) once nothing structural clears the entropy threshold. The
-   entropy threshold itself is also intent-conditioned: 0.10 for buying
-   (ask eagerly — locking a hard constraint is high-value), 0.30 for
-   browsing (ask less eagerly, bias toward recommending sooner). Measured
-   to have no effect on the 60-sample tuning subset's outcome (didn't
-   change which samples hit or when) — kept anyway since it's a direct,
-   costless implementation of the spec's "Proactive Guidance" bullet and
-   may matter on other slices/the hidden set.
-5. **Intent-override handling**: a nearest-centroid embedding classifier
-   detects a mid-session "actually, ignore what I said" pivot (no
-   structured signal for this exists in the agent API — confirmed against
-   `docs/agent_api_contract.json`, only `reset_request` exists and that's a
-   new session, not a mid-session change). On detection, `disclosed` and
-   `asked_attributes` are cleared so the agent re-asks and re-filters from
-   scratch instead of carrying stale constraints forward.
-6. **Long-term user-profile store** (`starter/user_profile.py`,
-   `UserProfileStore`): write-through JSON file (`data/user_profiles.json`,
-   gitignored — runtime state, not source data) that persists across process
-   restarts, not just within one `Agent` instance's lifetime. The API
-   contract's `reset_request.user_profile` (`docs/agent_api_contract.json`)
-   has no customer/user id, so there's nothing to key long-term state on
-   except the anonymized profile dict's own content — `profile_key()` hashes
-   it (sorted-key JSON → sha256, first 16 hex chars) and two sessions
-   presenting an identical profile are treated as the same returning
-   "shopper profile." `Agent.reset()` calls `start_session()`, which bumps a
-   per-key session counter and returns any *corroborated* (recurred ≥2x,
-   `MIN_CORROBORATION`) historical material/color/budget disclosure as
-   `SessionState.profile_hint`; `respond()` calls `record_disclosure()`
-   whenever a genuine this-session disclosure happens, appending to that
-   key's history. **`profile_hint` is currently populated but not consulted
-   anywhere in retrieval or question logic** — see "Known open problems" #5
-   for three different uses of it that were each tried and measured to
-   regress the full public set, and why. The store still runs (fully
-   exercised, correctly populated — 125 distinct keys / 30 seen more than
-   once across the 200-sample public set) with zero net effect on scoring.
-   Its inertness is now a measured conclusion rather than a pending TODO:
-   `scripts/eval_profile_signal.py` shows the `user_profile` dict carries no
-   signal to act on in the first place (same-key sessions' targets agree
-   *below* chance), so there is no fourth strategy worth trying — see
-   "Known open problems" #5.
+1. **Retrieval — three legs, fused by weighted RRF.** BM25 (SQLite FTS5,
+   bag-of-words OR), **phrase-match** (FTS5 exact multi-word spans,
+   `PHRASE_WEIGHT = 2.0`) and dense (bge-small cosine), each over the full
+   catalog. The phrase leg's weight is intent-unconditioned; BM25 and dense
+   weights are intent-conditioned (buying 2.0/0.5, browsing 1.25/1.5).
+2. **Shown-item exclusion** (`EXCLUDE_SHOWN = True`). Products already
+   recommended are dropped from later slates. Largest win in the project,
+   +0.0837 — see Results.
+3. **Disclosure extraction.** Every customer message is scanned for
+   material/color (vocab match, negation-aware) and budget (`$` amount → price
+   bucket) into `SessionState.disclosed`. All three attributes are attempted per
+   message, but only one value per attribute is kept, chosen by *vocab order*,
+   not text order.
+4. **Boost, don't filter** (`Agent._boost_by_disclosed`). The fused pool is
+   stably resorted by a categorical match score against `AttributeIndex`: +1 per
+   disclosed attribute the candidate agrees on, −1 where known and disagreeing,
+   0 where unextractable. Nothing is ever dropped.
+5. **Question selection.** Entropy-based pick between `material`/`color`
+   (whichever has higher value-diversity in the current pool, recalculated every
+   turn). Falls back to `feature, style, size, use_case, budget` — ordered by
+   measured answerability, see Results #9. Entropy threshold is
+   intent-conditioned (0.10 buying, 0.30 browsing).
+6. **Intent-override handling.** A trimmed nearest-prototype embedding
+   classifier detects a mid-session "actually, ignore that" pivot; there is no
+   structured signal for this in the agent API (`docs/agent_api_contract.json`
+   has only `reset_request`, which is a new session). On detection `disclosed`
+   and `asked_attributes` are cleared. The query text is cleared **only** when
+   the pivot names a product category — see #17/#26.
+7. **Browsing-only MMR diversity re-rank** (`Agent._diversify`), pinning the top
+   `DIVERSIFY_PIN = 2` and reordering within `DIVERSIFY_WINDOW = 20`.
+8. **Long-term user-profile store** (`starter/user_profile.py`). Write-through
+   JSON keyed by a hash of the anonymized profile dict. Fully exercised and
+   correctly populated; **`SessionState.profile_hint` is deliberately read by
+   nothing** — see #5.
 
-Code layout note: the buying/browsing label decides four things (BM25 weight,
-dense weight, entropy threshold, whether the MMR diversity re-rank runs). All
-four are resolved in one place, `routing_params()` in `agent.py` — previously
-the `intent_label == "buying"` conditional was written out separately in
-`_retrieve`, `_next_attribute` and `respond`'s debug log, which meant the log
-could report weights retrieval wasn't using. Add new intent-conditioned
-behaviour to `RoutingParams`, not as a fourth branch.
+**Config lives in `starter/config.py`.** All 64 tunable constants, one file.
+Consumers do `from .config import PHRASE_WEIGHT`, which binds the value into the
+*consuming* module at import time, so a sweep must patch the module that reads
+the knob (`agent_module.PHRASE_WEIGHT = 4.0`), never `config.PHRASE_WEIGHT`.
+Vocabularies, regexes and prototype corpora stay in their own modules.
 
-Scripts share `scripts/_common.py`, which puts the repo root on `sys.path` as
-an import side effect and exports `DEFAULT_CATALOG` / `DEFAULT_DATASET` (both
-anchored to the repo root, so scripts run from any directory) and
+**Intent-conditioned behaviour goes in `routing_params()`** (`agent.py`), which
+resolves all four label-dependent knobs in one place. Do not add a fifth
+`intent_label == "buying"` branch elsewhere.
+
+Scripts share `scripts/_common.py`, which puts the repo root on `sys.path` as an
+import side effect and exports `DEFAULT_CATALOG` / `DEFAULT_DATASET` /
 `isolate_profile_store()`. Import it before any `starter`/`evaluator` import.
 
-Lint gate (config in `pyproject.toml`, `evaluator/` excluded as
-organizer-provided): `uvx ruff check starter/ scripts/`.
+Data and model paths resolve in three steps (`_resolve_data_path`,
+`paths.model_cache_dir`): env var (`TECHJAM_CATALOG` / `TECHJAM_DENSE_INDEX` /
+`TECHJAM_MODEL_DIR`), then cwd-relative, then beside the package. They used to
+be bare cwd-relative strings, so running from anywhere but the repo root
+silently lost the dense index and both classifiers.
 
-Eval runs: `uv run python3 scripts/run_eval.py` (dev wrapper — `--limit`,
-`--scenario`, `--seed`, and a tqdm progress bar on stderr, `--no-progress` to
-suppress). tqdm is imported defensively and comes in transitively with
-sentence-transformers, so the submitted dependency set is unchanged.
-
-Submission bundle: `uv run python3 scripts/build_submission.py --verify`
-assembles `dist/submission/` in the rules' recommended shape (`agent.py`
-exporting `Agent`, `src/`, `requirements.txt`, `README.md`, `REPORT.md`,
-`tools/`) and then imports that bundle's `Agent` from a neutral working
-directory, asserts dense retrieval and both classifiers came up live, and
-scores it on the full public set. The bundle is **generated, never
-hand-edited** — change `starter/`, then rebuild.
-
-Data and model paths resolve in three steps (`starter/agent.py`
-`_resolve_data_path`, `starter/paths.py` `model_cache_dir`): the
-`TECHJAM_CATALOG` / `TECHJAM_DENSE_INDEX` / `TECHJAM_MODEL_DIR` env var, then
-the path relative to the working directory, then the path beside the package.
-Before this, all three were bare cwd-relative strings (`"data/catalog.jsonl"`,
-`"./model"`), so running the agent from anywhere but the repo root silently
-lost the dense index and both classifiers — the same silent-degrade class as
-#15, and the exact condition a submitted bundle runs under.
-
-Offline-asset setup: `uv run python3 scripts/fetch_assets.py` (the only step
-that needs network) then `uv run python3 scripts/preflight.py --strict` to
-verify the pipeline comes up whole with the network disabled. See "Known open
-problems" #15 -- the degrade is silent, so this check is not optional.
-
-Runtime disclosure: `uv run python3 scripts/measure_latency.py --limit 20`
-produces the latency/memory/token numbers in `docs/team_report.md` § 4.
-
-Manual testing: `uv run python3 scripts/repl.py` — interactive single-session
-REPL against the live agent. Commands: `/reset`, `/debug` (prints
-`disclosed`/`asked_attributes` each turn), `/topk N`, `/quit`.
-
-Override diagnostics: `uv run python3 scripts/eval_override.py` — sweeps
-scoring rules for `EmbeddingOverrideDetector` against the simulator's own
-harvested override/continuation turns plus hand-written out-of-distribution
-pivots. Read-only and Agent-free. Run this before touching the detector; the
-measured table is in "Known open problems" #7.
-
-Intent diagnostics: `uv run python3 scripts/eval_intent.py` — sweeps scoring
-rules for `EmbeddingIntentClassifier` on turn-1, accumulated, and
-out-of-distribution pools, with the lexical fallback as a floor. Companion to
-`eval_override.py`; the measured table is in "Known open problems" #13.
-
-Intent-head diagnostics: `uv run python3 scripts/train_intent_head.py` — trains
-a logistic head on frozen bge-small embeddings and scores it against the
-centroid classifier on in-distribution, held-out-template, and
-out-of-distribution pools. Saving is opt-in; the measured verdict is "don't
-ship it" ("Known open problems" #12).
-
-Presentation demo: `uv run python3 scripts/build_demo.py` renders
-`dist/demo.html`, a turn-by-turn replay of four real sessions (committed in
-`demo/sessions.json`). `--capture` re-runs the live agent to regenerate them.
-UI is out of scope for scoring (`TODO.md` 4.3) — this is for presenting only.
-Note the override flag comes from the real detector, not from watching the slot
-dict shrink: an override clears the slots and the same turn can immediately
-refill one, so the naive heuristic misses it.
-
-Fusion-weight sweep: `uv run python3 scripts/sweep_fusion_weights.py --track buying`
-— reports TechnicalScore as a curve against the dense:bm25 ratio (only the ratio
-matters; weighted RRF is scale-invariant per leg). Companion:
-`scripts/sweep_prior_leg.py`, which sweeps a *third* RRF leg built from catalog
-priors (`popularity`, `rating`) or from the user profile (`profile_rating`).
-Note the two profile-independent variants are the controls — a gain from
-`profile_rating` means nothing unless it beats `rating`.
-
-Question-policy design: `docs/question_policy_plan.md` — replaces the
-two-stage entropy-then-fixed-order picker with one expected-value objective
-(answerability x gain). Written, not built. Records two corrections found by
-reading the evaluator: there is no per-turn cost to trade off (the agent cannot
-end a session), and `ask_attribute: null` still draws a reply, so it is a minor
-refinement rather than a win.
-
-Intent-detection research + staged plan: `docs/intent_detection_plan.md`
-(industry practice, where this pipeline is strong vs thin, and why slot filling
-rather than the intent classifier is the bottleneck).
-
-Miss diagnostics: `uv run python3 scripts/eval_failures.py` — replays the
-evaluator loop, then probes every retrieval leg to depth 2000 for each miss and
-classifies the cause (`unreachable` / `lost-in-fusion` / `ranked-11+` /
-`excluded-as-shown`). Read "Known open problems" #24 before trusting the
-`lost-in-fusion` label — it means "not in the pool", not "fusion dropped it".
-Writes `logs/failures.json`. Takes about an hour on an idle box.
-
-Phrase-query A/B: `uv run python3 scripts/ab_phrase_query.py` — scores the five
-legs of "Known open problems" #25 (identity, each phrase-query fix alone, both,
-and a raised-budget control). About five full evals, so run it alone.
-
-Reachability ceiling: `uv run python3 scripts/eval_ceiling.py` — hands the
-agent every constraint the customer could ever state, in one turn-1 message,
-and reports whether the target comes back plus its best rank across the raw
-legs. One turn per sample, so it is far cheaper than a scored run. Use it to
-ask "is this target findable at all"; it is **not** an upper bound on the
-score, because it returns one slate of ten where a live session returns up to
-ten (see #27). Writes `logs/ceiling.json`.
-
-Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
-whether `user_profile` carries any usable signal at all (tag→answerable-bucket
-departure from the null, profile field→scenario_type, profile-key
-collision→target similarity, and cross-run store contamination). Read-only and
-Agent-free, so it runs in seconds. Run this *before* wiring any new
-personalization idea up; on the public set every check is null, and the
-measured numbers are in "Known open problems" #5.
-
-## Progress / what's been measured
-
-Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
-results as of the last run:
+## Commands
 
 ```
-HitRate@10: 0.850   MRR: 0.4567   MTTC: 4.210   Efficiency: 0.6790
-TechnicalScore: 0.6978
+uvx ruff check starter/ scripts/                    lint gate (evaluator/ excluded)
+uv run python3 -m evaluator.local_evaluator         official score, 200 samples, ~1h45
+uv run python3 scripts/run_eval.py                  dev wrapper: --limit --scenario --seed, progress bar
+uv run python3 scripts/fetch_assets.py              the only networked step
+uv run python3 scripts/preflight.py --strict        verify the pipeline comes up whole offline
+uv run python3 scripts/build_submission.py --verify assemble dist/submission/ and score it
+uv run python3 scripts/measure_latency.py --limit 20  numbers for team_report.md §4
+uv run python3 scripts/repl.py                      interactive session: /reset /debug /topk /quit
+uv run python3 scripts/build_demo.py [--capture]    dist/demo.html replay of demo/sessions.json
 ```
 
-**This is HEAD (`5889828`), measured 2026-08-29, and it is the first scored run
-that includes #26.** Per-scenario: browsing 0.925 hit / 0.5235 MRR / 3.613 MTTC
-(80), buying 0.8125 / 0.4204 / 4.213 (80), intent_override 0.8333 / 0.4084 /
-5.267 (30), boundary 0.600 / 0.3569 / 5.800 (10). `results.json` is this run.
-
-(The 0.7020 below was measured at `3ef2028`, before #26. HEAD is that exact
-configuration plus #26 and nothing else — every feature flag was re-checked at
-its identity value (`PHRASE_CLAUSE_SPANS = False`,
-`PHRASE_QUERY_SKIP_NON_ANSWERS = False`, `MAX_PHRASE_QUERIES = 24`,
-`RERANK_WEIGHT = 0.0`, `EXCLUDE_SHOWN = True`, `PHRASE_WEIGHT = 2.0`), and the
-only `starter/` diff in the range is #26 itself. So **#26 costs -0.0042, which
-is one session**: 171/200 hits to 170/200. Apply this file's own rule and that
-is below the benchmark's resolution — it is flat, not a regression.
-
-That result is worth recording because it was the specific risk flagged before
-the run. `_REQUEST_STOPWORDS` deletes tokens from **every** query, which is
-structurally the same intervention that cost **-0.0410** in #19, and the
-argument that this list is safe — it holds ways of *asking*, never things to
-ask about — was a prediction of exactly the shape #19 stands as a warning
-against. The prediction held: one session, not twelve. #26 keeps its place on
-the strength of the two demo bugs it fixes, and it is now measured rather than
-merely reasoned about.)
-
-(That 0.7020 line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
-the same HEAD without it scores 0.6366, so the change is worth **+0.0837**, by
-a factor of three the largest win in this project. Note it lands on top of the
-phrase leg, not instead of it.)
-
-(The 0.6454 line it replaced was with the **phrase-match retrieval leg at
-`PHRASE_WEIGHT = 2.0`**,
-shipped after the sweep in #20 — the previous 0.6182 is the same HEAD with the
-leg disabled, so the change is worth **+0.0272** — the largest retrieval-side
-win here, and the first one that was a *recall* gain rather than a reordering.
-Superseded as the project's largest win by #23.)
-
-(The 0.6182 line it replaced was with the buying dense:bm25 ratio at **0.25**,
-shipped after the sweep in #16 — the previous 0.50 scored 0.6070 on that same
-HEAD, so that change was worth +0.0112 and reproduced the sweep's prediction
-exactly.)
-
-(That line is with the `TOP_PROTOTYPES = 4` override detector from "Known open
-problems" #7, re-run on this HEAD. The centroid it replaced scored 0.6073 —
-the two are indistinguishable at this sample size, and #7 explains why the
-change was made on offline detector quality rather than on this number. An
-earlier revision of this block quoted the *centroid's* 0.388/0.6073 while
-labelling it k=4; the k=4 figures are the ones above.)
-
-(Previous run, before the `FALLBACK_ATTRIBUTE_ORDER` answerability reorder
-described in "Known open problems" #9: HitRate 0.740 / MRR 0.395 /
-MTTC 5.605 / Efficiency 0.540 / TechnicalScore 0.596 — the reorder is
-almost purely an MTTC win, +0.0109 TechnicalScore. Note this pair of runs
-brackets the #10 word-boundary fix and the #11 LM inference, both already
-landed, so it is *not* comparable to the 0.601 line below.)
-
-(Previous run, before the dual-track buying/browsing routing described in
-"Known open problems" #4: HitRate 0.755 / MRR 0.373 / MTTC 5.49 /
-Efficiency 0.551 / TechnicalScore 0.600 — net roughly flat on the full set
-despite a clearer gain on the 60-sample tuning subset, see #4 for the
-honest breakdown.)
-
-(Before that, before the boost-not-eliminate fix described in "Known open
-problems" #1: HitRate 0.735 / MRR 0.359 / MTTC 5.62 / TechnicalScore 0.583 —
-every metric improved.)
-
-(Starter BM25-only baseline was HitRate 0.125 / MRR 0.068 / MTTC 9.81 per
-`docs/baseline_results.json`.)
-
-Notable things confirmed empirically along the way, not just assumed:
-- The QSBPS paper the entropy-question design is inspired by (Zou &
-  Kanoulas, "Learning to Ask") is CIKM 2019, not SIGIR 2019 as an earlier
-  docstring claimed — corrected. Its actual mechanism is Generalized Binary
-  Search over candidate relevance mass via binary questions, not the
-  multi-way categorical entropy used here — the multi-way version is a
-  deliberate adaptation, not a citation match, and there's no
-  pairwise-comparison phase in that paper (a related but different idea
-  from critique-based recommender literature).
-- `ALLOWED_ATTRIBUTES` in `agent.py` is copied verbatim from
-  `docs/agent_api_contract.json`'s enum — not invented.
-- Catalog attribute coverage (measured, not assumed): material ~78.1%,
-  color ~58.6%, price ~21% of products. Budget/price is missing on ~79% of
-  the catalog.
-- The local evaluator's `classify_constraint()` (which decides whether an
-  agent's `ask_attribute` gets a real answer) **never** buckets any of the
-  800 sampled disclosed constraint values across the full public set as
-  `budget` — asking about budget locally is a guaranteed wasted turn. Root
-  cause: `intent_card()` appends the price candidate last, and it almost
-  always gets truncated out by the `hard_constraints[:2]` /
-  `soft_preferences[2:4]` cap before the customer can ever disclose it.
-  `budget` was demoted to last-resort-only in the fallback question order
-  as a result (not dropped outright — this may be a local-simulator-only
-  quirk that doesn't generalize to the hidden grader, so it's kept as an
-  option rather than removed).
-- `category`, `brand`, `other` are structurally unreachable in the current
-  code (no code path ever picks them as `ask_attribute`), and separately,
-  `classify_constraint()` never buckets any disclosed value into `category`
-  or `brand` either, so local self-play can't validate those even if wired
-  up.
-
-## Known open problems / left to do
-
-1. ~~**Hard-filter self-elimination.**~~ **Fixed.** The old hard-equality
-   filter dropped candidates whose extracted value disagreed with a disclosed
-   one — which disagreed with the *true target* 16.3% of the time on material
-   and 37.0% on color, so it eliminated the right answer that often. Replaced
-   by the non-eliminating `Agent._boost_by_disclosed` resort (architecture
-   #3); every metric improved. **Do not retry reranking by embedding
-   similarity between the disclosed phrase and catalog embeddings** — swept
-   and measured *monotonically worse* as its weight rose, below even a
-   no-signal baseline. (Root cause of the disagreement itself was later found
-   to be the substring-matching bug in #10.) Full write-up and the sweep
-   numbers: `.claude/skills/retrieval-experiments/SKILL.md`.
-2. A user raised storing the catalog in a real SQL database with indexed
-   attribute columns, using disclosed answers as `WHERE` clauses, and
-   clearing those clauses on intent override. The override-clear-semantics
-   argument still stands, but it's no longer motivated by problem #1 (that's
-   fixed above without SQL) — at current catalog/pool scale (50k rows,
-   ~30-item pools) the raw speed argument for SQL over the Python resort is
-   close to a wash either way.
-3. Budget disclosure extraction (`extract_disclosed_value`) requires a
-   literal `$` in the customer's text (`r"\$\s?(\d+...)"`)) — phrasings
-   like "fifty dollars" or "around 50" without a dollar sign won't match.
-   Not yet widened.
-4. ~~**Buying-vs-Browsing dual-track routing not wired up.**~~ **Fixed.**
-   `signal.label` now threads into intent-conditioned RRF fusion weights, a
-   browsing-only MMR diversity re-rank, and the entropy threshold. Net a wash
-   on the full set (TechnicalScore 0.600→0.601) despite a real gain on the
-   60-sample tuning subset. **Do not retry the hard filter-then-rerank buying
-   track** (BM25 top-`CANDIDATE_N` as a hard filter, dense reranking only
-   within it): measured worse on hit rate and MTTC, because it discards the
-   full-catalog dense leg that exists to catch targets phrased differently
-   from their catalog text. Full write-up and weight sweeps:
-   `.claude/skills/retrieval-experiments/SKILL.md`.
-5. ~~**No long-term user-profile persistence across sessions.**~~ **Store
-   built; personalization measured dead.** `UserProfileStore` persists
-   per-profile-key disclosure history across restarts, and
-   `SessionState.profile_hint` carries the corroborated value — but nothing
-   reads it, deliberately. **Do not wire it into ranking or question
-   selection.** Three different ways were each measured to regress the full
-   200-sample set, and `scripts/eval_profile_signal.py` shows why they had
-   to: same-key sessions' targets share a coarse category 0.5% of the time
-   against a 1.2% ± 0.5% random-pair baseline, so a profile-key match is not
-   an identity signal and there is nothing correct to carry. Re-run that
-   script first if the hidden set's profiles look different. Full write-up,
-   including all three experiments and the store-contamination landmine:
-   `.claude/skills/retrieval-experiments/SKILL.md`.
-
-   **Judge-facing justification: `docs/user_profile_decision.md`.** Written
-   2026-08-29 with two *new* tests that #5's original evidence did not cover,
-   both null: `preference_tags` -> target coarse category (every conditional
-   within noise of the 0.590 marginal, and the top four tags appear on 50-82%
-   of samples so they cannot separate customers anyway), and
-   `average_prior_rating` -> target `average_rating`. The second is worth
-   knowing about because it **passes significance and should still be
-   rejected**: r = 0.1824, permutation p = 0.0094 over 20,000 shuffles, which
-   clears p < 0.05 — but it explains 3.3% of the variance (a 1.7% improvement
-   in predictive precision), it is non-monotone (prior 1.0 -> 4.393 vs prior
-   5.0 -> 4.413, reversed between the two largest cells), and dropping the one
-   9-sample cell at prior = 2.0 collapses it to r = 0.0929, below the null's
-   own 95th percentile of 0.1389. It is the canonical "significant but neither
-   robust nor large enough to act on" case, and about a dozen tests were run
-   across the three fields, so one pass at p < 0.05 is what chance produces.
-   Two fields never needed testing: `purchase_frequency` is the constant
-   `"3-4 prior purchases"` on all 200 samples, and `summary` is a template
-   restatement of `preference_tags` + `rating_style`.
-
-   That doc also records the signal the same analysis *did* find, which is
-   profile-independent: `rating_number` is the only 100%-covered catalog field
-   and targets come overwhelmingly from the popular tail (catalog median 12
-   reviews, target median 7,078; the top 5.9% of the catalog by review count
-   holds 83% of the targets, a 14x lift). `scripts/sweep_prior_leg.py` was
-   built for exactly this and **has never been run** — no result in this file,
-   no log in `logs/`. Its `popularity` variant was designed as the *control*
-   for the profile idea, and the control is the leg with the effect size.
-   Caveat before shipping it: the concentration is a property of how the
-   evaluation samples were drawn, not of shopping, so it transfers only if the
-   hidden set was drawn the same way.
-6. Remaining gaps from the original spec analysis (`TODO.md` has the full
-   competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
-   mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
-   attribute boost + MMR diversity, no learned/LLM reranker).
-
-7. **Override detector: centroid replaced by a trimmed nearest-prototype
-   rule + lead-clause scoring. Detector measurably better, end-to-end score
-   flat (-0.0005).** The diagnosis below was confirmed and acted on; the
-   analysis is kept because it explains the fix.
-
-   New rule (`EmbeddingOverrideDetector`, `classifier.py`): score against the
-   mean of each class's `TOP_PROTOTYPES = 3` closest prototypes instead of the
-   class centroid, and evaluate both the full message and its lead clause
-   (`lead_clause()`), taking whichever leans more override. Swept in the new
-   `scripts/eval_override.py`, which harvests the simulator's own override and
-   continuation turns (30 positives / 1600 negatives over the 200 public
-   samples) plus 20 hand-written out-of-distribution probes:
-
-   ```
-   rule                    sim recall  sim FPR   probe recall  probe FPR
-   centroid (previous)          0.900    0.000          0.800      0.100
-   nearest prototype (k=1)      0.933    0.151          1.000      0.300
-   top3-mean                    0.933    0.007          1.000      0.100
-   top3-mean + lead clause      1.000    0.007          1.000      0.100   <- shipped
-   top4-mean + lead clause      0.933    0.001          1.000      0.100
-   top5-mean + lead clause      0.933    0.000          0.900      0.100
-   ```
-
-   Confirms the CLAUDE.md #7 prediction exactly: **k=1 (max) does fix every
-   terse pivot but raises the false-positive rate 20x** (0.000 -> 0.151, i.e.
-   241 of 1600 ordinary turns silently wiping session state). A small trimmed
-   mean gets max's shape-robustness without its fragility.
-
-   **Full 200-sample A/B, both legs on this HEAD:**
-
-   ```
-                 HitRate    MRR      MTTC    Technical
-   before         0.7450   0.3888   5.0900    0.6073
-   after          0.7450   0.3875   5.0950    0.6068   (-0.0005)
-   ```
-
-   Only **4 of 200 sessions changed**: one `intent_override` improved
-   (rank 9->6), and three regressed slightly (two `buying`, one `browsing`)
-   from false positives firing on the simulator's disclosure template
-   ("For that, what matters is: ..."), which is where all 12 remaining FPs
-   live. Kept anyway, on the same reasoning as #10: **the local simulator
-   cannot measure this at all.** `behavior_for()` emits exactly one override
-   string, `"Actually, ignore my earlier preference. What I need is: {X}."`,
-   which is near-verbatim `PROTOTYPE_OVERRIDE[0]` — so simulator recall was
-   already 0.900 by construction and there is no local headroom to win. The
-   probe column (0.800 -> 1.000) is the only evidence about phrasings the
-   hidden grader might use, and it is hand-picked. Treat -0.0005 as noise, not
-   as a cost.
-
-   **Resolved: `TOP_PROTOTYPES = 4` shipped.** Swept against the real class
-   (not a reimplementation) and A/B'd on the full set:
-
-   ```
-    k   sim recall   sim FPR      sim FP   probe recall   probe FPR
-    1        0.933    0.1512    242/1600          1.000       0.400
-    2        1.000    0.0156     25/1600          1.000       0.200
-    3        1.000    0.0075     12/1600          1.000       0.100
-    4        0.933    0.0013      2/1600          1.000       0.100   <- shipped
-    5        0.933    0.0000      0/1600          0.900       0.100
-   12        0.900    0.0000      0/1600          0.900       0.100   (= centroid)
-
-                 HitRate    MRR      MTTC    Technical
-   centroid       0.7450   0.3888   5.0900    0.6073
-   k=3            0.7450   0.3875   5.0950    0.6068
-   k=4            0.7450   0.3876   5.0900    0.6070
-   ```
-
-   k=4 keeps the entire out-of-distribution gain (probe recall 1.000, vs the
-   centroid's 0.800) while cutting false positives 12 -> 2 of 1600. Per-sample
-   it changes **2 of 200 sessions** against the centroid (k=3 changed 4): one
-   `intent_override` improves rank 9->6, one `buying` regresses rank 2->5. The
-   two overrides k=4 loses are both the pathological template case where
-   `new_value` is 180 characters of verbatim catalog copy.
-
-   All three legs are within ±0.0005 TechnicalScore, which is **below this
-   benchmark's resolution** — 200 samples cannot separate them, and the
-   end-to-end numbers should not be read as evidence either way. The decision
-   rests on the offline table, where k=4 dominates the centroid on both recall
-   columns at a cost of 2 false positives in 1600 turns. The centroid baseline
-   was re-run and reproduced 0.6073 exactly, so the legs are deterministic and
-   comparable.
-
-   Applied to `EmbeddingIntentClassifier` too? **No — measured and rejected,
-   see #13.** Two corrections to what this section used to claim about that
-   classifier. Its output is *not* "a continuous score feeding fusion
-   weights": `signal.score` is referenced nowhere but a log line
-   (`agent.py:310`), and every consumer — fusion weights, the MMR re-rank, the
-   entropy threshold, `_next_attribute` — branches on `signal.label`. It is a
-   binary decision, same as this one. And it does not in fact share the
-   thin-margin problem in any way that produces errors: it scores 0.988 on
-   turn-1 intent. The *trained* route for it was also tried and rejected — #12.
-
-   Original analysis follows.
-
-   Reported from manual REPL use and
-   reproduced directly: `"never mind, give me white shoes"` was **not**
-   detected as an intent override — `EmbeddingOverrideDetector.is_override`
-   returns `False` (override centroid 0.6836 vs continuation centroid
-   0.7171, margin −0.034), so `disclosed`/`asked_attributes` are never
-   cleared and the stale earlier constraints keep biasing the pool for the
-   rest of the session (`agent.py:247`). Measured margins on hand-written
-   probes around it:
-
-   ```
-   never mind, give me white shoes            ovr 0.6836  cont 0.7171  -> MISS
-   scratch that, white shoes                  ovr 0.6521  cont 0.6555  -> MISS
-   never mind what I said, give me white shoes ovr 0.7122 cont 0.6989  -> hit
-   actually, give me white shoes instead      ovr 0.7537  cont 0.6834  -> hit
-   I changed my mind, white shoes please      ovr 0.7767  cont 0.6682  -> hit
-   ```
-
-   Root cause is the *centroid*, not the prototypes: every entry in
-   `PROTOTYPE_OVERRIDE` is a long two-clause sentence that explicitly names
-   the discarded prior statement ("what I said before", "my earlier
-   preference"), so the mean vector encodes that whole sentence *shape*.
-   A terse pivot is dominated by its imperative-request half
-   ("give me white shoes"), which sits closer to the continuation
-   centroid. Mean-pooling also throws away the fact that a single
-   prototype matches strongly. Decision margins are ~0.03 in a space where
-   both centroids sit at ~0.65–0.80 similarity to almost anything — the
-   boundary is inside the noise floor, which is the same fragility already
-   documented for the buying/browsing deadzone experiment
-   (`classifier.py:322`).
-
-   Ordered by cost, before jumping straight to fine-tuning:
-   - **Nearest-prototype (max) instead of centroid** — one-line change,
-     no training. On the 8-example hand-written probe above it got 8/8
-     where the centroid got 6/8, including both terse pivots. *This is an
-     8-example hand-picked probe, not a measurement* — it has to be run
-     through `scripts/eval_classifier.py` and the full 200-sample set
-     before being believed, and it will likely raise false positives
-     (max-similarity is less robust to one badly-placed prototype).
-   - **Add terse-pivot prototypes** ("never mind, X", "scratch that, X",
-     "forget it, X") — also free, but treats the symptom; the shape
-     mismatch will recur for whatever phrasing the hidden simulator uses.
-   - **Train a real classifier** (logistic regression / small MLP head on
-     the frozen bge-small embeddings — not fine-tuning the encoder, which
-     `TODO.md`'s out-of-scope list arguably bars and which needs far more
-     data). A learned boundary can weight the discard-cue dimensions
-     instead of averaging them away with the request half of the sentence.
-     Blocker: **there is no labeled override data yet.** The label source
-     would be the evaluator's own reply generator — `customer_reply()` and
-     `initial_message()` in `evaluator/local_evaluator.py` already produce
-     override turns for `intent_override` samples with known ground truth,
-     so a labeled set can be harvested from the 200 public samples the same
-     way `scripts/eval_classifier.py` already reconstructs turns. Caveat
-     that applies to any of these: training on the local simulator's
-     vocabulary risks overfitting to it, which is exactly the failure the
-     zero-shot design was chosen to avoid (`classifier.py:6`) — hold out
-     the hand-written probes above as an out-of-distribution check.
-
-   The same argument applies to `EmbeddingIntentClassifier` (buying vs
-   browsing), which shares the mechanism and the thin-margin problem, but
-   the override detector is the higher-value target: a missed override is a
-   whole-session failure, a wrong buying/browsing label only shifts fusion
-   weights.
-
-8. **LLM-extracted catalog attributes (offline, one-time).** Designed and
-   costed, nothing built — full working notes in `NEXT_STEPS.md`. Replaces
-   `AttributeIndex`'s first-vocab-hit extraction with a one-time
-   `claude-haiku-4-5` Batch API pass over the 50k catalog (~$5–12, ~9.4M
-   input tokens), emitting a static closed-vocabulary JSON sidecar shipped
-   as a local asset so the agent still needs no network at scoring time.
-   Motivation: thin coverage (78.1/58.6/21% material/color/price), the
-   16.3%/37.0% disagreement with the true target from #1, and the four
-   attributes (`style`, `size`, `use_case`, `feature`) that have no
-   extractor at all. Caveat recorded there: this fixes only the catalog
-   half of the two-extractor disagreement.
-
-9. ~~**`FALLBACK_ATTRIBUTE_ORDER` asks the three least-answerable
-   attributes first.**~~ **Fixed — the single largest remaining MTTC win.**
-   The order is now sorted by *answerability*: share of the 200 public
-   samples where the customer can still answer a question about each
-   attribute after turn 1, derived from the evaluator's own reply policy (a
-   constraint is disclosed only when `classify_constraint()` buckets it as
-   the asked attribute):
-
-   ```
-   feature   0.960      style     0.085
-   material  0.725      size      0.045
-   color     0.255      use_case  0.020
-   ```
-
-   The old order (`style, size, use_case, feature, budget`) made the agent
-   ask the three *rarest* buckets (8.5%/4.5%/2.0%) before the one answerable
-   in 96% of sessions, once the entropy picker ran out of material/color.
-   Now `feature, style, size, use_case, budget`.
-
-   Full 200-sample A/B, both legs run on this HEAD:
-
-   ```
-                 HitRate    MRR      MTTC    Technical
-   before         0.7400   0.3949   5.6050    0.5964
-   after          0.7450   0.3888   5.0900    0.6073   (+0.0109)
-   ```
-
-   Per-sample: **39 samples reach the target sooner, 5 later**, 156
-   unchanged; 3 new hits against 2 lost. The modal delta is **−3 turns on 24
-   samples**, which is exactly the predicted mechanism (skip style/size/
-   use_case, ask the one bucket the customer can answer). So the win is
-   broad, not a handful of lucky samples.
-
-   Two things worth keeping on the record. **MRR moved the wrong way**
-   (−0.0061): the score's MRR uses the rank at the *first* hit, not the best
-   rank ever, so converting a late-and-well-ranked hit into an early-and-
-   worse-ranked one costs MRR while paying more in Efficiency. That trade is
-   inherent to the scoring and it nets strongly positive here — but it means
-   MTTC work will keep showing a small MRR drag, and a future change should
-   not be judged on MRR alone. **The 96% is partly an artifact**: `feature`
-   is `classify_constraint()`'s catch-all `return`, the bucket every
-   unmatched value falls into, so this may be a local-simulator quirk that
-   doesn't hold for the hidden grader — the same shape as the `budget`
-   finding in "Progress" above. `budget` stays last-resort rather than
-   dropped for the same reason.
-
-10. **Catalog attribute extraction was substring-matched, not word-boundary
-    matched — fixed, and it is a real bug whose fix currently *costs* 0.005.**
-    Found while building co-occurrence statistics (#11): the strongest
-    "signal" in the catalog was `P(material=lace | category=Necklaces
-    Pendant Necklaces) = 0.867`, which is not a fact about jewelry — it is
-    "neck**lace**" containing "lace". `_extract_material`/`_extract_color`
-    tested `word in text` with no boundaries, while both the evaluator
-    (`MATERIAL_RE`/`COLOR_RE`) and this repo's own customer-side
-    `extract_disclosed_value` have always used `\b`. Only the catalog side
-    was loose. Measured over the 50k catalog:
-
-    ```
-    color:    21.6% of products mislabeled (10,824), of which 9,312 are a
-              value invented where no color word occurs at all
-              ("red" in embroidered, "tan" in titanium/instant)
-    material:  4.7% mislabeled (2,344), dominated by lace <- necklace
-    coverage: color 58.6% -> 39.9%, material 73.7% -> 70.9%
-    ```
-
-    **This is the root cause of the previously-unexplained disagreement in
-    open problem #1** (16.3% material / 37.0% color conflict with the true
-    target), which had been worked around by weakening the hard filter to
-    `_boost_by_disclosed`. Fixed in `attributes.py` (`_vocab_matcher`, one
-    word-boundary alternation, longest-first, re-ranked by vocab order to
-    preserve the original selection rule).
-    **Honest result: the fix measures -0.0054 on the full public set**
-    (HitRate 0.755→0.740, MRR 0.384→0.390, MTTC 5.600→5.585,
-    TechnicalScore 0.6008→0.5954), reproduced both with and without the LM
-    work in #11. Best current understanding of why: the buggy extractor
-    assigned a color to 58.6% of the catalog instead of 39.9%, and
-    `_boost_by_disclosed` penalizes a *known* mismatch by −1 while ignoring
-    unknowns, so the wrong labels gave the resort far more (noisy)
-    separation to work with. Correct-but-sparser labels leave more
-    candidates neutral. The indicated next step is therefore **not** to
-    revert the bug but to retune the boost/penalty weights against the
-    corrected coverage — the current ±1/0 scheme was tuned when 58.6% of
-    color labels existed and a fifth of them were fictional. Note the
-    HitRate delta is 3 samples out of 200; treat it as directional.
-
-11. **Co-occurrence and LLM-perplexity attribute inference.** Two attempts at
-    the same goal — infer an attribute the customer has not stated — after
-    the profile-based route in #5 measured dead.
-    - **Item-attribute co-occurrence** (`scripts/cooccurrence.py`): counts
-      `P(color | category)`, `P(color | material)` etc. over the catalog.
-      Runnable as a diagnostic (`uv run python3 scripts/cooccurrence.py`); it
-      lives in `scripts/` rather than `starter/` precisely because no agent
-      code path reaches it, and `starter/` ships verbatim into the bundle.
-      The signal is enormous and real once #10 is fixed
-      (`P(material=stainless steel | category=Watches Wrist Watches)` = 0.483
-      vs 0.023 marginal, +79σ; `P(material=mesh | Running Road Running)` =
-      0.425 vs 0.032). **Built but not wired into the agent.** Note clearly:
-      this is *item* co-occurrence, not user co-occurrence — the shipped data
-      has no user-item interactions at all (catalog fields are
-      `parent_asin, title, features, description, price, categories, details,
-      average_rating, rating_number, store`; `average_rating` is a per-item
-      aggregate). "Users who bought X also bought Y" is not computable here.
-    - **Local masked-LM belief with an entropy gate**
-      (`starter/lm_confidence.py`, wired into `Agent._infer_attributes`):
-      distilbert-base-uncased (67M, ~255MB, cached in `model/` beside
-      bge-small) scores the closed `MATERIALS`/`COLORS` vocabularies in a
-      `[MASK]`ed template and returns a normalized-entropy confidence.
-      A local model is required because the hosted Claude Messages API
-      returns no token logprobs, and because `docs/submission_rules.md`
-      § Model Policy warns network access may be disabled for official
-      scoring; bge-small itself cannot do it (its published weights carry no
-      LM head — 200 tensors, no `cls.predictions.*`).
-
-      **The entropy gate works — this is the solid finding**
-      (`scripts/eval_lm_confidence.py`, predicting the true target's
-      extracted material from the turn-1 message):
-
-      ```
-      material   top-1 0.483 vs 0.322 guess-the-mode baseline   (+0.161)
-        H < 0.60      n= 61   accuracy 0.787
-        H 0.60-0.75   n=105   accuracy 0.371
-        H 0.75-0.85   n= 14   accuracy 0.000
-      ```
-
-      Monotonic and steep, so `MAX_CONFIDENT_ENTROPY = 0.60` is calibrated
-      rather than guessed. **Color is deliberately excluded**: top-1 0.189
-      against a 0.432 always-"black" baseline — worse than doing nothing —
-      and its gate ran *backwards* (confident 0.172 vs unsure 0.250), while
-      collapsing onto a single attractor value ("pink" for 14 of 37
-      targets). Template phrasing mattered more than expected: three colour
-      templates scored 0/3 on probes whose answer was stated in the text and
-      predicted "purple" for every input.
-
-      **But the end-to-end payoff is ~noise: +0.0010 TechnicalScore**
-      (MRR +0.0045, HitRate flat, MTTC 0.02 worse), reproduced twice —
-      0.6008→0.6018 on the original extractor and 0.5954→0.5964 on the
-      fixed one. Why the calibrated predictor buys so little: it fires only
-      on material; the customer already discloses material in 72.5% of
-      sessions, so the inference mostly duplicates information that arrives
-      anyway; and it must be boost-only (agreement lifts, disagreement is
-      ignored) because #5 measured that any mismatch penalty sinks a
-      candidate below every neutral one. Cost: **246 ms per inference**
-      (~2.5 s per 10-turn session) and ~255MB of shipped asset.
-      Conclusion: the mechanism is validated, the application point is
-      low-leverage. If it is kept, the higher-leverage use is predicting
-      *which attribute the customer can answer* (see #9's answerability
-      marginals) rather than nudging the candidate resort.
-
-12. **Trained intent-classifier head: built, measured, rejected.** The
-    "train a real classifier" option floated in #7 was implemented for the
-    buying-vs-browsing classifier — a logistic-regression head on *frozen*
-    bge-small embeddings (`scripts/train_intent_head.py`). Note the encoder is
-    never touched: TODO.md 4.3 puts "training or full-parameter fine-tuning of
-    base foundational LLMs" out of scope, while "designing highly sensitive
-    intent-detection modules to split traffic into Buying and Browsing tracks"
-    is explicitly *in* scope, so a head over frozen embeddings is the only
-    version of this idea that is allowed at all.
-
-    **It is worse than the zero-shot centroid it would replace:**
-
-    ```
-    pool                        head    centroid
-    in-distribution 5-fold CV   0.984      0.778   <- memorization, ignore
-    train turn1 -> test accum   0.521      0.708   <- chance
-    out-of-distribution probes  0.812      1.000
-    ```
-
-    The in-distribution number is the trap: the simulator has exactly two
-    turn-1 templates (`"...A key requirement is: {c}."` vs `"...but I'm still
-    exploring."`), so 0.984 is the head learning `"still exploring"`. Three
-    checks confirm that reading. **A regularization sweep is flat at chance**
-    on the held-out surface form across C = 0.001 … 10 (0.537 / 0.521 / 0.519
-    / 0.521 / 0.523), so the transfer failure is the data, not a
-    hyperparameter. **OOD accuracy *rises* with C** (0.688 -> 0.812), i.e. the
-    more it overfits the templates the better it scores out of distribution —
-    the opposite of a generalization story, and a sign the 16-probe trend is
-    noise. And **the control settles it**: training on the 20 hand-written
-    `PROTOTYPE_*` utterances alone, with no simulator text at all, reaches OOD
-    1.000 while 640 labelled simulator turns drag it to 0.812.
-
-    So the labels are real but the *surface forms* are two templates, and
-    supervised training on them destroys exactly the zero-shot generalization
-    the prototype design was chosen for (`classifier.py:6`). **Do not ship a
-    head trained on local simulator text**, and do not read a high
-    in-distribution CV score as progress. The script is kept as a diagnostic
-    with saving opt-in (`--save`); re-run it only if the hidden set's phrasing
-    turns out more varied than the local templates, which is the one condition
-    that would change the answer.
-
-    The unsupervised alternative (the trimmed-prototype rule from #7) was then
-    tried as well, and also rejected — #13.
-
-13. **Trimmed-prototype rule does *not* transfer to the intent classifier.**
-    #7's fix for the override detector was swept for `EmbeddingIntentClassifier`
-    in the new `scripts/eval_intent.py`. Every variant is worse, and not
-    marginally:
-
-    ```
-    rule                    turn-1   accumulated   OOD probe
-    lexical (fallback)       1.000         0.773       1.000
-    centroid (current)       0.988         0.708       1.000   <- unchanged
-    top1-mean                0.781         0.608       0.938
-    top4-mean                0.769         0.588       0.938
-    top10-mean (= centroid)  0.831         0.704       0.938
-    ```
-
-    Why it transferred to one classifier and not the other: the override
-    prototypes had a specific *shape* pathology — all twelve are long
-    two-clause sentences that name the discarded prior statement, so the mean
-    encoded that sentence form and terse pivots fell outside it. The
-    buying/browsing prototypes have no such common form; they are varied
-    single utterances whose mean direction *is* the signal, so trimming to the
-    top-k throws away the averaging that makes the centroid robust. **The
-    lesson is that "centroids are fragile" is not a general truth about this
-    codebase's classifiers — it was a fact about one prototype set.** Check the
-    prototype set's shape before assuming the fix generalizes.
-
-    **There is also no headroom to chase here.** The centroid is at 0.988 on
-    turn-1, its only two errors being buying sessions whose hard constraint is
-    contentless ("A key requirement is: Imported."). And per #4, the thing the
-    label feeds — dual-track routing — was itself measured net flat on the
-    full set (0.600 -> 0.601). A perfect intent label is worth approximately
-    nothing; do not spend more on this classifier.
-
-    Two measurement caveats worth carrying forward, both instances of the #12
-    trap. **The lexical fallback's 1.000 on turn-1 is template memorization**:
-    `\bkey\s+requirement\b` and `\bstill\s+(?:exploring|...)\b` in
-    `BUYING_PHRASES`/`BROWSING_PHRASES` match the simulator's two templates
-    literally, so that number means nothing, exactly like #12's 0.984. **And
-    the OOD probe pool is partly circular** — the lexical rule scores 1.000
-    there by a degenerate path (every browsing probe registers 0/0 evidence
-    and falls through to the browsing tie-break, while every buying probe hits
-    attribute vocabulary), which is true because the probes were hand-written
-    to have exactly that property. The probes can falsify a rule but should
-    not be used to rank two rules that both pass.
-
-    The `accumulated` column is reported for shape only and is **not** an
-    accuracy: `scenario_type` is not valid ground truth once clarifying
-    answers land, because the classifier is deliberately built to drift
-    buying-ward as concrete attributes accumulate (`classifier.py:14`).
-
-14. **Component ablation: the dense leg is net-negative locally, and we
-    shipped it anyway.** Each embedding-dependent component was disabled
-    independently against the full 200-sample public set (scratch script;
-    reproduce by nulling `agent.dense` / `.intent_classifier` /
-    `.override_detector` / `.lm_scorer` after `Agent()` and calling
-    `evaluate()`):
-
-    ```
-    configuration            HitRate     MRR     MTTC   Technical      delta
-    as shipped                0.7450  0.3876    5.090     0.6070          --
-    - masked LM               0.7450  0.3841    5.085     0.6060     -0.0010
-    - both classifiers        0.7400  0.3728    5.070     0.6004     -0.0065
-    - dense retrieval         0.7450  0.4328    5.035     0.6216     +0.0147
-    - dense - masked LM       0.7450  0.4351    5.035     0.6223     +0.0154
-    - everything (offline)    0.7450  0.4289    5.025     0.6207     +0.0137
-    ```
-
-    **HitRate is identical to four decimals with and without dense.** The
-    dense leg finds nothing BM25 misses; its contribution to the fusion only
-    demotes correct items BM25 already ranked well (MRR 0.3876 -> 0.4328).
-    This is 20x the +-0.0005 noise floor, so it is not a sampling artifact.
-
-    **Do not act on this without reading the confound.** The local simulator
-    builds customer messages out of the target's own catalog fields:
-    **359 of 400 turn-1 hard constraints (89.7%) are verbatim substrings of
-    the target product's own text**, and the 41 that aren't are only
-    non-verbatim because `intent_card()` prefixes them with `"color: "`. So
-    effectively every local query is an exact-match query -- the best case
-    for BM25 and the worst case for the paraphrase robustness the dense leg
-    exists to provide (#4). If the hidden grader phrases customers the same
-    way, dropping dense is worth +0.015; if it paraphrases at all, dropping
-    it removes the only defense. The downside is asymmetric, so dense stays.
-    The measured-but-unshipped alternative is recorded here so a later
-    session doesn't rediscover it and assume it's free.
-
-    The intermediate option nobody has tried yet: **retune the RRF fusion
-    weights** rather than removing the leg. The current 2.0/1.0 and 1.25/1.5
-    were tuned when nobody had checked whether dense contributes at all;
-    pushing both tracks further BM25-ward should capture most of the +0.0143
-    while keeping paraphrase insurance.
-
-15. **The offline degrade is silent, and was never verified until now.**
-    With a cold HF cache and no network, `load_embedding_model()` raises
-    `OSError: We couldn't connect to 'https://huggingface.co'`, and
-    `Agent.__init__`'s degrade-don't-crash branches take dense retrieval,
-    *both* embedding classifiers and the masked LM dark at once -- while the
-    agent still starts and still returns 10 recommendations. `model/` (385MB)
-    and `data/dense_index/` (74MB) are both gitignored, and the bge-small
-    weight blob is 128MB, over GitHub's 100MB per-file limit, so they cannot
-    simply be committed. `docs/submission_rules.md` warns network access may
-    be disabled for official scoring. Two guards now ship:
-    `scripts/fetch_assets.py` (the only networked step in the project) and
-    `scripts/preflight.py --strict`, which loads the agent under
-    `HF_HUB_OFFLINE=1` and exits non-zero if any required component is dark.
-    **Run preflight before any scored run.**
-
-16. **Fusion-weight sweep: the buying curve is strictly monotone, and there is
-    a usable middle at ratio 0.25.** #14's open question was whether retuning
-    the RRF weights could capture the dense-ablation gain without dropping the
-    leg. Swept with `scripts/sweep_fusion_weights.py` (200 samples per point;
-    only the dense:bm25 *ratio* matters, since weighted RRF is scale-invariant
-    per leg, so bm25 is pinned to 1.0 and dense is the ratio):
-
-    ```
-    buying track          HitRate     MRR     MTTC   Technical   vs shipped
-      ratio 0.00           0.7500  0.4372    5.020     0.6258      +0.0188
-      ratio 0.25           0.7500  0.4096    4.985     0.6182      +0.0112
-      ratio 0.50           0.7450  0.3876    5.090     0.6070   <- shipped
-      ratio 0.75           0.7400  0.3727    5.125     0.5993      -0.0077
-      ratio 1.00           0.7200  0.3615    5.225     0.5839      -0.0230
-      ratio 1.25           0.6900  0.3494    5.505     0.5597      -0.0473
-      ratio 1.50           0.6650  0.3388    5.720     0.5397      -0.0672
-    ```
-
-    The harness reproduces the shipped 0.6070 exactly at ratio 0.50, so the
-    other points are comparable.
-
-    Three findings. **There is no interior optimum** — the curve decreases
-    monotonically across the whole swept range and the decline accelerates, so
-    the hoped-for flat region near the shipped value does not exist; 0.50 is
-    already well down the slope. **HitRate falls too**, 0.750 -> 0.665, not just
-    MRR: at high dense weight the dense leg does not merely reorder, it
-    displaces correct BM25 results out of the top 10 entirely. That is a
-    stronger claim than #14's ablation made. **But halving the weight to 0.25
-    captures +0.0112 of the +0.0188 available from full removal** — roughly 60%
-    of the gain while keeping a real dense leg as paraphrase insurance. That is
-    the compromise #14 predicted; it just sits lower than anyone guessed.
-
-    Not yet decided whether to ship 0.25. The #14 confound still applies in
-    full: the local set is a near-pure exact-match benchmark (89.7% of hard
-    constraints are verbatim substrings of the target's own text), so it
-    systematically under-prices the dense leg.
-
-    **Browsing track: measured flat. Do not tune it.**
-
-    ```
-    browsing track        Technical   overall hits   browsing-scenario hits
-      ratio 0.00             0.6036        148/200            66/80
-      ratio 0.25             0.6011        147/200            65/80
-      ratio 0.50             0.6054        149/200            65/80
-      ratio 0.75             0.6063        149/200            65/80
-      ratio 1.00             0.6110        150/200            65/80
-      ratio 1.25             0.6068        149/200            65/80
-      ratio 1.50             0.6004        147/200            63/80
-      (ships at 1.20 -> 0.6070)
-    ```
-
-    The apparent +0.0040 peak at ratio 1.00 is **one session** — 150/200 against
-    149/200 — and the browsing-scenario column moves by at most a single session
-    across the entire sweep. There is no optimum here; the measurement cannot
-    distinguish any setting from any other in 0.0–1.5. Leave browsing at 1.20
-    and do not re-run this.
-
-    **Two methodological notes, both of which cost a wrong conclusion first.**
-    A +0.0040 delta on 200 samples *looks* like it clears a ±0.0025 noise
-    estimate and does not: convert rates to absolute session counts before
-    believing any small delta, because 0.7500 vs 0.7450 is one session. And the
-    two tracks are **not separable** — varying the *browsing* weights visibly
-    moved *buying-scenario* metrics (0.675 -> 0.700), because `scenario_type` is
-    the sample's ground-truth label while the weights key off the *classifier's*
-    per-turn label, and the classifier deliberately drifts buying-ward as
-    attributes accumulate (`classifier.py:14`). Per-track sweeps therefore
-    measure overlapping, not disjoint, populations.
-
-    **Sharper read of where the buying gain comes from.** Buying-scenario hit
-    rate is 0.688 at both ratio 0.00 and the shipped 0.50 — removing dense finds
-    *no additional targets*. The whole gain is MRR (0.4372 vs 0.3876) plus
-    intent_override hit rate (0.833 vs 0.800). That is #14's mechanism confirmed
-    at finer grain: the dense leg does not add recall on this benchmark, it
-    demotes items BM25 had already ranked well.
-
-17. **Query rewriting on intent override: measured −0.0580, reverted.** The
-    gap was real — `Agent.respond` clears `disclosed`/`profile_hint`/
-    `asked_attributes` on a detected pivot but never touches `first_message`
-    or `recent_messages`, so `_build_query`'s output is byte-for-byte
-    identical before and after the clear and the discarded preference keeps
-    feeding BM25. Spec § 4.2.II asks for "slot erasure *and rewriting*"; only
-    erasure existed. The obvious fix — restart the query from the pivot
-    message — is catastrophic:
-
-    ```
-                            HitRate     MRR     MTTC   Technical
-    ratio 0.25 only          0.7500  0.4096    4.985     0.6182
-    + override rewrite       0.6800  0.3668    5.490     0.5602   -0.0580
-      intent_override subset:  hit 0.800 -> 0.333,  MTTC 5.90 -> 9.27
-    ```
-
-    **Root cause, found by printing a sample instead of reading the
-    template's shape.** The category is stated *once*, in turn 1, and never
-    restated; the pivot message carries only the changed attribute:
-
-    ```
-    TURN 1 : "I'm looking for ['Clothing, Shoes & Jewelry', 'Men',
-              'Accessories', 'Belts']. Buckle closure"
-    PIVOT  : "Actually, ignore my earlier preference. What I need is: leather"
-    ```
-
-    Dropping `first_message` therefore throws away "Belts" and searches 50k
-    products for "leather". **This refutes a claim an earlier revision of
-    NEXT_STEPS §5 stated as established** — that the local override template
-    "carries the complete new constraint, so discarding the history loses
-    nothing locally by construction." It carries the changed *attribute*, not
-    the request.
-
-    Any selective-history scheme here must preserve the original framing (the
-    category) and drop only the preference clause. The aggressive version is
-    not merely suboptimal, it is structurally wrong for this task shape. Not
-    retried; the surgical version requires knowing which clause of turn 1 is
-    the preference, which on this simulator means parsing its template.
-
-18. **Turn-annealed slate diversity: measured null, not shipped.** The idea:
-    `DIVERSIFY_LAMBDA` is fixed at 0.5 and conditioned on intent but not on
-    the turn, which leaves the 10-turn cap unexploited — a diverse slate is
-    nearly free early (a miss costs one turn and buys information) and pure
-    downside late (no turn left to recover in). So anneal lambda upward as the
-    budget depletes. Two schedules, both against the shipped 0.6182:
-
-    ```
-                            HitRate     MRR     MTTC   Technical
-    fixed 0.5 (shipped)      0.7500  0.4096    4.985     0.6182
-    anneal 0.35 -> 0.90      0.7450  0.4052    4.980     0.6144   -0.0038
-    anneal 0.50 -> 0.90      0.7450  0.4087    4.995     0.6152   -0.0030
-    ```
-
-    Both are one session below on HitRate (150 -> 149) and MTTC does not move,
-    which was the entire point. The 0.50 -> 0.90 run is the informative one:
-    its **browsing metrics are byte-identical** to the fixed-lambda run (hit
-    0.825, MRR 0.470, MTTC 4.29), so the schedule changed nothing in the track
-    it governs, and the whole delta is a single `intent_override` session that
-    the classifier routed browsing-ward. No signal in either direction.
-
-    Worth noting *why* the first schedule was worse: `lambda_early = 0.35` made
-    turn 1 more diverse than the previous fixed 0.5, and at turn 1 the query is
-    the raw customer message whose top hits are usually already right, so
-    hedging displaced good candidates. If anyone revisits this, the lesson is
-    that early-turn diversity is not free on this benchmark — but the honest
-    conclusion is that there is nothing here to revisit.
-
-19. **Query hygiene on non-answers: measured -0.0410, reverted. Contentless
-    customer text is still retrieval signal on this benchmark.** The gap was
-    real and is now quantified: the agent never observed whether its question
-    was answered, and `respond()` appended every reply to `recent_messages`,
-    which `_build_query` joins into the BM25 and dense query. Derived from the
-    evaluator's own reply policy, a session has a mean of **2.09** distinct
-    answerable attribute buckets left after turn 1 against an MTTC of ~5, so
-    roughly three asks in five come back empty
-    (`scripts/eval_dialogue_efficiency.py`).
-
-    `EmbeddingNonAnswerDetector` (classifier.py) detects those replies, reusing
-    the trimmed-prototype rule from #7. Offline quality:
-
-    ```
-    rule                  sim recall  sim FPR   probe recall  probe FPR
-    lexical floor              1.000    0.000          0.100      0.000
-    trimmed-prototype          1.000    0.168          1.000      0.000
-    ```
-
-    The lexical floor's perfect simulator score is #12/#13's trap again -- its
-    regex contains "don't have", which matches the template literally, and
-    probe recall of 0.100 confirms it learned nothing transferable.
-
-    **Full 200-sample A/B, both legs on one HEAD:**
-
-    ```
-                          HitRate     MRR     MTTC   Technical
-    identity               0.7450  0.4089   4.9900     0.6154
-    + skip non-answers     0.6850  0.3970   5.3600     0.5744   -0.0410
-    ```
-
-    HitRate falls 149 -> 137 sessions. **The prediction that was wrong, and
-    why it matters:** all 69 of the detector's false positives are the
-    simulator's near-contentless constraint template ("For that, what matters
-    is: Imported; Pull On closure."), and this was written up mid-session as
-    evidence that the FPR column was measuring the wrong thing -- that
-    `Imported` is catalog boilerplate with no retrieval value, so dropping it
-    was plausibly a gain. The A/B says the opposite, for a reason already in
-    this file: per #14, **89.7% of customer text is a verbatim substring of the
-    target's own catalog record**, so `Pull On closure` is not boilerplate here,
-    it is an exact-match key to the target. Deleting it deletes exactly what
-    BM25 wins with.
-
-    Generalize past the experiment: **no form of query pruning is safe on this
-    benchmark**, and improving the classifier cannot fix it, because the text
-    being pruned is contentless in meaning and load-bearing in retrieval. Same
-    shape as #17 -- an intervention that is semantically sensible and
-    structurally wrong for this task. The non-answer *observation* is kept and
-    feeds `SessionBelief`; only the query surgery is reverted.
-
-20. **Phrase-match retrieval leg: +0.0272, and the first change here that adds
-    recall.** A third RRF leg alongside bag-of-words BM25 and dense, matching
-    exact multi-word spans via FTS5 phrase queries
-    (`BM25Index.phrase_search`): n-grams of the query longest-first, weighted
-    `len(gram)**2`, discarding any span matching more than
-    `PHRASE_MAX_MATCHES = 150` products as non-discriminative.
-
-    The reasoning was stated *before* the sweep ran, and it is the reusable
-    part. Every retrieval-side change that has lost score on this benchmark
-    lost the same way — by adding semantic tolerance to a set where 89.7% of
-    customer text is a verbatim substring of the target's own catalog record
-    (#14 dense weight, #17 override rewrite, #19 query pruning). `search()`
-    ORs the query's unique tokens, so `"Buckle closure"` is two independent
-    terms against 50k products; the exact span is both present and rare. A
-    phrase leg runs *with* the confound instead of against it.
-
-    ```
-    weight   HitRate      hits      MRR     MTTC  Technical     delta
-      0.00    0.7500  150/200   0.4096    4.985     0.6182        --
-      0.50    0.7600  152/200   0.4278    4.945     0.6294   +0.0112
-      1.00    0.7700  154/200   0.4184    4.870     0.6331   +0.0149
-      2.00    0.7900  158/200   0.4176    4.745     0.6454   +0.0272   <- shipped
-      4.00    0.7850  157/200   0.4254    4.825     0.6436   +0.0254
-    ```
-
-    Identity reproduced 0.6182 exactly, so the points are comparable. Three
-    things worth carrying forward. **There is a real interior optimum** —
-    unlike #16's monotone fusion curve, this one turns over, though 2.00 and
-    4.00 are one session apart (158 vs 157) so the top is flat and the choice
-    between them is arbitrary; 2.00 is the lower-variance pick and the range
-    does not need extending. **The gain is +8 sessions of HitRate**, i.e. the
-    leg finds targets nothing else found — directly unlike the dense leg,
-    whose HitRate is identical to four decimals whether enabled or not (#14).
-    **MRR moves against it** (0.4278 at weight 0.5 down to 0.4176 at 2.0)
-    while MTTC improves, which is #9's trade again: converting a late hit into
-    an earlier, worse-ranked one costs MRR and pays more in Efficiency.
-
-    Supporting detail that is easy to get wrong: `phrase_tokens()` in
-    `text_utils.py` **keeps stopwords**, unlike `terms()`. With `terms()`,
-    `"pull on closure"` collapses to `"pull closure"`, which matches no
-    product — the stopword is load-bearing in a phrase query and noise in a
-    bag-of-words one.
-
-
-21. **BM25Index was single-thread-only, which silently disabled two of three
-    retrieval legs under any server front-end.** `sqlite3.connect(":memory:")`
-    defaults to `check_same_thread=True`. The evaluator is single-threaded so
-    this never showed up in a score, but Streamlit caches one `Agent` and
-    serves turns from a worker-thread pool, so every `search()` and
-    `phrase_search()` raised
-
-        sqlite3.ProgrammingError: SQLite objects created in a thread can only
-        be used in that same thread.
-
-    `_retrieve` catches per-leg exceptions and continues, so the agent kept
-    returning ten products **from the dense leg alone** with no error surfaced
-    to the caller -- the same silent-degrade class as #15, and it hid the
-    project's largest win (#20's phrase leg) completely.
-
-    Fixed with `check_same_thread=False` plus a `threading.Lock` held across
-    every query, including the PRF expansion path, which issues one COUNT per
-    uncached term on the same connection. The lock makes the invariant
-    explicit rather than relying on sqlite3's build-time threadsafety flag;
-    contention is irrelevant since queries are sub-millisecond and the
-    evaluator never contends. No behaviour change for the evaluator.
-
-22. **Intent prototypes were missing the "something for <occasion>" shape, and
-    the fix costs 2 of 160 on turn-1 accuracy.** Found by using the demo, not
-    by a sweep: "i want something for the summer" classified **buying** at
-    score **+0.0058** -- a coin flip, in the thin-margin regime #7 and #13
-    already describe. Naming an occasion reads as stating a requirement, while
-    the sentence states no attribute at all. The lexical fallback got it right,
-    which is what flagged it as a coverage gap rather than noise.
-
-    Four browsing prototypes of that shape were added. **Do not "fix" this
-    with a deadzone** -- one was already tried and measured to swallow real
-    signal broadly (buying turn-3 accuracy 96% -> 59%, see the note in
-    `classifier.py`), because the zero-crossing region is genuinely populated
-    by weakly-buying cases rather than only by noise.
-
-    Measured with `scripts/eval_intent.py` before shipping:
-
-    ```
-                        turn-1   accumulated   OOD probe
-    centroid (before)    0.988         0.708       1.000
-    centroid (after)     0.975         0.679       1.000
-
-    i want something for the summer   +0.0058 buying  ->  -0.0495 browsing
-    I need a leather belt for work    +0.0891 buying  ->  +0.0716 buying
-    ```
-
-    So this is a **deliberate, measured regression**: 2 extra turn-1 errors out
-    of 160. Both are buying sessions whose stated hard constraint is
-    contentless -- "A key requirement is: Imported." and "...: fabric." --
-    which #13 already identified as the centroid's only failures, and where
-    the browsing label is arguably not wrong. Accepted because #13 also
-    measured that the label is worth approximately nothing to TechnicalScore
-    (dual-track routing was net flat, 0.600 -> 0.601), while a visibly wrong
-    route in a live demo costs credibility with a judge. **This trade is only
-    valid while that remains true** -- if the label ever starts driving
-    something score-bearing, re-measure before keeping these prototypes.
-
-23. **Shown-item exclusion: +0.0837, the largest win in the project by a
-    factor of three.** `EXCLUDE_SHOWN = True` (`agent.py`). The agent kept
-    re-offering products it had already recommended on earlier turns. The
-    evaluator ends a session the moment the target enters the top 10, so being
-    asked for another turn is *proof* that every item shown so far is wrong.
-    Re-offering them spends slots on answers already known to be dead.
-
-    Measured on the full public set, all legs on one HEAD
-    (`scripts/ab_phrase_exclude.py`):
-
-    ```
-                             HitRate      hits      MRR     MTTC  Technical
-    phrase 0.0 (identity)     0.7550  151/200   0.3989    4.940     0.6184
-    phrase 2.0                0.7800  156/200   0.4103    4.825     0.6366
-    phrase 2.0 + exclude      0.8550  171/200   0.4622    4.205     0.7020
-    ```
-
-    Identity reproduced the shipped 0.6184, so the legs are comparable.
-
-    Two things make this worth reading twice. **It is the only change here that
-    moves all three score terms the same way at once** — every prior win traded
-    MRR against MTTC (#9, #20), because converting a late hit into an earlier,
-    worse-ranked one costs MRR and pays in Efficiency. This one improves rank
-    *and* speed, because the excluded slots are refilled from deeper in the
-    same pool. And **it required no new signal at all** — it is a rule read off
-    the evaluator's own stopping condition. The project spent weeks on
-    retrieval mechanisms for +0.01 each while a re-read of `evaluate()` was
-    worth +0.08. When stuck, read the scorer again before building anything.
-
-    Caveat for the hidden grader: the win assumes the grader also ends the
-    session on first hit. That is stated in the rules and implemented in
-    `evaluate()`, but it is a stronger dependency on scorer semantics than
-    anything else shipped here.
-
-24. **Miss taxonomy at 0.7020: the remaining failures are buying-side recall,
-    not ranking.** **Superseded in part by #27 — read that first.** The probes
-    below use each session's *actual* final query, which is starved of
-    constraints; probed with everything the customer could disclose, every one
-    of the 200 targets is reachable and none is missing from the catalog's
-    reach. "Recall" here means the live query never carried the signal, not
-    that the target cannot be found. `scripts/eval_failures.py` (new) replays the evaluator loop,
-    then probes each retrieval leg to depth 2000 for every miss and classifies
-    the cause. Run it before proposing any further retrieval work.
-
-    27 misses observed (the run died at sample 187 of 200 under memory
-    pressure from concurrent evals, so treat these as a near-complete census,
-    not an exact one — and note it never wrote its JSON):
-
-    ```
-    by reason                      by scenario
-      lost-in-fusion    17           buying           15
-      ranked-11+         6           browsing          6
-      unreachable        3           intent_override   3
-      excluded-as-shown  1           boundary          3
-    ```
-
-    **`lost-in-fusion` is a mislabel, and reading it as a fusion bug wastes a
-    day.** It means "the fused pool did not contain the target", and the
-    obvious inference is that fusion discarded something a leg had found. It
-    did not: 16 of those 17 have *no* leg ranking the target better than ~198,
-    against a candidate pool of a few dozen. The target was never in reach.
-    Only `public_0018` (dense rank 25) is arguable. The label describes the
-    probe's depth, not a defect.
-
-    The genuinely anomalous session is filed under a boring reason.
-    `public_0111`, classified `ranked-11+`:
-
-    ```
-    legs={'bm25': 5, 'phrase': None, 'dense': 312}   fused=80
-    ```
-
-    BM25 ranks the target 5th and the final list puts it 80th. One session, so
-    it is worth ten minutes of reading and not a research direction.
-
-    **What the census actually says**: 15 of 27 misses are `buying`, and the
-    phrase leg reaches the target in only 2 of 27. Both follow from the
-    diagnostic already in the plan file — a buying session's turn-1 signal is
-    usually a single very common material word ("cotton" -> 9,414 products), so
-    there is no multi-word span for the phrase leg to match and no fusion
-    weighting that manufactures signal the query never carried. Further
-    retrieval *tuning* cannot fix these; only more information can.
-
-25. **Phrase-leg query hygiene: measured, +0.0280 — but the dumb control
-    matches it, so the win is a cost win, not a score win.** Two changes aimed
-    at the phrase leg's span budget, both still behind flags defaulting to the
-    identity value. The A/B has now run; the table is at the end of this entry.
-    **Read the control row before enabling either.**
-
-    The budget (`MAX_PHRASE_QUERIES = 24`) is spent longest-first, assuming a
-    longer span is a more specific one. True of catalog copy, false of
-    conversation: the longest spans of a 10-turn query are sentences of filler
-    that match nothing. Measured on `public_0008`'s final query — 135 spans
-    built, and all 24 that fit the budget matched zero products, while "bras
-    everyday bras" (verbatim in the target) sat unqueried at 3-gram depth.
-
-    - `PHRASE_CLAUSE_SPANS` (`retrieval.py`): spans may not cross a clause
-      boundary and may not begin or end on a stopword.
-    - `PHRASE_QUERY_SKIP_NON_ANSWERS` (`agent.py`): drop contentless replies
-      from the **phrase leg's query only**, via the existing
-      `EmbeddingNonAnswerDetector`. `SessionState.informative_messages` keeps
-      the filtered window in parallel with `recent_messages`.
-
-    Static effect on `public_0008`, before any scoring:
-
-    ```
-                                        spans   fit budget   reaches the target span?
-    current (longest-first, whole query)  135        24          no
-    + clause + edge rules                  38        24          yes
-    filtered query, current                80        24          no
-    filtered + clause + edge                11        11          yes
-    ```
-
-    **Why this is not a repeat of #19** (query hygiene, -0.0410). That loss had
-    a specific mechanism: 89.7% of customer text is a verbatim substring of the
-    target's catalog record (#14), so text the detector called contentless was
-    still an exact-match key, and deleting it deleted what BM25 wins with. The
-    BM25 and dense queries are untouched here. The phrase leg has the opposite
-    cost structure — it is budget-limited, and filler spans match nothing while
-    consuming lookups the informative spans needed. Same classifier, opposite
-    economics. That argument is a *prediction*, and #19 is the standing
-    reminder that predictions of this shape have been wrong before.
-
-    Deliberately **not** done: blacklisting the simulator's template strings
-    ("A key requirement is"). That scores well locally and transfers nothing —
-    #12 and #13 are two separate instances of exactly that trap. Clause
-    boundaries and stopword edges are properties of written language.
-
-    `scripts/ab_phrase_query.py` runs the five legs: identity, each fix alone,
-    both, and `MAX_PHRASE_QUERIES = 96` as a control. The control matters —
-    if simply raising the budget matches the fixes, the fixes have not earned
-    their complexity.
-
-    **Measured, full public set, all five legs on one HEAD.** Identity
-    reproduced the shipped 0.7020 exactly, so the legs are comparable:
-
-    ```
-    leg                     HitRate      hits      MRR     MTTC  Technical    delta
-    identity                 0.8550  171/200   0.4622    4.205     0.7020       --
-    filter only              0.8700  174/200   0.4826    4.090     0.7180   +0.0159
-    clause+edge only         0.8800  176/200   0.4946    3.915     0.7301   +0.0280
-    filter + clause+edge     0.8850  177/200   0.4981    3.900     0.7339   +0.0319
-    budget 96 (control)      0.8850  177/200   0.4998    3.995     0.7326   +0.0305
-    ```
-
-    **The prediction was right about the mechanism and wrong about the
-    remedy.** Span budget starvation is real and it was costing ~6 sessions:
-    every leg that relieves it gains, and the static `public_0008` count
-    predicted the direction correctly. But the *blunt* relief works just as
-    well — the control matches the best fix at the same 177/200 and a 0.0013
-    TechnicalScore difference, which is well inside this benchmark's
-    one-session resolution. By the rule stated when the control was designed,
-    the fixes did not beat it and have not earned their complexity **on
-    score**.
-
-    They do earn it on **cost**, which is the axis the rule did not name. The
-    control buys its gain by quadrupling `MAX_PHRASE_QUERIES` to 96, i.e. up
-    to four times the FTS5 phrase lookups per turn, every turn. The fixes reach
-    the same place at the original budget of 24 by *not building* the useless
-    spans in the first place (135 -> 38 on `public_0008`, and 11 with both).
-    Same score, roughly a quarter of the phrase-leg work. That is the honest
-    reason to prefer them, and it should be stated that way rather than as a
-    score claim.
-
-    **Of the two fixes, only `clause+edge` is established.** It is +0.0280 on
-    its own, five sessions above identity and comfortably outside the noise
-    floor. Adding the non-answer filter on top moves 176 -> 177, one session,
-    which this benchmark cannot resolve — #16's rule (convert rates to absolute
-    session counts before believing a small delta) says that is not evidence.
-    The filter is worth +0.0159 alone, so it does something; what is unmeasured
-    is whether it adds anything *given* clause+edge. Note the filter degrades
-    safely: with the detector dark, nothing is ever marked contentless, so
-    `informative_messages` equals `recent_messages` and the flag becomes a
-    no-op rather than a hazard.
-
-    **Do not enable either flag on a tree that also carries #26 without
-    re-measuring.** The edge rule at `retrieval.py` reads `STOPWORDS`
-    directly — a span may not begin or end on a stopword — and #26 adds ~24
-    request verbs and discourse markers to that same set. The two changes are
-    therefore not independent: #26 silently changes which spans the edge rule
-    admits, so the +0.0280 above was measured against a `STOPWORDS` that no
-    longer exists once #26 lands. Measure them together, with identity
-    re-established on that HEAD.
-
-26. **The catalog's root category destroyed the IDF of every category word,
-    and conversational filler inherited the ranking. Two user-reported demo
-    bugs, one root cause. Measured 2026-08-29: -0.0042, one session — flat.**
-
-    **Score first, since this entry was written before it had one.** Full
-    public set at HEAD (`5889828`) against the 0.7020 measured at `3ef2028`,
-    with every feature flag re-checked at its identity value and #26 the only
-    `starter/` diff between the two commits:
-
-    ```
-                  HitRate      hits      MRR     MTTC  Technical    delta
-    before (#25)   0.8550   171/200   0.4622    4.205     0.7020       --
-    HEAD (+#26)    0.8500   170/200   0.4567    4.210     0.6978   -0.0042
-    ```
-
-    One session of HitRate, and MTTC is unmoved. By this file's own rule —
-    convert rates to session counts before believing a small delta — that is
-    below the benchmark's resolution in either direction.
-
-    **The pre-registered risk did not materialize, and that is the finding.**
-    `_REQUEST_STOPWORDS` strips tokens from *every* query, which is the same
-    intervention shape that cost -0.0410 in #19, and the handoff flagged it as
-    such before the run. The distinction drawn at the time — this list holds
-    ways of *asking*, never things to ask about — was a prediction, and #19 is
-    the standing reminder that predictions of that shape have been wrong here.
-    This one held. Note what that does and does not license: it vindicates the
-    *closed-list* discipline, not query pruning generally, and the corpus-driven
-    generalization of the same list is still measured unsafe (see the end of
-    this entry).
-
-    Kept on the same reasoning as #22: it costs nothing measurable and fixes
-    two bugs a judge can reproduce in one sentence at the demo.
-
-    Original write-up follows. Reported from live use, not from a sweep:
-    "i want to buy shoes" returned t-shirts and baseball caps, and
-    "actually forget that, show me jewellery" (after a browsing turn) returned
-    no jewellery.
-
-    Both are the same mechanism. Every product hangs off one root category,
-    `"Clothing, Shoes & Jewelry"` (49,990 of 50,000), so the three words in it
-    sit at document frequency ~1.000 and BM25 scores them at ~0 IDF. Meanwhile
-    request verbs are *rare* in a product catalog, so they are high-IDF:
-
-    ```
-    shoes    df 1.000  (0.235 with the root dropped)     actually  df 0.0018
-    jewelry  df 1.000  (0.111 with the root dropped)     forget    df 0.0032
-    clothing df 1.000  (0.433 with the root dropped)     buy       df 0.0261
-                                                         show      df 0.0428
-    ```
-
-    `terms("i want to buy shoes")` is `{buy, shoes}`. "shoes" was worth
-    nothing, so the query was decided entirely by "buy" -- which matched the
-    store name "Buy Caps and Hats". The customer's only content word could not
-    outrank the verb they wrapped it in.
-
-    Three fixes, each independently justified:
-
-    - **`BM25Index._build` strips the universal root from the indexed
-      `categories` column** (`retrieval.py`). Detected, not hardcoded: the
-      value leading `categories` on >= `CATALOG_ROOT_MIN_SHARE` of the first
-      `CATALOG_ROOT_SAMPLE` products, decided from the first insert batch
-      while it is still in memory, so it costs no extra pass over the catalog.
-      A catalog with no universal root is left untouched.
-    - **Request verbs and discourse markers are stopwords** (`_REQUEST_STOPWORDS`
-      in `text_utils.py`). Note this is *not* the query pruning that measured
-      -0.041 in #19: that deleted contentful customer text, which on this
-      benchmark is 89.7% verbatim target copy. This list is ways of *asking*
-      ("buy", "show", "actually", "forget"), never things to ask about.
-    - **en-GB spellings are normalized to the catalog's en-US ones**
-      (`SPELLING_VARIANTS`, applied by `normalize_query()` in the agent's two
-      query builders so all four legs see the same string -- the dense leg
-      embeds raw text and never passes through `terms()`). "jewellery" is not
-      a rare term, it is a *wrong* one: it matches 146 products while
-      "jewelry" matches 50,000. "grey" is deliberately excluded -- it occurs
-      in 2,017 products against "gray"'s 751, so normalizing it would run
-      backwards.
-
-    **Intent, separately: `BUYING_PHRASES` had no purchase verb at all**, so
-    "i want to buy shoes" scored zero buying evidence and fell through to the
-    browsing tie-break. Added `buy|buying|purchase|place an order` plus three
-    `PROTOTYPE_BUYING` entries of that shape. `scripts/eval_intent.py`
-    turn-1 accuracy **0.975 -> 0.981** (one of #22's deliberate regressions
-    recovered), accumulated and OOD both unchanged.
-
-    **Override rewriting, narrowly.** #17 measured that restarting the query
-    from the pivot message costs 0.058, because the local simulator states the
-    category once in turn 1 and the pivot carries only the changed attribute.
-    That argument does not cover a pivot that names a category itself, which
-    is what a real user writes. `respond()` now drops `first_message` and
-    `recent_messages` on a detected override **only when the pivot names a
-    product category** (`BM25Index.names_category`). The vocabulary is built
-    from single-word category nodes with df >= 20, excluding material/colour
-    words and demographic nodes -- three exclusions that each earned their
-    place against the evaluator's own 30 override turns:
-
-    ```
-    rule                                    fires on
-    any category-path token                  6 of 30
-    single-word nodes only                   2 of 30   <- shipped
-    ```
-
-    Tokens pulled out of multi-word nodes are modifiers, not product types
-    ("Water Shoes" -> "water", "Hand Wash Only" -> "only"), and firing on them
-    is exactly how a category rewrite turns back into #17.
-
-    **The corpus-driven generalization of the stopword list was tried and is
-    unsafe. Do not build it.** The obvious objection to `_REQUEST_STOPWORDS`
-    is that it is hand-written, so the natural next step is to derive
-    relevance from the catalog instead: keep a query word only if it names or
-    describes a product, measured as its document frequency in `title` +
-    `categories` (where product vocabulary lives) rather than anywhere in the
-    record (where marketing copy and store names live). On hand-picked words
-    the separation looks clean:
-
-    ```
-                 df in title+cat            df in title+cat
-    buy                  0.0001      shoes           0.9998
-    purchase             0.0000      watch           0.0316
-    recommend            0.0000      dress           0.0765
-    ```
-
-    It collapses on real queries. Applied to all 200 turn-1 messages, scored
-    by how many of the words it deletes are present verbatim in the *target
-    product's own text*:
-
-    ```
-    threshold   words dropped   of those, in the target's text
-      0.0002              322             59  (18.3%)
-      0.0005              347             83  (23.9%)
-      0.0010              385            116  (30.1%)
-      0.0020              449            168  (37.4%)
-      0.0050              636            262  (41.2%)
-    ```
-
-    There is no usable setting. The threshold has to reach 0.005 to catch
-    "show" (0.0034), "my" (0.0045) and "hi" (0.0025) at all -- and by then it
-    is deleting `closure` (0.00206), `material` (0.00052) and `alloy`
-    (0.00092), i.e. two in five of the words it removes are exact-match keys
-    into the target. `closure` is the canonical case from #20: "Buckle
-    closure" is the span the phrase leg wins on, and it is *rarer* in titles
-    and categories than "show" is. A ratio rule (title+cat df over total df)
-    is worse still -- it scores `closure` at 0.005 and `show` at 0.080, i.e.
-    exactly inverted.
-
-    This is #19's finding reached from a different direction: on this catalog
-    "is this word conversational?" and "is this word rare in product titles?"
-    are different questions, and only the first one is the one being asked. A
-    closed list of ways to *ask* is checkable by reading it; a frequency
-    threshold is not, and here it is wrong 41% of the time on the words that
-    matter most.
-
-    **Verified end to end in the REPL, both reported bugs and both
-    directions of the buying/browsing switch the user asked for:**
-
-    ```
-    "i want to buy shoes"                     -> buying track, 10/10 shoes
-    "something for the summer"
-      + "actually forget that, show me jewellery"  -> jewellery, summer gone
-    "just browsing, not sure what i want"
-      + "actually i need a black leather belt"     -> browsing -> buying, belts
-      + "under $30"                                -> budget slot filled
-    "show me some dresses"
-      + "actually forget that, i want to buy a watch" -> browsing -> buying, watches
-    ```
-
-27. **Every target is reachable. #24's "recall problem" was an artifact of the
-    starved session query, and the attribute-boost fix it pointed at is
-    falsified.** New diagnostic: `scripts/eval_ceiling.py`. It hands the agent
-    *everything the customer could ever disclose* in one turn-1 message and
-    asks whether the target comes back. Read-only, one turn per sample rather
-    than ten, so it costs a fraction of a scored run.
-
-    The motivation is a property of the simulator worth stating on its own.
-    The customer's entire vocabulary for a whole session is
-
-        coarse_category(target) + hard_constraints[:2] + soft_preferences[2:4]
-
-    -- at most four constraint strings, all sliced out of the target's own
-    record by `intent_card()`. There is nothing else they can say, ever.
-
-    ```
-    oracle (all constraints, one turn, one slate)   173/200   0.8650
-    actual (10-turn dialogue)                       171/200   0.8550
-
-    of the 27 oracle misses, where is the target?
-      in some leg's top 10                12
-      11-50                               10
-      51-500                               5
-      not found at depth 2000              0
-    worst best-leg rank across all 200 samples:    192
-    ```
-
-    **No target is unreachable.** Given the full constraint set, some leg puts
-    every one of the 200 targets inside the top 192. So #24's headline --
-    "15 of 27 misses are buying, and in almost all of them no retrieval leg
-    finds the target at all" -- is true only of the query the agent actually
-    holds at the end of a live session, which is starved: `customer_reply()`
-    discloses a constraint only when `classify_constraint()` buckets it as the
-    attribute just asked, and at most two per turn. #24's inference from that
-    ("further retrieval tuning cannot fix these; only more information can")
-    should be read as being about *elicitation*, not about reach. Do not quote
-    it as evidence that the catalog or the retrieval legs are the limit.
-
-    **The oracle number is not a ceiling, and an earlier draft of this entry
-    wrongly called it one.** The oracle condition returns a single slate of
-    ten; a live session returns up to ten slates, and with `EXCLUDE_SHOWN` up
-    to 100 distinct products. It is not strictly more informative than the
-    dialogue -- the two differ on 34 samples, 17 in each direction, which is
-    the direct evidence that neither dominates. Use it to ask "is this target
-    findable at all", never "is this the most we could score".
-
-    **A real extractor defect, measured.** `AttributeIndex` stores one material
-    and one colour per product, chosen by vocab order from everything the text
-    matched, and `_boost_by_disclosed` compares that single value to the
-    customer's for equality. The evaluator picks its value from the same
-    product by a different rule, so the two disagree whenever a product lists
-    several. Over the 200 targets:
-
-    ```
-                                                     material   colour
-    agree -> +1                                         58.5%    12.5%
-    FALSE mismatch: value IS in the product -> -1        9.5%     3.0%
-    disagree, value outside the fields we read -> -1     6.5%     1.0%
-    customer never states it                            23.5%    80.0%
-    ```
-
-    Worked example, `public_0008`: the product text carries
-    `{nylon, polyester, spandex}`, we store `polyester`, the customer says
-    `nylon`, and the target takes a -1 that puts it below every neutral
-    candidate. 7 of the 27 known misses have the true target penalized this
-    way, all 7 `buying`, `public_0111` among them -- which is the unexplained
-    BM25-rank-5-to-final-rank-80 anomaly #24 flagged as a loose end.
-
-    **But the causal claim does not survive its own test.** Replaying those 7
-    sessions with `DISCLOSED_MISMATCH_PENALTY = 0.0` recovers **none of them**:
-
-    ```
-    penalty 1.0 (shipped)   all 7 MISS
-    penalty 0.0             all 7 MISS
-    ```
-
-    So the -1 is not what costs these sessions. The "all three legs rank it
-    top-3" observation that motivated the hypothesis came from the *oracle*
-    query, which carries all four constraints; the live turn-1 query for
-    `public_0008` is only "I'm looking for Bras Everyday Bras. A key
-    requirement is: nylon." The target is not in the live pool for the boost to
-    sink in the first place. This is the same mistake shape as #24 -- a probe
-    run with a richer query than the agent actually has, and a conclusion drawn
-    about the agent.
-
-    Where that leaves the multi-value idea: the extraction census above is
-    real and the representation is genuinely wrong, but **its measured value is
-    now zero on the only sessions it was supposed to explain.** Note
-    `penalty = 0.0` tests only the removal of the -1; the set fix would also
-    convert those cases to +1, which is a different intervention. If anyone
-    builds it, build it as a `contains()` predicate used *only* by the boost,
-    leave `value_for`/`values_for` returning the canonical single value so
-    `select_dynamic_attribute`'s entropy stays bit-identical, and measure it on
-    the full set rather than on these 7. Do not bundle a weight retune with it.
-
-    **The direction the evidence actually supports is elicitation.** 12 of the
-    27 oracle misses have the target in some leg's top 10, so the information
-    is reachable when it arrives; what is missing in a live session is the
-    constraints themselves.
-
-## Blockers / mistakes already made (so they aren't repeated)
-
-- **A feature flag whose zero value is not the identity silently corrupts
-  every A/B run against it.** The Pillar III re-orchestration branch in
-  `routing_params()` was gated on `belief.exhausted` and set
-  `diversify=False` *inside* that branch, while its magnitude knob
-  (`EXHAUSTED_BM25_BONUS`) was 0.0. So "all switches off" still disabled the
-  browsing MMR re-rank, and the control leg scored 0.6154 instead of the
-  shipped 0.6182 -- caught only because verification step 8 (confirm identity
-  reproduces the shipped number *before* trusting any swept point) was run.
-  Every stage measured against that control would have been off by an unknown
-  amount. The code comment at the time asserted "the label-only path is
-  unchanged", which was simply false. Lesson: an identity setting is a claim to
-  verify with a run, not to assert in a comment -- and check that *every*
-  effect in a gated branch is gated, not just the one with a numeric knob.
-- Diagnostic scripts assumed `public_set.jsonl` samples carried a raw query
-  field (`first_message`, `query`, etc.) — they don't. Samples only have
+Diagnostics, all read-only and fast unless noted:
+
+```
+eval_override.py         sweeps override-detector rules (#7)
+eval_intent.py           sweeps intent-classifier rules (#13)
+train_intent_head.py     trained head vs centroid; verdict is don't ship (#12)
+eval_profile_signal.py   does user_profile carry any signal (#5) — run before any personalization idea
+eval_ceiling.py          is the target reachable at all (#27) — one turn per sample
+eval_failures.py         miss taxonomy, probes every leg to depth 2000 (#24) — ~1 hour
+cooccurrence.py          P(color|category) etc. over the catalog (#11)
+sweep_fusion_weights.py  TechnicalScore vs dense:bm25 ratio (#16)
+sweep_prior_leg.py       a third RRF leg from catalog priors or profile — never run
+ab_phrase_query.py       the five legs of #25 — five full evals, run alone
+ab_buying_diversify.py   MMR on the buying track
+```
+
+Design docs: `docs/question_policy_plan.md` (written, not built),
+`docs/intent_detection_plan.md`, `docs/user_profile_decision.md` (judge-facing),
+`NEXT_STEPS.md`, `REPRODUCE.md`, `docs/team_report.md`.
+
+## Score history
+
+Full public set, 200 samples. **HEAD is `5889828`, measured 2026-08-29.**
+
+```
+HitRate@10 0.850 (170/200)   MRR 0.4567   MTTC 4.210   Efficiency 0.6790
+TechnicalScore 0.6978
+```
+
+Per-scenario: browsing 0.925 / 0.5235 / 3.613 (n=80), buying 0.8125 / 0.4204 /
+4.213 (80), intent_override 0.8333 / 0.4084 / 5.267 (30), boundary 0.600 /
+0.3569 / 5.800 (10). `results.json` is this run.
+
+```
+score    what changed                                          entry
+0.6978   #26 category IDF + request stopwords    -0.0042 = 1 session, flat
+0.7020   EXCLUDE_SHOWN                           +0.0837   #23
+0.6454   phrase leg at PHRASE_WEIGHT 2.0         +0.0272   #20
+0.6182   buying dense:bm25 ratio 0.50 -> 0.25    +0.0112   #16
+0.6070   override detector TOP_PROTOTYPES = 4    -0.0003   #7  (noise)
+0.6073   FALLBACK_ATTRIBUTE_ORDER by answerability +0.0109 #9
+0.5964   dual-track buying/browsing routing       ~flat    #4
+0.600    boost-not-filter replaces hard filter   +0.017    #1
+0.583    (starter BM25-only baseline: 0.125 hit / 0.068 MRR / 9.81 MTTC)
+```
+
+**The benchmark's resolution is one session ≈ 0.004 TechnicalScore.** Convert
+every rate to an absolute session count before believing a delta. 0.8550 vs
+0.8500 is one session, not a trend.
+
+Facts confirmed empirically, not assumed:
+
+- Catalog attribute coverage: material ~70.9%, color ~39.9%, price ~21%
+  (post-#10 word-boundary fix; the pre-fix figures 78.1/58.6 were inflated).
+- `classify_constraint()` **never** buckets any of 800 sampled disclosed values
+  as `budget` — asking about budget locally is a guaranteed wasted turn. Root
+  cause: `intent_card()` appends the price candidate last and the
+  `hard_constraints[:2]` / `soft_preferences[2:4]` cap truncates it out.
+  `budget` is demoted to last-resort, not removed, in case that is a
+  local-simulator quirk.
+- `category`, `brand`, `other` are structurally unreachable — no code path picks
+  them, and `classify_constraint()` never buckets into them either.
+- `ALLOWED_ATTRIBUTES` is copied verbatim from the API contract's enum.
+- The QSBPS paper behind the entropy design (Zou & Kanoulas, "Learning to Ask")
+  is CIKM 2019, not SIGIR. Its mechanism is Generalized Binary Search over
+  relevance mass via binary questions; the multi-way categorical entropy here is
+  a deliberate adaptation, not a citation match.
+
+## The confound that explains most negative results
+
+**89.7% of local turn-1 hard constraints (359 of 400) are verbatim substrings of
+the target product's own catalog text**, because `intent_card()` builds customer
+messages out of the target's own fields. The local set is therefore close to a
+pure exact-match benchmark: best case for BM25, worst case for anything that
+adds semantic tolerance or removes text.
+
+Four separate losses trace to it — #14 (dense weight), #17 (override rewrite),
+#19 (query pruning), #26's corpus-driven stopword list. **Any change that
+deletes or paraphrases customer text will measure badly here**, and that may or
+may not be true of the hidden grader. Weigh the downside asymmetry before acting
+on a local gain of this shape.
+
+## Results and verdicts
+
+Numbered entries are historical and referenced across the repo; keep the
+numbering stable.
+
+### Shipped and established
+
+**#23 — Shown-item exclusion, +0.0837.** The largest win by a factor of three,
+and the only change that moves all three score terms the same way at once
+(0.7550/0.3989/4.940 → 0.8550/0.4622/4.205 in `ab_phrase_exclude.py`). The
+evaluator ends a session at first hit, so being asked for another turn is *proof*
+every item shown so far is wrong; re-offering them spends slots on known-dead
+answers. It needed no new signal — just a re-read of `evaluate()`. **When stuck,
+read the scorer again before building anything.** Caveat: it assumes the hidden
+grader also ends on first hit. That is in the rules and in `evaluate()`, but it
+is a stronger scorer-semantics dependency than anything else shipped.
+
+**#20 — Phrase-match leg, +0.0272**, and the first retrieval change here that
+added *recall* rather than reordering (+8 sessions of HitRate; the dense leg's
+HitRate is identical to four decimals whether on or off). N-grams longest-first,
+weighted `len(gram)**2`, discarding spans matching more than
+`PHRASE_MAX_MATCHES = 150` products.
+
+```
+weight   hits      MRR     MTTC  Technical    delta
+  0.00  150/200  0.4096    4.985   0.6182       --
+  0.50  152/200  0.4278    4.945   0.6294   +0.0112
+  1.00  154/200  0.4184    4.870   0.6331   +0.0149
+  2.00  158/200  0.4176    4.745   0.6454   +0.0272   <- shipped
+  4.00  157/200  0.4254    4.825   0.6436   +0.0254
+```
+
+Real interior optimum, but 2.00 and 4.00 are one session apart, so the top is
+flat and 2.00 is the lower-variance pick. The reasoning was stated *before* the
+sweep and is the reusable part: a phrase leg runs *with* the exact-match
+confound instead of against it. Gotcha: `phrase_tokens()` keeps stopwords,
+unlike `terms()` — "pull on closure" collapses to "pull closure" under `terms()`
+and matches nothing.
+
+**#16 — Buying fusion ratio 0.50 → 0.25, +0.0112.** The buying dense:bm25 curve
+is strictly monotone decreasing with no interior optimum; 0.50 was already well
+down the slope. HitRate falls too (0.750 → 0.665 across 0.0–1.5), so at high
+dense weight the dense leg displaces correct BM25 results out of the top 10, not
+merely reorders them. Ratio 0.00 is worth +0.0188; 0.25 captures 60% of that
+while keeping a real dense leg as paraphrase insurance.
+
+**Browsing track is measured flat across 0.0–1.5. Do not re-run that sweep.**
+The browsing-scenario hit column moves by at most one session over the whole
+range. Also: the two tracks are **not separable populations** — the weights key
+off the *classifier's* per-turn label while `scenario_type` is ground truth, and
+the classifier drifts buying-ward as attributes accumulate. Varying browsing
+weights visibly moved buying-scenario metrics.
+
+**#9 — `FALLBACK_ATTRIBUTE_ORDER` sorted by answerability, +0.0109.** Share of
+sessions where the customer can still answer after turn 1, derived from the
+evaluator's own reply policy:
+
+```
+feature 0.960   material 0.725   color 0.255   style 0.085   size 0.045   use_case 0.020
+```
+
+The old order asked the three rarest buckets first. Now `feature, style, size,
+use_case, budget`. 39 samples reach the target sooner, 5 later, modal delta −3
+turns on 24 samples — broad, not lucky. Two things to carry forward. **MRR moved
+the wrong way** (−0.0061), because converting a late well-ranked hit into an
+early worse-ranked one costs MRR and pays more in Efficiency; MTTC work will keep
+showing that drag, so do not judge a change on MRR alone. And **the 96% is partly
+an artifact** — `feature` is `classify_constraint()`'s catch-all return.
+
+**#7 — Override detector: trimmed nearest-prototype + lead clause.** Score
+against the mean of each class's `TOP_PROTOTYPES = 4` closest prototypes instead
+of the centroid, and evaluate both the full message and its lead clause, taking
+whichever leans more override.
+
+```
+ k   sim recall   sim FP/1600   probe recall   probe FPR
+ 1        0.933      242              1.000       0.400
+ 2        1.000       25              1.000       0.200
+ 3        1.000       12              1.000       0.100
+ 4        0.933        2              1.000       0.100   <- shipped
+ 5        0.933        0              0.900       0.100
+12        0.900        0              0.900       0.100   (= centroid)
+```
+
+Root cause of the centroid's failure: all twelve override prototypes are long
+two-clause sentences naming the discarded prior statement, so the mean encodes
+that *sentence shape*, and a terse pivot ("never mind, give me white shoes") is
+dominated by its imperative half and lands nearer the continuation centroid.
+Margins were ~0.03 in a space where both centroids sit at 0.65–0.80 similarity
+to almost anything.
+
+End-to-end this is ±0.0005 across k=centroid/3/4 — **below resolution, decide on
+the offline table, not the score.** The local simulator cannot measure this at
+all: `behavior_for()` emits exactly one override string, near-verbatim
+`PROTOTYPE_OVERRIDE[0]`, so simulator recall was 0.900 by construction. The probe
+column is the only evidence about phrasings the hidden grader might use, and it
+is hand-picked.
+
+**#26 — Category-word IDF and request stopwords. Measured −0.0042 = one session,
+flat.** Two user-reported demo bugs, one root cause. Every product hangs off the
+root category `"Clothing, Shoes & Jewelry"` (49,990 of 50,000), so those words
+sit at df ≈ 1.000 and score ~0 IDF, while request verbs are *rare* in a product
+catalog and therefore high-IDF:
+
+```
+shoes   df 1.000 (0.235 without the root)     actually df 0.0018
+jewelry df 1.000 (0.111 without the root)     forget   df 0.0032
+                                              buy      df 0.0261
+```
+
+So `"i want to buy shoes"` reduced to `{buy, shoes}`, "shoes" was worth nothing,
+and the query was decided by "buy" — which matched the store name "Buy Caps and
+Hats". Three fixes: `BM25Index._build` strips the universal root (detected from
+the first insert batch, not hardcoded); `_REQUEST_STOPWORDS` in `text_utils.py`;
+`SPELLING_VARIANTS` normalizes en-GB to the catalog's en-US via
+`normalize_query()` in both query builders, so all four legs see one string
+("jewellery" matches 146 products, "jewelry" matches 50,000; "grey" is
+deliberately excluded, since it beats "gray" 2017 to 751 here). Separately
+`BUYING_PHRASES` had no purchase verb at all, so "i want to buy shoes" scored
+zero buying evidence — added, turn-1 intent 0.975 → 0.981.
+
+**The pre-registered risk did not materialize, and that is the finding.**
+`_REQUEST_STOPWORDS` strips tokens from every query, the same shape that cost
+−0.0410 in #19, and this was flagged before the run. One session, not twelve. It
+vindicates the **closed-list discipline**, not query pruning generally.
+
+Override rewriting, narrowly: `respond()` drops query history on a detected
+pivot **only when the pivot names a product category**
+(`BM25Index.names_category`), built from single-word category nodes with df ≥ 20,
+excluding material/colour and demographic words. Any-token fires on 6 of the
+evaluator's 30 override turns; single-word-only fires on 2. Tokens from
+multi-word nodes are modifiers, not product types ("Water Shoes" → "water"), and
+firing on them turns the rewrite back into #17.
+
+**#25 — Phrase-query hygiene: the fixes work, but the dumb control matches
+them.** Both flags are **off**.
+
+```
+leg                     hits      MRR     MTTC  Technical    delta
+identity              171/200   0.4622    4.205   0.7020       --
+filter only           174/200   0.4826    4.090   0.7180   +0.0159
+clause+edge only      176/200   0.4946    3.915   0.7301   +0.0280
+filter + clause+edge  177/200   0.4981    3.900   0.7339   +0.0319
+budget 96 (control)   177/200   0.4998    3.995   0.7326   +0.0305
+```
+
+Span-budget starvation is real and was costing ~6 sessions (`public_0008` builds
+135 spans, all 24 that fit the budget match zero products, while "bras everyday
+bras" — verbatim in the target — sits unqueried). But quadrupling
+`MAX_PHRASE_QUERIES` to 96 reaches the same 177/200. The fixes win on **cost**,
+not score: same result at the original budget of 24 by not building the useless
+spans (135 → 38, or 11 with both). Only `clause+edge` is established on its own;
+the filter adds one session on top, which cannot be resolved here.
+
+**Do not enable either flag without re-measuring on current HEAD.** The edge
+rule reads `STOPWORDS` directly, and #26 added ~24 words to that set, so the
+table above was measured against a `STOPWORDS` that no longer exists.
+
+**#21 — `BM25Index` was single-thread-only**, silently disabling two of three
+legs under any server front-end. `sqlite3.connect(":memory:")` defaults to
+`check_same_thread=True`; Streamlit caches one `Agent` and serves from a worker
+pool, so every `search()` raised `ProgrammingError` — and `_retrieve` catches
+per-leg exceptions and continues, so the agent returned ten products from the
+dense leg alone with nothing surfaced. Fixed with `check_same_thread=False` plus
+a `threading.Lock` across every query including the PRF expansion path.
+
+**#15 — The offline degrade is silent.** With a cold HF cache and no network,
+`load_embedding_model()` raises, and `Agent.__init__`'s degrade-don't-crash
+branches take dense retrieval, both classifiers and the masked LM dark at once
+while the agent still starts and still returns 10 recommendations. `model/`
+(385MB) and `data/dense_index/` (74MB) are gitignored and the bge-small blob is
+over GitHub's 100MB limit. `docs/submission_rules.md` warns network may be
+disabled for scoring. **Run `preflight.py --strict` before any scored run.**
+
+**#22 — Intent prototypes were missing the "something for <occasion>" shape**, a
+deliberate accepted regression of 2 turn-1 errors in 160 (0.988 → 0.975; #26
+later recovered one). "i want something for the summer" classified buying at
++0.0058, a coin flip. Four browsing prototypes of that shape were added. **Do not
+"fix" this with a deadzone** — one was tried and swallowed real signal broadly
+(buying turn-3 96% → 59%), because the zero-crossing region is genuinely
+populated by weakly-buying cases. Accepted because #13 measured the label is
+worth ~nothing to score, while a visibly wrong route in a live demo costs
+credibility. **Only valid while that stays true.**
+
+**#10 — Catalog attribute extraction was substring-matched, not
+word-boundary-matched. Fixed; the fix costs 0.005 and was kept anyway.** Found
+while building co-occurrence stats: the strongest "signal" in the catalog was
+`P(material=lace | Necklaces)` = 0.867, which is "neck**lace**" containing
+"lace". Both the evaluator and this repo's customer-side extractor always used
+`\b`; only the catalog side was loose.
+
+```
+color:    21.6% of products mislabeled (10,824), 9,312 of them invented where no
+          colour word occurs at all ("red" in embroidered, "tan" in titanium)
+material:  4.7% mislabeled (2,344), dominated by lace <- necklace
+coverage: color 58.6% -> 39.9%,  material 73.7% -> 70.9%
+```
+
+This is the root cause of #1's unexplained 16.3%/37.0% disagreement with the true
+target. The fix measures −0.0054 (3 samples), reproduced with and without #11.
+Best understanding: the buggy extractor labelled 58.6% of the catalog with a
+colour, and `_boost_by_disclosed` penalizes a *known* mismatch while ignoring
+unknowns, so the wrong labels gave the resort more (noisy) separation.
+Correct-but-sparser labels leave more candidates neutral. The indicated next step
+is **not** to revert the bug but to retune the boost weights against corrected
+coverage — the ±1/0 scheme was tuned when a fifth of colour labels were
+fictional.
+
+### Do not retry — measured and rejected
+
+**#5 — Personalization from `user_profile`. Three implementations, all
+regressed; the field carries no signal to act on.** `scripts/eval_profile_signal.py`
+shows same-profile-key sessions share a coarse category **0.5%** of the time
+against a **1.2% ± 0.5%** random-pair baseline — a key match is not an identity
+signal, so there is nothing correct to carry. The store still runs (125 distinct
+keys, 30 seen more than once) with zero net effect. Full write-up and the
+store-contamination landmine: `.claude/skills/retrieval-experiments/SKILL.md`.
+
+Judge-facing version with two further null tests:
+**`docs/user_profile_decision.md`**. The one worth knowing is
+`average_prior_rating` → target `average_rating`: **r = 0.1824, permutation
+p = 0.0094 over 20,000 shuffles — passes significance and is still rejected.** It
+explains 3.3% of variance, runs backwards between its two largest cells (prior
+1.0 → 4.393 vs prior 5.0 → 4.413), and dropping one 9-sample cell collapses it to
+r = 0.0929, inside the null band. About a dozen tests were run across three
+fields, so one pass at 0.05 is what chance produces. `purchase_frequency` is the
+constant `"3-4 prior purchases"` on all 200 samples and `summary` is a template
+restatement of the other fields, so neither needed testing.
+
+**The live lead that came out of it is profile-independent.** `rating_number` is
+the only 100%-covered catalog field and targets come overwhelmingly from the
+popular tail: catalog median 12 reviews, target median 7,078, and the top 5.9% of
+the catalog by review count holds **83% of all targets, a 14x lift**.
+`scripts/sweep_prior_leg.py` was built for exactly this and **has never been
+run**. Its `popularity` variant was designed as the *control* for the profile
+idea, and the control is the leg with the effect size. Two caveats: it is a
+re-ranker inside an existing pool, so it cannot touch the elicitation gap #27
+identifies as the real limit; and the concentration is a property of how the
+samples were drawn, not of shopping, so it transfers only if the hidden set was
+drawn the same way. Run `--weights 0` first and confirm it reproduces 0.6978.
+
+**#19 — Query hygiene on non-answers, −0.0410.** The gap was real: roughly three
+asks in five come back empty (mean 2.09 answerable buckets left after turn 1
+against MTTC ~5), and every reply was being joined into the BM25 and dense query.
+`EmbeddingNonAnswerDetector` detects them well offline (recall 1.000, probe FPR
+0.000). Dropping them costs 12 sessions (149 → 137).
+
+**The prediction that was wrong, and why it matters.** All 69 false positives are
+the simulator's near-contentless template ("For that, what matters is: Imported;
+Pull On closure."), and this was written up mid-run as evidence the FPR column
+measured the wrong thing. The A/B says the opposite: per the confound above,
+`Pull On closure` is not boilerplate, it is an exact-match key to the target.
+**No form of query pruning is safe on this benchmark**, and improving the
+classifier cannot fix it — the text is contentless in meaning and load-bearing in
+retrieval. The non-answer *observation* is kept and feeds `SessionBelief`; only
+the query surgery was reverted.
+
+**#17 — Query rewriting on intent override, −0.0580.** The gap was real
+(`respond()` cleared slots but never touched `first_message`, so `_build_query`
+was byte-identical before and after a pivot). Restarting from the pivot message
+is catastrophic: intent_override hit 0.800 → 0.333, MTTC 5.90 → 9.27. Root cause
+found by printing a sample rather than reading the template's shape — the
+category is stated *once*, in turn 1, and the pivot carries only the changed
+attribute:
+
+```
+TURN 1: "I'm looking for [... 'Men', 'Accessories', 'Belts']. Buckle closure"
+PIVOT : "Actually, ignore my earlier preference. What I need is: leather"
+```
+
+Dropping `first_message` throws away "Belts" and searches 50k products for
+"leather". This **refutes** a claim NEXT_STEPS §5 once stated as established —
+that the override template carries the complete new constraint. Any selective
+scheme must preserve the framing and drop only the preference clause; #26 does
+the narrow version.
+
+**#14 — The dense leg is net-negative locally, and we shipped it anyway.**
+
+```
+configuration          HitRate     MRR     MTTC   Technical      delta
+as shipped              0.7450  0.3876    5.090     0.6070          --
+- masked LM             0.7450  0.3841    5.085     0.6060     -0.0010
+- both classifiers      0.7400  0.3728    5.070     0.6004     -0.0065
+- dense retrieval       0.7450  0.4328    5.035     0.6216     +0.0147
+- everything (offline)  0.7450  0.4289    5.025     0.6207     +0.0137
+```
+
+HitRate is identical to four decimals with and without dense: it finds nothing
+BM25 misses, and only demotes correct items BM25 ranked well. That is 20x the
+noise floor. **Do not act on it** — see the confound section. If the hidden
+grader paraphrases at all, dense is the only defense; the downside is asymmetric.
+
+**#12 — Trained intent head: built, measured, rejected.** Logistic head on
+*frozen* bge-small embeddings (the encoder is never touched — TODO.md 4.3 bars
+fine-tuning base models, while intent modules are explicitly in scope).
+
+```
+pool                        head    centroid
+in-distribution 5-fold CV   0.984      0.778   <- memorization, ignore
+train turn1 -> test accum   0.521      0.708   <- chance
+out-of-distribution probes  0.812      1.000
+```
+
+The simulator has exactly two turn-1 templates, so 0.984 is the head learning
+`"still exploring"`. Three checks confirm it: a regularization sweep is flat at
+chance across C = 0.001…10; OOD accuracy *rises* with C (the more it overfits,
+the better it scores OOD — the opposite of a generalization story); and training
+on the 20 hand-written prototypes alone, with no simulator text, reaches OOD
+1.000 while 640 labelled simulator turns drag it to 0.812. **Do not ship a head
+trained on local simulator text, and never read a high in-distribution CV score
+as progress.**
+
+**#13 — The trimmed-prototype rule does not transfer to the intent
+classifier.** Every variant is worse:
+
+```
+rule                    turn-1   accumulated   OOD probe
+lexical (fallback)       1.000         0.773       1.000
+centroid (current)       0.988         0.708       1.000   <- unchanged
+top1-mean                0.781         0.608       0.938
+top4-mean                0.769         0.588       0.938
+```
+
+Why it transferred to one classifier and not the other: the override prototypes
+had a *shape* pathology (#7); the buying/browsing prototypes are varied single
+utterances whose mean direction *is* the signal, so trimming throws away the
+averaging that makes the centroid robust. **"Centroids are fragile" is not a
+general truth about this codebase — it was a fact about one prototype set.**
+
+**There is no headroom to chase here.** The centroid is at 0.988 on turn-1, its
+only errors being buying sessions whose hard constraint is contentless ("A key
+requirement is: Imported."), and per #4 the thing the label feeds was itself
+measured flat. A perfect intent label is worth approximately nothing.
+
+Three measurement caveats. The lexical fallback's turn-1 1.000 is template
+memorization — its regexes match the simulator's two templates literally. The OOD
+probe pool is partly circular: the lexical rule scores 1.000 by a degenerate path
+(browsing probes register 0/0 evidence and fall through to the tie-break), which
+is true because the probes were hand-written that way. **Probes can falsify a
+rule but must not rank two rules that both pass.** And `accumulated` is not an
+accuracy — `scenario_type` is not valid ground truth once clarifying answers
+land, since the classifier is built to drift buying-ward.
+
+**#28 — MMR diversity on the buying track: null, and the pre-registered test is
+what caught it.** Identity reproduced 0.697796 exactly. The treatment scores
++0.0030, which is under one session, and every part of that is MRR:
+
+```
+leg          HitRate     hits      MRR     MTTC   Technical    delta
+identity      0.8500  170/200   0.4567    4.210     0.6978       --
+treatment     0.8500  170/200   0.4680    4.230     0.7008   +0.0030
+```
+
+**HitRate is identical and so is the crowding table, quartile for quartile.** The
+diagnosis was that buying misses sit in categories 2.4x more crowded than its
+hits, and the falsification stated before the run was that a real gain lands on
+crowded buying sessions. Nothing was recovered anywhere — 170 hits before, the
+same 170 after.
+
+34 sessions reshuffled, and more got worse than better (19 vs 15). The entire net
+comes from five sessions that jumped from rank 7–10 to rank 1; **delete those five
+and the delta is −0.0102.** Bootstrap over the 34 deltas gives a 95% CI of
+[−0.0091, +0.0335] with 14.8% of resamples at or below zero. That is a lottery on
+five near-miss slates, not a mechanism.
+
+Reusable: **an MRR-only move with HitRate flat to four decimals is a reordering of
+sessions you already win**, and on a metric where rank 10 → 1 is worth 0.9 while
+rank 1 → 3 costs 0.67, a handful of those swamps the other thirty. Check the
+per-session deltas before believing any MRR delta under ~0.02. `BUYING_DIVERSIFY`
+stays `False`.
+
+**#18 — Turn-annealed slate diversity: null.** Annealing `DIVERSIFY_LAMBDA`
+upward as the turn budget depletes measured −0.0038 and −0.0030 on two schedules.
+The 0.50 → 0.90 run's browsing metrics are byte-identical to fixed lambda, so the
+schedule changed nothing in the track it governs. Note the 0.35 start was worse
+because at turn 1 the query is the raw customer message whose top hits are
+usually already right — **early-turn diversity is not free here.**
+
+**#4 — Dual-track routing: net flat on the full set** (0.600 → 0.601) despite a
+gain on the 60-sample tuning subset. Kept. **Do not retry the hard
+filter-then-rerank buying track** (BM25 top-N as a hard filter, dense reranking
+within it): measured worse on hit rate and MTTC, because it discards the
+full-catalog dense leg that exists to catch differently-phrased targets.
+
+**#1 — Hard-filter self-elimination: fixed.** The old hard-equality filter
+dropped candidates disagreeing with a disclosed value, which disagreed with the
+*true target* 16.3% of the time on material and 37.0% on color. Replaced by
+`_boost_by_disclosed`. **Do not retry reranking by embedding similarity between
+the disclosed phrase and catalog embeddings** — swept and monotonically worse as
+its weight rose, below even a no-signal baseline.
+
+**#2 — SQL-backed attribute columns.** Raised by a user; the override-clear
+semantics argument stands but the motivation (#1) is gone, and at 50k rows with
+~30-item pools the speed argument over the Python resort is a wash.
+
+### Where the remaining misses are
+
+**#27 — Every target is reachable. #24's "recall problem" was an artifact of the
+starved session query.** `scripts/eval_ceiling.py` hands the agent everything the
+customer could ever disclose in one turn-1 message. The customer's entire
+vocabulary for a whole session is `coarse_category(target) +
+hard_constraints[:2] + soft_preferences[2:4]` — at most four strings, all sliced
+from the target's own record. There is nothing else they can say, ever.
+
+```
+oracle (all constraints, one turn, one slate)   173/200
+actual (10-turn dialogue)                       171/200
+
+of the 27 oracle misses:  top 10  12 | 11-50  10 | 51-500  5 | not found at 2000  0
+worst best-leg rank across all 200 samples: 192
+```
+
+**No target is unreachable.** #24's "no leg finds the target at all" is true only
+of the query the agent actually holds at the end of a live session, which is
+starved — `customer_reply()` discloses a constraint only when
+`classify_constraint()` buckets it as the attribute just asked, at most two per
+turn. Read #24's "only more information can fix these" as being about
+**elicitation**, not reach. **The oracle number is not a ceiling** — an earlier
+draft wrongly called it one. It returns one slate of ten where a live session
+returns up to ten (up to 100 distinct products under `EXCLUDE_SHOWN`), and the
+two conditions differ on 34 samples, 17 in each direction.
+
+**A real extractor defect, and the fix it suggested is falsified.**
+`AttributeIndex` stores one material and one colour per product chosen by vocab
+order; the evaluator picks from the same text by a different rule. Over the 200
+targets:
+
+```
+                                                  material   colour
+agree -> +1                                          58.5%    12.5%
+FALSE mismatch: value IS in the product -> -1         9.5%     3.0%
+disagree, value outside the fields we read -> -1      6.5%     1.0%
+customer never states it                             23.5%    80.0%
+```
+
+`public_0008`: product text carries `{nylon, polyester, spandex}`, we store
+`polyester`, the customer says `nylon`, the target takes a −1 below every neutral
+candidate. 7 of the 27 misses are penalized this way, all buying, including
+`public_0111` (the rank-5-to-80 anomaly #24 flagged). **But replaying those 7 at
+`DISCLOSED_MISMATCH_PENALTY = 0.0` recovers none of them.** The "all legs rank it
+top-3" observation came from the *oracle* query; the live turn-1 query is one
+material word and the target is never in the pool for the boost to sink. Same
+mistake shape as #24 — a probe run with a richer query than the agent has.
+
+The customer side has the identical limitation: `extract_disclosed_value` returns
+the first vocab match, so "polyester and cotton blend" → `cotton`. Measured: 22.6%
+of single constraint strings, 44.4% of 2-constraint replies and 63.9% of target
+products carry 2+ materials. Both sides collapse a multi-valued field to one
+value by different rules, which is why **every** boost mismatch across all 80
+buying sessions is a *false* one. The representation is genuinely wrong and its
+measured value is currently zero. If anyone builds the set version: put it behind
+a `contains()` used **only** by the boost, leave `value_for`/`values_for`
+returning the canonical single value so the entropy picker stays bit-identical,
+measure on the full set rather than those 7, and do not bundle a weight retune
+with it.
+
+**#24 — Miss taxonomy at 0.7020.** Superseded in part by #27; read that first.
+27 misses (the run died at sample 187 under memory pressure, so a near-complete
+census):
+
+```
+by reason                      by scenario
+  lost-in-fusion    17           buying           15
+  ranked-11+         6           browsing          6
+  unreachable        3           intent_override   3
+  excluded-as-shown  1           boundary          3
+```
+
+**`lost-in-fusion` is a mislabel** — it means "the fused pool did not contain the
+target", not "fusion discarded it". 16 of the 17 have no leg ranking the target
+better than ~198. The label describes the probe's depth, not a defect. 15 of 27
+misses are buying, and the phrase leg reaches the target in only 2 of 27, both
+following from the same cause: a buying session's turn-1 signal is usually a
+single very common material word ("cotton" → 9,414 products), so there is no
+multi-word span to match.
+
+**Buying misses correlate with category crowding; browsing does not.** Median
+catalog products sharing the target's coarse category, hits vs misses:
+
+```
+scenario           hits   misses   p (permutation, 20k)
+buying              138      338    0.0096  *
+browsing            173      212    0.4212
+intent_override     141      117    0.6080
+```
+
+Buying's misses sit in categories 2.4x more crowded than its hits. Boundary is
+browsing minus one elicitation turn (`initial_message()` gives it the browsing
+opener; `customer_reply()` returns "I don't have a preference" once), and its gap
+survives crowd-matching only weakly — 6/10 vs 23/25, p = 0.043, on 4 misses at
+n = 10. `ab_buying_diversify.py` tests whether the browsing MMR re-rank, the only
+knob that spreads a slate across a category, closes the buying gap.
+
+### Built but not wired / not shipped
+
+**#11 — Attribute inference.** Two attempts at inferring an unstated attribute.
+
+*Item-attribute co-occurrence* (`scripts/cooccurrence.py`): the signal is
+enormous once #10 is fixed (`P(material=stainless steel | Watches Wrist
+Watches)` = 0.483 vs 0.023 marginal, +79σ). **Built, not wired.** It lives in
+`scripts/` because `starter/` ships verbatim into the bundle. Note this is *item*
+co-occurrence — the shipped data has no user-item interactions at all, so "users
+who bought X also bought Y" is not computable here.
+
+*Local masked-LM belief with an entropy gate* (`starter/lm_confidence.py`, wired
+into `_infer_attributes`): distilbert-base-uncased scores the closed vocabularies
+in a `[MASK]`ed template. A local model is required — the hosted Claude API
+returns no logprobs, and bge-small's published weights carry no LM head.
+
+**The entropy gate works, and that is the solid finding:**
+
+```
+material   top-1 0.483 vs 0.322 guess-the-mode baseline
+  H < 0.60      n= 61   accuracy 0.787
+  H 0.60-0.75   n=105   accuracy 0.371
+  H 0.75-0.85   n= 14   accuracy 0.000
+```
+
+Monotone and steep, so `MAX_CONFIDENT_ENTROPY = 0.60` is calibrated. **Colour is
+deliberately excluded**: top-1 0.189 against a 0.432 always-"black" baseline, its
+gate runs *backwards*, and it collapses onto one attractor ("pink" for 14 of 37).
+**But the end-to-end payoff is +0.0010 — noise**, reproduced twice. It fires only
+on material, which the customer already discloses in 72.5% of sessions, and it
+must be boost-only. Cost: 246 ms per inference and 255MB of shipped asset. The
+mechanism is validated; the application point is low-leverage. The higher-leverage
+use would be predicting *which attribute the customer can answer*.
+
+**#8 — LLM-extracted catalog attributes (offline, one-time).** Designed and
+costed, nothing built; working notes in `NEXT_STEPS.md`. A one-time
+`claude-haiku-4-5` Batch API pass over the 50k catalog (~$5–12, ~9.4M input
+tokens) emitting a static closed-vocabulary JSON sidecar shipped as a local asset,
+so the agent still needs no network at scoring time. Motivation: thin coverage,
+#27's single-value defect, and the four attributes (`style`, `size`, `use_case`,
+`feature`) that have no extractor at all. Caveat: it fixes only the catalog half
+of the disagreement.
+
+**#3 — Budget extraction: fixed, and it was three bugs, not one.** (1) The
+`\$\s?(\d+)` pattern meant "less than 80 dollars" disclosed nothing. (2) The
+comparator was discarded and the amount mapped to the bucket *containing* it,
+then compared for equality — so "under $80" resolved to the top bucket `$48+`
+and a stated ceiling **boosted the priciest products while penalizing every
+cheap one**. (3) `_extract_budget` returned the literal string `"unknown"` for
+the 79.2% of the catalog with no price, which is a known value rather than
+`None`, so any budget disclosure scored a full mismatch against 39,590 of
+50,000 products.
+
+Now `parse_budget_constraint()` returns a bound (`"<=80"` / `">=200"`),
+`AttributeIndex.price_for()` exposes the raw price, and `_boost_by_disclosed`
+compares numerically with unpriced products neutral. **Unverifiable locally** —
+`classify_constraint()` never buckets a disclosure as `budget`, so the correct
+expectation is that the public set is bit-identical; that is the regression
+check, not a win condition. One judgment call: a bare or approximate amount
+("my budget is $80") reads as a *ceiling*, the dominant sense of a stated
+shopping budget.
+
+**#6 — No cross-encoder or LLM reranking stage.** `RERANK_WEIGHT = 0.0` and the
+sweep never ran; spec 4.2.I mentions "LLM Semantic Ranking". Current ranking is
+hybrid retrieval + attribute boost + MMR.
+
+## Blockers / mistakes already made
+
+- **A feature flag whose zero value is not the identity silently corrupts every
+  A/B against it.** The Pillar III branch in `routing_params()` was gated on
+  `belief.exhausted` and set `diversify=False` *inside* that branch while its
+  magnitude knob was 0.0 — so "all switches off" still disabled the browsing MMR
+  re-rank, and the control leg scored 0.6154 instead of 0.6182. Caught only
+  because identity was verified against the shipped number first. The code
+  comment asserted "the label-only path is unchanged", which was false. **An
+  identity setting is a claim to verify with a run, not to assert in a comment**,
+  and check that *every* effect in a gated branch is gated, not just the one with
+  a number attached.
+- **Identity must reproduce the shipped score before any swept point is
+  believed.** This has caught two real bugs.
+- **Convert rates to absolute session counts before believing a small delta.**
+  A +0.0040 delta looks like it clears a ±0.0025 noise estimate and does not.
+- **Never more than two full evals at once on this box.** Three drove load past
+  17 on 8 cores and got `eval_failures.py` killed after its last miss line but
+  before it wrote its JSON — so the run *looked* clean. When chaining
+  `long_command; tail log`, the exit code you see belongs to `tail`. Also check
+  a queued run isn't redundant: a standalone eval was left holding the box for
+  1h46 to confirm a number an A/B running beside it was already producing.
+- **Run diagnostics under `uv run`.** A bare `python3` probe reported a config
+  flag as a no-op because torch was absent, `Agent.dense` was `None`, and
+  `_diversify` returns early. Same silent-degrade class as #15.
+- `public_set.jsonl` samples carry **no raw query field**. They have only
   `category_bucket`, `difficulty_bucket`, `ground_truth`, `sample_id`,
   `scenario_type`, `user_profile`; turn-1 queries must be reconstructed via
-  `evaluator.local_evaluator.initial_message()` + `materialize_hidden_fields()`.
-- First cut of the override detector's prototype set was all *affirmative*
-  continuations ("Yes, that sounds good") with nothing modeling "customer
-  declines to state a preference" — which is an extremely common reply
-  shape (`customer_reply()`'s standard non-answer template) and shares
-  negation vocabulary with genuine override cues ("don't"/"no"). Result:
-  8 of 10 non-answer replies misclassified as overrides, silently wiping
-  `disclosed`/`asked_attributes` on routine turns. Fixed by adding explicit
-  "no preference" prototypes to the continuation class. Lesson: when
-  building a prototype-based classifier against this evaluator, ground the
-  negative class in the evaluator's actual reply vocabulary, not just
-  generic hand-written examples — semantically adjacent-but-opposite reply
-  types need explicit coverage, they won't fall out for free.
-- (Historical — `_filter_by_disclosed`/`min_survivors` no longer exist,
-  replaced by `_boost_by_disclosed`; kept for the general lesson.) The old
-  filter's fallback threshold (`min_survivors`) was originally compared
-  against the *entropy pool size* (~30) rather than the actual number of
-  recommendations needed (`top_k`, e.g. 10) — meaning the filter fell back
-  to unfiltered results almost every time, since removing a meaningful
-  chunk of a 30-item pool is the whole point of filtering. Fixed at the
-  time by threading the real `top_k` through separately from the padded
-  pool-size argument; the whole fallback-threshold mechanism became moot
-  once elimination itself was replaced with a non-eliminating resort.
-- Style/size/use_case/feature disclosures never populate `SessionState.disclosed`
-  — there's no structural vocab/extractor for them (same limitation the
-  original entropy design already had for question *selection*; it also
-  applies to filtering). This can look like a bug during manual REPL
-  testing ("disclosed isn't filling up") when it's actually just the
-  by-design ceiling of only 3 filterable attributes (material, color,
-  budget).
-- When building the long-term user-profile store (see "Known open
-  problems" #5), "use it to skip a question instead of biasing ranking"
-  was reasoned to have a strictly bounded downside ("waste one turn if the
-  guess is wrong") *before* measuring — it doesn't. Excluding an attribute
-  from being asked is not the same kind of action as a one-off skipped
-  question: the exclusion is stored in session state and persists for
-  every remaining turn, so a wrong guess can silently block the single
-  most informative question for the rest of a 10-turn session. Lesson:
-  "this failure mode is bounded" is itself a claim to verify empirically
-  on the full set, not reason about from the code's shape alone — this
-  project's own convention (measure before trusting a design argument)
-  applies to safety arguments about a design, not just its expected
-  benefit.
-- **Do not run more than two full evals at once on this box.** Three concurrent
-  runs drove load average past 17 on 8 cores, and `eval_failures.py` was killed
-  after its last miss line but before it printed its summary or wrote its JSON
-  — so the run looked like it had finished cleanly (the wrapper's exit code was
-  0, because that code came from the `tail` after the `;`). The per-sample
-  output survived only because it was `flush=True`, and the summary had to be
-  recomputed from the log by hand. Two lessons: cap concurrency at two, and
-  when chaining `long_command; tail log`, the exit code you see belongs to
-  `tail`, not to the thing you care about.
-- **Check whether a queued run is redundant before letting it hold the box.**
-  A standalone `python3 -m evaluator.local_evaluator` was left running for 1h46
-  to confirm the shipped score, while a five-leg A/B whose *first leg is that
-  exact configuration* ran beside it. The confirmation was duplicated work
-  competing with the thing that would produce the same number.
+  `initial_message()` + `materialize_hidden_fields()`.
+- The override detector's first prototype set was all *affirmative*
+  continuations, with nothing modeling "customer declines to state a preference"
+  — which is `customer_reply()`'s standard non-answer template and shares
+  negation vocabulary with genuine override cues. 8 of 10 non-answers were
+  misclassified as overrides, silently wiping session state on routine turns.
+  **Ground the negative class in the evaluator's actual reply vocabulary**;
+  semantically adjacent-but-opposite reply types need explicit coverage.
+- The old filter's `min_survivors` threshold was compared against the *entropy
+  pool size* (~30) rather than `top_k` (10), so the filter fell back to
+  unfiltered results almost every time. Moot now, kept for the lesson.
+- **Style/size/use_case/feature never populate `SessionState.disclosed`** —
+  there is no extractor for them. This looks like a bug in the REPL and is the
+  by-design ceiling of three filterable attributes.
+- "Use the profile to skip a question instead of biasing ranking" was reasoned to
+  have a bounded downside *before* measuring. It doesn't: the exclusion is stored
+  in session state and persists, so a wrong guess can block the single most
+  informative question for the rest of a 10-turn session. **"This failure mode is
+  bounded" is itself a claim to verify empirically**, not to reason about from
+  the code's shape.
+- **Another Claude session has been active in this repo.** Check `git status` and
+  `ps` before assuming the working tree is yours.

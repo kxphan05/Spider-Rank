@@ -1,18 +1,9 @@
-"""Interactive REPL for manually testing the Agent against a single session.
+"""Interactive single-session REPL against the live agent.
 
-Usage:
+Commands: /reset, /debug (prints disclosed and asked_attributes each turn),
+/topk N, /quit.
+
     uv run python3 scripts/repl.py
-
-Commands (typed instead of a message):
-    /reset        start a new session (fresh SessionState)
-    /debug        toggle printing internal state (disclosed, asked_attributes) after each turn
-    /topk N       change how many recommendations are requested/shown (default 10)
-    /quit, /exit  leave the REPL
-
-Anything else is sent as the customer's next message, same as the evaluator
-would send one -- turn count auto-increments and mirrors the evaluator's
-MAX_TURNS=10 cap (shown as a warning once you cross it; the agent itself
-doesn't enforce it, only the grader does).
 """
 from __future__ import annotations
 

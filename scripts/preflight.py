@@ -1,21 +1,14 @@
-"""Verify every runtime asset is present and the pipeline comes up whole.
+"""Verify the pipeline comes up whole with the network disabled.
 
-The failure this exists to catch is silent. With a cold HuggingFace cache and
-no network, `Agent.__init__` degrades by design rather than crashing
-(`starter/agent.py`: "degrade-don't-crash"): the encoder fails to load, and
-with it the dense index, both embedding classifiers and the masked LM all go
-dark. The agent still starts, still answers, and still returns ten
-recommendations -- it just silently stops being the system that was measured.
-`docs/submission_rules.md` warns the organizer may disable network access for
-official scoring, which is exactly the condition that triggers this.
+Loads the agent under HF_HUB_OFFLINE=1 and exits non-zero if any required
+component is dark. This is not optional: the degrade is silent (CLAUDE.md #15) --
+with a cold cache and no network, dense retrieval, both classifiers and the
+masked LM go dark at once while the agent still starts and still returns ten
+recommendations.
 
-So: run this before any scored run. It reports which components are actually
-live, and with --strict exits non-zero if the pipeline is not whole.
+Run it before any scored run.
 
-Usage:
-    uv run python3 scripts/preflight.py
-    uv run python3 scripts/preflight.py --strict     # non-zero exit on any gap
-    uv run python3 scripts/preflight.py --require-lm # treat the masked LM as required
+    uv run python3 scripts/preflight.py --strict
 """
 from __future__ import annotations
 

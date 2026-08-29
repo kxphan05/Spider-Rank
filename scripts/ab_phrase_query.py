@@ -1,27 +1,10 @@
-"""A/B the two independent defects in the phrase leg's span budget.
+"""A/B the phrase leg's span budget: five legs (CLAUDE.md #25).
 
-`phrase_search` enumerates n-grams longest-first and queries only the first
-`MAX_PHRASE_QUERIES` of them. On a 10-turn session that budget is spent before
-reaching a span that exists in the catalog -- public_0008's final query builds
-135 spans, and the 24 longest are all 5-grams of conversational filler matching
-zero products, while "bras everyday bras" (verbatim in the target) is a 3-gram
-and never gets queried.
+identity, clause+edge, non-answer filter, both, and MAX_PHRASE_QUERIES = 96 as
+the blunt control. The control matched the best fix, so the fixes win on cost
+(same score at a quarter of the phrase lookups), not on score.
 
-Two separate causes, measured separately so we know which one pays:
-
-  clause   build spans within a clause and never on a stopword edge, so a
-           window cannot slide across "requirement is: nylon" and a fragment
-           like "i m looking for" cannot consume a lookup. Generalizes: both
-           are properties of language, not of this simulator's wording.
-  filter   drop contentless replies from the phrase query only, via the
-           existing EmbeddingNonAnswerDetector (PHRASE_QUERY_SKIP_NON_ANSWERS).
-           Narrower than the whole-query version that measured -0.0410
-           (CLAUDE.md #19) -- BM25 and dense keep every character, so the
-           exact-match text that loss was made of is never removed.
-  budget   simply raise MAX_PHRASE_QUERIES. The blunt control: if this alone
-           captures the gain, the classifier is not earning its place.
-
-Identity must reproduce the shipped score before any other leg is believed.
+About five full evals. Run it alone.
 
     uv run python3 scripts/ab_phrase_query.py
 """

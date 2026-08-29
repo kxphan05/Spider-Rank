@@ -1,56 +1,16 @@
-"""A/B the MMR diversity re-rank on the *buying* track.
+"""A/B the MMR diversity re-rank on the buying track (CLAUDE.md #24).
 
-Why this experiment exists, and why it is not another weight tune.
+Browsing has always had the re-rank, buying never has, and the switch has never
+been measured. Buying misses sit in coarse categories 2.4x more crowded than its
+hits (median 338 vs 138, p = 0.0096) while browsing shows no crowding effect, and
+diversity is the only knob that spreads a slate across a category.
 
-`routing_params()` lets the buying/browsing label decide four things: the BM25
-weight, the dense weight, the entropy threshold, and whether the MMR diversity
-re-rank runs. Three of the four have been measured. The browsing fusion weights
-are flat across 0.0-1.5 and must not be re-tuned (#16). The buying weights sit
-on a monotone curve with no interior optimum (#16). The entropy threshold
-changed no outcome on the tuning subset (#4). **The diversity switch has never
-been measured at all** -- browsing has always had it, buying has never had it,
-and nobody ran the leg with it on.
+Falsification, stated before the run: the gain should land on buying sessions in
+crowded categories. A uniform gain is doing something else. Note the two tracks
+are not disjoint populations -- the weights key off the classifier's per-turn
+label, not scenario_type (#16).
 
-The miss census at 0.6978 points straight at it. Splitting every session by how
-crowded the target's coarse category is (how many catalog products share it):
-
-    scenario           median crowding, hits   misses    p (permutation, 20k)
-    buying                              138      338     0.0096  *
-    browsing                            173      212     0.4212
-    intent_override                     141      117     0.6080
-
-Buying's misses sit in categories 2.4x more crowded than its hits. Browsing
-shows no crowding effect whatsoever. That asymmetry is the thing to explain,
-and of the four knobs only diversity changes how much of a *category* one slate
-covers -- fusion weights and an entropy threshold reorder or re-ask, they do
-not spread. Under EXCLUDE_SHOWN a session surfaces up to 100 distinct products
-across ten slates, so covering a crowded category is exactly what a diverse
-slate buys, and re-offering ten near-identical items is exactly what it avoids.
-
-Two things this experiment is *not*, both of them mistakes already made here:
-
-  * It is not the turn-annealed lambda of #18, which measured null. That varied
-    the diversity strength on a track that already had diversity. This turns it
-    on for a track that never had it.
-  * It is not a query-side change. #17, #19 and #26 are three separate
-    findings that this benchmark punishes touching the query text, because
-    89.7% of customer text is verbatim target copy (#14). Nothing here touches
-    a query; the same pool is retrieved and only the final ordering changes.
-
-The mechanism is a prediction, so state what would falsify it. If diversity is
-the answer, the gain should land on buying sessions in crowded categories and
-be near-neutral elsewhere. A leg that gains uniformly across crowding, or that
-gains on browsing-scenario samples, is doing something else -- and note the two
-tracks are not separable populations (#16): the weights key off the classifier's
-per-turn label while `scenario_type` is the sample's ground truth, and the
-classifier drifts buying-ward as attributes accumulate.
-
-Identity must reproduce the shipped 0.6978 before the treatment leg is
-believed. That check has already caught one real measurement bug in this
-project (the gated-branch trap in CLAUDE.md "Blockers").
-
-    uv run python3 scripts/ab_buying_diversify.py
-    uv run python3 scripts/ab_buying_diversify.py --leg treatment
+    uv run python3 scripts/ab_buying_diversify.py [--leg identity|treatment]
 """
 from __future__ import annotations
 

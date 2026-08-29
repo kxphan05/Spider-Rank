@@ -1,42 +1,20 @@
-"""Sweep the disclosed-attribute resort weights and report score as a curve.
+"""Sweep the disclosed-attribute resort weights (CLAUDE.md #10, NEXT_STEPS #2).
 
-Motivation (CLAUDE.md #10, NEXT_STEPS #2): catalog attribute extraction used
-to be substring-matched, so "red" matched inside *embroidered* and "lace"
-inside *necklace* -- inventing a colour for 21.6% of the 50k catalog. The
-word-boundary fix is unambiguously correct and **currently costs 0.0054
-TechnicalScore**, because real colour coverage fell 58.6% -> 39.9% and
-`_boost_by_disclosed`'s +1/-1 scheme was tuned when the extra 19 points of
-(partly fictional) labels were there to separate candidates with. Correct but
-sparser labels leave far more candidates at a neutral 0.
+_boost_by_disclosed scores +DISCLOSED_MATCH_BOOST on agreement,
+-DISCLOSED_MISMATCH_PENALTY on contradiction, 0 when unextractable. The free
+parameter that matters is the **ratio** -- how much a known contradiction is
+worth against a known agreement. They are equal by assumption, never by
+measurement, and the +-1 scheme was tuned when colour coverage was 58.6% and a
+fifth of it was fictional. The word-boundary fix cut coverage to 39.9% and
+currently costs 0.0054; retuning against corrected coverage is the indicated
+move, not reverting the fix.
 
-The indicated move is not to revert the fix but to retune the magnitudes
-against the corrected coverage. The resort scores each candidate as
+Scale caveat: the ratio is the only free parameter **while the masked LM is
+dark**. Live, match_score also adds LM_INFERENCE_WEIGHT, so absolute magnitude
+sets how a disclosure trades against an inference. `--scale` sweeps that axis;
+it is a no-op with the LM absent and the script reports which regime it ran in.
 
-    +DISCLOSED_MATCH_BOOST      per disclosed attribute the catalog agrees on
-    -DISCLOSED_MISMATCH_PENALTY per disclosed attribute the catalog contradicts
-     0                          per attribute the catalog cannot extract
-
-so the free parameter that matters is the **ratio** penalty:match -- how much
-a known contradiction is worth relative to a known agreement. Those are two
-different kinds of evidence and they are currently equal by assumption, never
-by measurement. This script pins the match boost at 1.0 and sweeps the penalty.
-
-Scale caveat, and it is load-bearing: the ratio is the only free parameter
-**as long as the masked LM is dark**. When `starter/lm_confidence.py` is live,
-`match_score` also adds `LM_INFERENCE_WEIGHT` (0.5) for an inferred-attribute
-agreement, so the absolute magnitude of these two constants sets how a real
-disclosure trades off against an inference. `--scale` sweeps that second axis
-by scaling both constants together; it is a no-op with the LM absent, and the
-script says which regime it ran in.
-
-Do not read a small delta as a result. Per CLAUDE.md #16, convert rates to
-absolute session counts first: on 200 samples a HitRate of 0.7500 vs 0.7450 is
-*one session*, and the benchmark's resolution is about +-0.0025.
-
-Usage:
-    uv run python3 scripts/sweep_boost_weights.py
-    uv run python3 scripts/sweep_boost_weights.py --penalties 0,0.5,1,2
-    uv run python3 scripts/sweep_boost_weights.py --scale 0.5,1,2 --penalties 1
+    uv run python3 scripts/sweep_boost_weights.py [--penalties 0,0.5,1,2] [--scale 0.5,1,2]
 """
 from __future__ import annotations
 

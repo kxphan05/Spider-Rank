@@ -1,48 +1,21 @@
-"""Attribute co-occurrence priors learned from the frozen catalog.
+"""Attribute co-occurrence priors learned from the frozen catalog (CLAUDE.md #11).
 
-The idea, in the shape a shopper would state it: *someone buying makeup
-probably wants pink*. Attribute values are not independent -- a category
-implies materials, a material implies colors -- so a value the customer never
-stated can still be predicted from one they did. Measured on this catalog the
-effect is large and nothing like subtle:
+A value the customer never stated can be predicted from one they did:
 
-    P(material=stainless steel | category=Watches Wrist Watches) = 0.483   vs 0.023   (21x)
-    P(material=mesh            | category=Running Road Running)  = 0.425   vs 0.032   (13x)
-    P(color=silver             | category=Necklaces Pendant)     = 0.229   vs 0.036   ( 6x)
-    P(color=brown              | material=leather)               = 0.065   vs 0.018   ( 4x)
+    P(material=stainless steel | Watches Wrist Watches) = 0.483  vs 0.023  (21x)
+    P(material=mesh            | Running Road Running)  = 0.425  vs 0.032  (13x)
+    P(color=silver             | Necklaces Pendant)     = 0.229  vs 0.036  ( 6x)
 
-That is a genuinely different signal from the one in `user_profile.py`, which
-is measured dead (`scripts/eval_profile_signal.py`): this conditions on what
-the customer said *this session*, not on a cross-session identity guess, so
-it needs no assumption that two sessions sharing a profile hash are the same
-shopper -- an assumption that check showed to be false.
+Unlike the profile signal (measured dead, eval_profile_signal.py) this conditions
+on what the customer said *this* session, so it needs no cross-session identity
+assumption. Diagnostic only -- no agent code path reaches it, which is why it
+lives in scripts/ rather than starter/.
 
-Two uses, both supported here, deliberately kept boost-only (see
-`Agent._boost_by_disclosed`): an inferred value may raise a candidate, never
-sink one. CLAUDE.md #5 records why that asymmetry is not optional -- any
-nonzero mismatch penalty drops a candidate below every neutral
-(unknown-attribute) candidate regardless of the weight attached to it, so a
-wrong *inference* penalizing candidates would be unbounded in exactly the way
-a wrong disclosure already is.
+Built on AttributeIndex, so it inherits the word-boundary fix. That ordering was
+not free: against the older substring extractor the strongest "signal" here was
+P(material=lace | Necklaces) = 0.867, i.e. "neck-lace".
 
-Built on top of `AttributeIndex`, so it inherits that extractor's word-
-boundary matching. This ordering matters and was not free: built against the
-older substring extractor, the strongest "signal" this module reported was
-P(material=lace | category=Necklaces Pendant Necklaces) = 0.867, which is not
-a fact about jewelry -- it is "necklace" containing "lace". Co-occurrence
-amplifies extraction bugs into confident nonsense, so the extractor was fixed
-first (see attributes.py `_vocab_matcher`).
-
-**This lives in `scripts/`, not `starter/`, because no agent code path reaches
-it.** The signal is real and measured, but wiring it into
-`Agent._infer_attributes` alongside the masked LM is an experiment that has not
-been run (NEXT_STEPS #4). Keeping it out of the package keeps 200 lines of
-unreachable code out of the submitted bundle, which copies `starter/` verbatim
-into `src/`. Move it back when it earns its place by measurement.
-
-Usage:
     uv run python3 scripts/cooccurrence.py
-    uv run python3 scripts/cooccurrence.py --attribute color --top 15
 """
 from __future__ import annotations
 

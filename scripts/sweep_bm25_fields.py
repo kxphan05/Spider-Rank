@@ -1,29 +1,15 @@
-"""Sweep the BM25F field weights -- hand-picked at index-build time, never tuned.
+"""Sweep the BM25F field weights, hand-picked at index-build time and never tuned.
 
-`bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)` weights the FTS5 columns
+The six weights over (title, categories, features, details, store, description)
+were guessed, and BM25F weights are known to be collection-dependent. This
+matters here because BM25 is the leg that carries the benchmark -- dense adds no
+recall (CLAUDE.md #14) and the phrase leg rides the same ORDER BY, so one
+weighting improves two of three legs.
 
-    parent_asin(UNINDEXED), title, categories, features, details, store, description
-
-and those six free numbers were guessed. The IR literature is consistent that
-BM25F field weights are collection- and query-dependent and need a grid
-search, so guessed values on a 50k clothing catalog are unlikely to be right.
-This matters more than usual here because BM25 is the leg that actually
-carries this benchmark: the dense leg adds no recall at all (CLAUDE.md #14),
-and the phrase leg -- the largest win measured so far, #20 -- rides the *same*
-ORDER BY clause, so a better field weighting improves two of the three legs at
-once.
-
-A full grid is unaffordable: 6 free weights at a full 200-sample eval per
-point. This does **coordinate descent** instead -- one field at a time, each
-tried at multiples of its current value, keeping any improvement before moving
-to the next field. That finds a local optimum, not a global one, and the order
-of the fields biases the result; both caveats are real and are the price of
-the budget.
-
-Rows stream as they complete, so a partial run is still usable. The identity
-row must reproduce the shipped score before any other row is believed
-(CLAUDE.md's verification rule -- a mis-set identity has silently corrupted an
-A/B here before).
+A full grid is unaffordable at one 200-sample eval per point, so this is
+coordinate descent: one field at a time, keeping any improvement. That finds a
+local optimum and the field order biases the result. Rows stream, so a partial
+run is usable. The identity row must reproduce the shipped score first.
 
     uv run python3 scripts/sweep_bm25_fields.py
 """

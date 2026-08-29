@@ -1,10 +1,8 @@
 """Generate the presentation deck as an editable .pptx.
 
-Written as a script rather than a hand-made file for the same reason the
-submission bundle is generated: the numbers change, and a deck that has to be
-re-typed by hand goes stale silently. Edit this file and re-run, or edit the
-generated .pptx directly -- every shape is a real text box, table or autoshape,
-so PowerPoint, Keynote and Google Slides can all open and change it.
+Generated rather than hand-made so the numbers cannot go stale silently. Every
+shape is a real text box, table or autoshape, so the result opens and edits in
+PowerPoint, Keynote and Google Slides.
 
     uvx --from python-pptx python3 scripts/build_deck.py
 """

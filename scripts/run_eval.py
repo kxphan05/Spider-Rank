@@ -1,34 +1,19 @@
-"""Convenience wrapper around evaluator.local_evaluator.evaluate() for local dev iteration.
+"""Dev wrapper around evaluator.local_evaluator.evaluate().
 
-`python3 -m evaluator.local_evaluator` always scores the full 200-sample public
-set. This script calls the same `evaluate()` function (read-only use, no
-changes to scoring logic) but adds the knobs you actually want while
-iterating on `starter/agent.py`:
+Same evaluate() call as `python3 -m evaluator.local_evaluator` (scoring logic
+untouched), plus the knobs you want while iterating:
 
-  --limit N          only run the first N samples (fast smoke test)
-  --scenario TYPE     restrict to one scenario_type (repeatable): buying,
-                      browsing, intent_override, boundary
-  --seed N            shuffle samples before applying --limit, for a random
-                      subset instead of always the same first N
-  --quiet             suppress the per-scenario table and baseline diff
+    --limit N        first N samples only
+    --scenario TYPE  restrict to buying / browsing / intent_override / boundary
+    --seed N         shuffle before --limit, for a random subset
+    --quiet          suppress the per-scenario table and baseline diff
+    --no-progress    suppress the tqdm bar on stderr
 
-It also prints a per-scenario breakdown table and, when
-docs/baseline_results.json is present, a diff against the weak-BM25 baseline
--- neither of which the bare evaluator CLI prints.
+Also prints a per-scenario breakdown and, when docs/baseline_results.json exists,
+a diff against the weak-BM25 baseline. Each run gets a fresh profile store so
+repeated runs are independent.
 
-A tqdm progress bar over the samples is shown on stderr (a full 200-sample run
-takes a while and the bare evaluator prints nothing until it finishes); pass
---no-progress to suppress it.
-
-Each run gets a fresh long-term user-profile store by default (--profile-store)
-so repeated runs are independent -- see the comment in main() for the measured
-reason.
-
-Usage:
-    uv run python3 scripts/run_eval.py
-    uv run python3 scripts/run_eval.py --limit 40
-    uv run python3 scripts/run_eval.py --scenario buying --scenario intent_override
-    uv run python3 scripts/run_eval.py --seed 7 --limit 50 --output /tmp/quick.json
+    uv run python3 scripts/run_eval.py [--limit 40] [--scenario buying]
 """
 from __future__ import annotations
 

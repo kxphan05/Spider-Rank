@@ -1,22 +1,7 @@
-"""Sweep PHRASE_WEIGHT -- the verbatim-span retrieval leg's RRF weight.
+"""Sweep PHRASE_WEIGHT, the phrase-match leg's RRF weight. Results in CLAUDE.md #20.
 
-`BM25Index.search` ORs the query's unique tokens, so "Buckle closure" is two
-independent terms against 50k products. `BM25Index.phrase_search` matches the
-span itself. That distinction should matter a lot here: 89.7% of the local
-simulator's turn-1 hard constraints are verbatim substrings of the target
-product's own catalog text (CLAUDE.md #14), so the exact span is usually
-present and usually rare.
-
-This is the one retrieval-side idea that runs *with* that confound rather than
-against it. Every previous retrieval change that lost score (#14 dense weight,
-#17 override rewrite, #19 query pruning) lost by adding tolerance to an
-exact-match benchmark.
-
-`PHRASE_WEIGHT = 0.0` was the identity when this was written and reproduced
-0.6182 exactly. That predates shown-item exclusion (#23); on current HEAD the
-identity leg of this sweep is 0.6184-with-exclusion, not 0.6182 -- re-establish
-the identity number on the HEAD you are sweeping before believing a point. Check
-that row before believing any other.
+Shipped at 2.0 (+0.0272). There is a real interior optimum, but 2.0 and 4.0 are
+one session apart, so the top is flat and 2.0 is the lower-variance pick.
 
     uv run python3 scripts/sweep_phrase_weight.py
 """

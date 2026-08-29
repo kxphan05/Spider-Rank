@@ -1,34 +1,21 @@
 """Sweep the cross-encoder rerank stage: fusion weight x pool depth.
 
-This closes the last *named* gap against the competition spec's Pillar I
-("Multi-Route Retrieval -> LLM Semantic Ranking", CLAUDE.md #6): until this
-stage, nothing in the pipeline scored a query and a document *jointly*. BM25
-and the phrase leg match terms; the dense leg embeds the two sides
-independently and takes a cosine. A cross-encoder is the first component that
-reads the pair together.
+Closes the last named gap against spec Pillar I (CLAUDE.md #6) -- until this
+stage nothing scored a query and a document *jointly*.
 
-**Depth is the interesting axis, and it is easy to get backwards.** With
-RERANK_TOP_N == top_k == 10, the reranker can only permute the slate the
-agent was already going to return -- it can move MRR and literally cannot
-convert a miss into a hit under any ordering. Only scoring *deeper* than the
-slate opens a recall channel: an item the retrieval fusion left at rank 11-20
-can be promoted into the returned ten. So the two depths should behave
-qualitatively differently, not just quantitatively:
+**Depth is the interesting axis and it is easy to get backwards.** At
+RERANK_TOP_N == top_k == 10 the reranker can only permute the slate the agent was
+already returning: it can move MRR and cannot convert a miss into a hit under any
+ordering. Only scoring deeper opens a recall channel.
 
-    depth 10  ->  expect MRR to move, HitRate pinned to the identity
-    depth 20  ->  expect HitRate to move at all, in either direction
+    depth 10  ->  MRR moves, HitRate pinned to the identity
+    depth 20  ->  HitRate can move, in either direction
 
-If depth 10 shows a HitRate change, something else is wrong -- treat it as a
-bug signal, not a result.
+A HitRate change at depth 10 is a bug signal, not a result.
 
-Backend is MiniLM (ms-marco-MiniLM-L-6-v2, ~17 ms/pair). Qwen3-Reranker-0.6B
-judges better but needs ~27 s/pair on this hardware, which is ~75 hours for a
-single 200-sample evaluation; it is kept for the report and demo only and
-cannot be swept.
-
-`RERANK_WEIGHT = 0.0` is the exact identity (the stage returns its input
-untouched) and must reproduce the shipped score before any other row is
-believed.
+Backend is MiniLM (~17 ms/pair). Qwen3-Reranker-0.6B judges better but needs ~27
+s/pair here -- ~75 hours for one 200-sample eval -- so it is demo-only and cannot
+be swept. RERANK_WEIGHT = 0.0 is the exact identity.
 
     uv run python3 scripts/sweep_rerank.py
 """

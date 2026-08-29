@@ -1,22 +1,14 @@
 """Sweep SLOT_DECAY -- how fast a stated constraint's influence should fade.
 
-Spec 4.3 lists "slot decay over time" as in-scope, and the agent currently has
-none: a value disclosed on turn 1 carries exactly the same weight on turn 10.
-The only decay mechanism that exists is the override detector's all-or-nothing
-wipe, and CLAUDE.md #17 measured that the blunt version of that idea is
-structurally wrong (-0.0580).
+Spec 4.3 lists slot decay as in-scope and the agent has none: a value disclosed on
+turn 1 carries full weight on turn 10. The only decay that exists is the override
+detector's all-or-nothing wipe, and the blunt version of that idea measured
+-0.0580 (CLAUDE.md #17).
 
-`SLOT_DECAY = 1.0` is the identity setting and must reproduce the shipped score
-exactly; anything below it fades older slots geometrically. Run the identity
-point first and check it before believing any other row.
+Only the ratio between turns matters, so this sweeps one scalar. SLOT_DECAY = 1.0
+is the identity and must reproduce the shipped score first.
 
-Only the *ratio* between turns matters, so this sweeps a single scalar. Beware
-the two methodological traps recorded in CLAUDE.md #16: convert rates to
-absolute session counts before believing a small delta (0.7500 vs 0.7450 is one
-session out of 200), and the benchmark's resolution is about +-0.0025.
-
-    uv run python3 scripts/sweep_slot_decay.py
-    uv run python3 scripts/sweep_slot_decay.py --values 1.0 0.9 0.8
+    uv run python3 scripts/sweep_slot_decay.py [--values 1.0 0.9 0.8]
 """
 from __future__ import annotations
 

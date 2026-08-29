@@ -1,12 +1,10 @@
-"""Offline validation of starter/classifier.py against the public dev set.
+"""Sanity-check starter/classifier.py against the local dev templates.
 
-Read-only use of evaluator.local_evaluator's message-generation helpers to
-reconstruct exactly what the local simulator would say turn-by-turn (does
-not modify the evaluator). This checks the classifier against this repo's
-local dev templates only -- it's a sanity check, not proof the classifier
-generalizes to the real hidden simulator's phrasing.
+Superseded for rule selection by eval_intent.py and eval_override.py, which sweep
+candidate rules on three pools each. Read-only use of the evaluator's
+message-generation helpers; it validates against local phrasing only and proves
+nothing about the hidden simulator.
 
-Usage:
     uv run python3 scripts/eval_classifier.py
 """
 from __future__ import annotations

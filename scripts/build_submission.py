@@ -1,43 +1,22 @@
 """Assemble the submission bundle, then verify it actually runs.
 
-`docs/submission_rules.md` requires the submitted package to stand on its own:
-an entry file exporting `Agent`, its helper modules, dependency installation
-steps, one command to run in the official harness, and a report. It warns that
-"if your code cannot be reproduced from the submitted bundle and instructions,
-the organizer may treat the run as invalid."
+The bundle is generated, never hand-edited, so it cannot drift from the source
+tree. Layout follows the shape docs/submission_rules.md recommends:
 
-The bundle is *generated*, never hand-maintained, so it cannot drift from the
-source tree. Layout follows the rules' recommended shape:
+    submission/  agent.py (exports Agent) | src/ | requirements.txt
+                 README.md | REPORT.md | tools/
 
-    submission/
-      agent.py          entry point; exports Agent
-      requirements.txt  pinned runtime dependencies
-      README.md         setup, run command, environment variables
-      REPORT.md         the required method/limitations/cost report
-      src/              the agent package (copied from starter/)
-      tools/            fetch_assets.py, preflight.py, and their bootstrap
+`data/` and `model/` are deliberately not copied -- the catalog is
+organizer-provided and the encoder plus index are ~200 MB. `tools/fetch_assets.py`
+materializes them and `tools/preflight.py` verifies the result offline. That
+fetch needs network, so `--with-assets` also emits a separate archive of the
+prebuilt assets beside the bundle, letting the organizer stay offline.
 
-`data/` and `model/` are deliberately *not* copied into the bundle -- the
-catalog is organizer-provided, and the encoder plus dense index are ~200 MB.
-`tools/fetch_assets.py` materializes them, and `tools/preflight.py` verifies
-the result offline.
+`--verify` imports the bundle's Agent from a neutral working directory, asserts
+dense retrieval and both classifiers came up live, and scores the full public
+set. It is itself a full eval.
 
-That fetch needs network, though, and the rules warn that "organizer policy may
-disable network access" for official scoring. `--with-assets` therefore also
-emits a *separate* archive of the prebuilt assets next to the bundle, so the
-organizer can choose: run the fetch, or unpack the archive at the bundle root
-and stay offline. It is deliberately not inside the bundle -- a ~200 MB
-submission should be an opt-in, and § Allowed Submission Contents asks for
-"lightweight local assets".
-
-The masked LM is excluded by default: it costs ~255 MB and is worth +0.0010
-TechnicalScore (CLAUDE.md #11). Pass --with-lm to include it anyway.
-
-Usage:
-    uv run python3 scripts/build_submission.py
-    uv run python3 scripts/build_submission.py --verify        # also run the harness
-    uv run python3 scripts/build_submission.py --with-assets   # + the asset archive
-    uv run python3 scripts/build_submission.py --out /tmp/sub
+    uv run python3 scripts/build_submission.py --verify
 """
 from __future__ import annotations
 

@@ -1,25 +1,15 @@
 """How many clarifying questions come back empty, and can we tell?
 
-Two read-only diagnostics, no Agent required:
+Sizing, derived from the evaluator's own reply policy: a session has a mean of
+2.09 distinct answerable attribute buckets left after turn 1 against an MTTC of
+~5, so roughly three asks in five return nothing. That upper-bounds what any
+question-planning work can win.
 
-1. **Sizing.** How many distinct answerable attribute buckets a session has
-   left after turn 1, derived from the evaluator's own reply policy. This
-   upper-bounds what any question-planning work can ever win, so it is worth
-   knowing *before* building the planner rather than after.
+Read-only, no Agent required. Note the *query surgery* this motivated measured
+-0.0410 and was reverted (CLAUDE.md #19); the observation itself is kept and
+feeds SessionBelief.
 
-2. **Detector quality.** Recall / false-positive rate for
-   `EmbeddingNonAnswerDetector` against the simulator's own replies plus
-   hand-written out-of-distribution phrasings, with the lexical floor
-   (`classify_reply_lexically`) as a comparison row.
-
-The error asymmetry is the opposite of the override detector's (CLAUDE.md #7):
-a false positive here drops a *real* disclosure out of the query, while a false
-negative merely leaves current behaviour unchanged. So **FPR is the column that
-gates shipping**, and recall is the nice-to-have.
-
-Ground-truth labelling for the simulator pool matches the two literal
-non-answer templates. That is legitimate for scoring a rule but would be
-cheating inside one -- see CLAUDE.md #12/#13 on template memorization.
+    uv run python3 scripts/eval_dialogue_efficiency.py
 """
 from __future__ import annotations
 

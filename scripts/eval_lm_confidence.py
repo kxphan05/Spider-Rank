@@ -1,32 +1,17 @@
-"""Can a local masked LM predict a session's target attribute, and is its
-entropy a usable confidence gate?
+"""Can a local masked LM predict a session's target attribute, and is its entropy
+a usable confidence gate?
 
-Two separate questions, and the second matters more than the first:
+Calibration matters more than accuracy: if accuracy is flat across the entropy
+range, the gate is decoration. Ground truth is AttributeIndex's value for the
+target, because that is exactly what _boost_by_disclosed compares against. The
+context is the reconstructed turn-1 message -- what the agent actually holds when
+it picks its first question.
 
-  accuracy     Does the LM's top-1 guess for the target product's material /
-               colour beat always guessing that attribute's most common value?
-               A predictor that cannot beat the mode has nothing to add to
-               retrieval.
+Verdict (CLAUDE.md #11): the gate works and is steep, so MAX_CONFIDENT_ENTROPY =
+0.60 is calibrated rather than guessed. Colour is excluded -- it loses to an
+always-"black" baseline and its gate runs backwards.
 
-  calibration  Do low-entropy predictions come true more often than
-               high-entropy ones? This is the whole premise of gating on
-               perplexity: the agent acts on confident beliefs and asks a
-               question when unsure. If accuracy is flat across the entropy
-               range, the gate is decoration -- it would let through exactly
-               as many wrong guesses as right ones, and a wrong guess is what
-               CLAUDE.md #5 shows to be expensive.
-
-Ground truth is `AttributeIndex`'s value for the target product, because that
-is precisely what `Agent._boost_by_disclosed` compares a prediction against;
-being right in some other sense would not move the score. Only samples where
-the target has an extracted value are scored.
-
-The context given to the LM is the reconstructed turn-1 customer message --
-what the agent actually has when it must choose its first question.
-
-Usage:
-    uv run python3 scripts/eval_lm_confidence.py
-    uv run python3 scripts/eval_lm_confidence.py --limit 60 --attribute color
+    uv run python3 scripts/eval_lm_confidence.py [--limit 60] [--attribute color]
 """
 from __future__ import annotations
 

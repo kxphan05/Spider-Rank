@@ -1,36 +1,10 @@
-"""Sweep the intent-conditioned RRF fusion weights and report score as a curve.
+"""Sweep the dense:bm25 RRF ratio per track. Results in CLAUDE.md #16.
 
-Baseline note: the numbers quoted below were measured when the shipped score
-was 0.6070. The shipped score is now 0.7020 (CLAUDE.md #23); re-establish this
-sweep's identity point on the HEAD you are sweeping before believing a curve.
+Only the ratio matters -- weighted RRF is scale-invariant per leg -- so bm25 is
+pinned at 1.0. The buying curve is strictly monotone decreasing with no interior
+optimum; the browsing curve is flat across 0.0-1.5 and must not be re-tuned.
 
-Motivation (CLAUDE.md #14): ablating the dense leg entirely *raises*
-TechnicalScore 0.6070 -> 0.6216 on the public set, with HitRate identical to
-four decimals. We did not drop the leg, because 89.7% of local hard
-constraints are verbatim substrings of the target's own catalog text -- the
-local set is a pure exact-match benchmark and cannot price the paraphrase
-robustness dense exists to provide.
-
-The untried middle is to *retune* rather than remove. The current weights
-(buying 2.0/1.0, browsing 1.25/1.5) were set before anyone had checked whether
-dense contributes at all.
-
-Only the **ratio** dense:bm25 matters, not the magnitudes: weighted RRF scores
-each leg as `weight / (k + rank)`, so scaling both weights by any constant
-scales every score identically and leaves the ranking untouched. This script
-therefore holds bm25_weight at 1.0 and sweeps the dense weight, which is the
-ratio directly. Ratio 0.0 is equivalent to dropping the leg.
-
-The output is deliberately a curve, not a winner. The useful question is not
-"which point scores best on this benchmark" -- #14 already establishes that
-the benchmark favours no dense at all -- but "how much score is being paid for
-paraphrase insurance, and how sharply does that cost change." A flat region
-means insurance is nearly free; a steep one means it is not.
-
-Usage:
     uv run python3 scripts/sweep_fusion_weights.py --track buying
-    uv run python3 scripts/sweep_fusion_weights.py --track browsing
-    uv run python3 scripts/sweep_fusion_weights.py --track both --ratios 0,0.5,1.0
 """
 from __future__ import annotations
 

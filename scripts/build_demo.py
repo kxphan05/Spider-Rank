@@ -1,24 +1,14 @@
 """Build the session-replay demo page, and optionally re-capture its data.
 
-The demo replays **real** agent sessions: `--capture` drives the live `Agent`
-through the evaluator's own customer simulator and records every turn -- the
-message, the agent's reply and question, the top-10 recommendations, the
-disclosed-slot state, the classifier's intent label, and whether the override
-detector fired. Nothing on the page is mocked, which is the point: a demo built
-from invented transcripts cannot be checked against the scoring harness.
+The demo replays real agent sessions -- `--capture` drives the live Agent through
+the evaluator's own customer simulator and records every turn. Nothing on the
+page is mocked. Capture needs the catalog, dense index and both models loaded;
+rendering is instant, so the captured sessions are committed
+(`demo/sessions.json`) and the page rebuilds without them.
 
-Capture is separated from render because capture needs the 50k catalog, the
-dense index and both models loaded (slow), while rendering is instant. The
-captured sessions are committed (`demo/sessions.json`, ~56 KB) so the page can
-be rebuilt without re-running the agent.
+UI is out of scope for scoring (TODO.md 4.3). This is for presenting.
 
-Note UI is explicitly out of scope for scoring (`TODO.md` 4.3) -- this exists
-for presenting the system, not for points.
-
-Usage:
-    uv run python3 scripts/build_demo.py                 # render from committed data
-    uv run python3 scripts/build_demo.py --capture       # re-run the agent first
-    uv run python3 scripts/build_demo.py --capture --ids public_0013
+    uv run python3 scripts/build_demo.py [--capture] [--ids public_0013]
 """
 from __future__ import annotations
 

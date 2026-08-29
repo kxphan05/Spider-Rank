@@ -1,30 +1,18 @@
-"""Materialize every local runtime asset the agent needs, in one command.
+"""Materialize every local runtime asset, in one command. The only networked step.
 
-`docs/submission_rules.md` § Reproducibility requires dependency installation
-steps and one command to run the agent, and warns that the organizer may run
-the submission under network restrictions. The agent therefore must reach
-scoring time with all weights and indexes already on disk.
+Two assets are not in git -- the bge-small weight blob alone is 128 MB, over
+GitHub's per-file limit:
 
-Two assets are not in git (they are far too large -- the bge-small weight blob
-alone is 128 MB, over GitHub's 100 MB per-file hard limit):
+    model/             bge-small-en-v1.5 encoder weights, from HuggingFace
+    data/dense_index/  50k catalog embeddings, built locally from the above
 
-  model/                  bge-small-en-v1.5 encoder weights, via HuggingFace
-  data/dense_index/       50k catalog embeddings, built locally from the above
+Run once at setup. Afterwards `scripts/preflight.py --strict` should pass and the
+agent runs fully offline, which the submission rules warn may be required.
 
-This script fetches the first and builds the second. **It needs network
-access, and it is the only part of this project that does.** Run it once at
-setup time; after it completes, `scripts/preflight.py --strict` should pass
-and the agent runs fully offline.
+`--with-lm` is off by default: the masked-LM inference costs 256 MB of weights,
+~350 MB peak RSS and ~47 ms/turn for +0.001 TechnicalScore, inside the noise floor.
 
-Usage:
-    uv run python3 scripts/fetch_assets.py              # encoder + dense index
-    uv run python3 scripts/fetch_assets.py --with-lm    # also distilbert (see below)
-    uv run python3 scripts/fetch_assets.py --skip-index
-
-`--with-lm` is off by default deliberately. The masked-LM attribute inference
-costs 256 MB of weights, ~350 MB of peak RSS and ~47 ms per turn, and is worth
-+0.001 TechnicalScore -- inside the noise floor of the 200-sample public set.
-See `docs/team_report.md` § Ablations.
+    uv run python3 scripts/fetch_assets.py [--with-lm] [--skip-index]
 """
 from __future__ import annotations
 
