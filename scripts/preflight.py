@@ -111,7 +111,14 @@ def check_live(require_lm: bool) -> list[str]:
             line(FAIL, name, "DARK -- the agent will run degraded and score differently than measured")
             problems.append(name)
         else:
-            line(WARN, name, "dark (optional)")
+            # "dark" reads as a failure to anyone skimming the output. For a
+            # component that is switched off by configuration rather than
+            # missing from disk, say so -- a judge running this should not
+            # have to read the source to learn nothing is wrong.
+            reason = ("not enabled (RERANK_WEIGHT = 0.0)"
+                      if name == "cross-encoder reranker"
+                      else "not loaded (optional)")
+            line(WARN, name, reason)
     return problems
 
 
