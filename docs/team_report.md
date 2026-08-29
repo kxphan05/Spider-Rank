@@ -13,12 +13,12 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.750    MRR  0.4096    MTTC  4.985   Efficiency  0.6015
-TechnicalScore  0.6182
+HitRate@10  0.790    MRR  0.4176    MTTC  4.745   Efficiency  0.6255
+TechnicalScore  0.6454
 ```
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
-HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.0x improvement in hit
+HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.3x improvement in hit
 rate** and a halving of turns-to-conversion.
 
 By scenario:
@@ -30,6 +30,13 @@ By scenario:
 | intent_override | 30 | 0.8000 | 0.5330 | 5.90 |
 | boundary | 10 | 0.5000 | 0.1860 | 6.90 |
 
+> **Note:** the per-scenario table above is from the previous shipped
+> configuration (TechnicalScore 0.6182). The aggregate line has been updated
+> to the current one; the per-scenario split is being re-measured and will be
+> refreshed before submission. Flagged rather than silently carried forward,
+> because a stale breakdown under a fresh headline is exactly the kind of
+> number a reader would reasonably assume was re-run.
+
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
 
@@ -37,19 +44,33 @@ used strictly read-only; it has never been modified).
 
 ## 2. Method
 
-Five stages, all in-memory and all local.
+Six stages, all in-memory and all local. No network access is required at
+inference time.
 
 **Intent routing.** A zero-shot nearest-centroid classifier over frozen
 bge-small embeddings labels each session buying vs. browsing
 (`EmbeddingIntentClassifier`), with a lexical rule as fallback. The label
 conditions three downstream choices rather than selecting a separate pipeline.
 
-**Dual-track hybrid retrieval.** BM25 (SQLite FTS5) and dense cosine retrieval
-run independently over the full 50k catalog and are combined by weighted
-reciprocal rank fusion. The weights are intent-conditioned: buying keeps a
-BM25-heavy 2.0/0.5 for precision on hard constraints, browsing shifts to
-1.25/1.5 for broader semantic matching and additionally gets an MMR diversity
-re-rank, pinned so diversity can never evict the top matches.
+**Dual-track hybrid retrieval, three legs.** BM25 (SQLite FTS5), a
+**phrase-match leg**, and dense cosine retrieval run independently over the
+full 50k catalog and are combined by weighted reciprocal rank fusion. The
+BM25/dense weights are intent-conditioned: buying keeps a BM25-heavy 2.0/0.5
+for precision on hard constraints, browsing shifts to 1.25/1.5 for broader
+semantic matching and additionally gets an MMR diversity re-rank, pinned so
+diversity can never evict the top matches.
+
+The phrase leg is our largest single measured gain (**+0.0272**, §6) and the
+only change in this project that improved *recall* rather than ordering. It
+exists because of a property we measured about the task rather than a general
+preference: 89.7% of the simulated customer's turn-1 hard constraints are
+verbatim substrings of the target product's own catalog text. Ordinary BM25
+dissolves that structure — it ORs the query's unique tokens, so "Buckle
+closure" becomes two independent terms against 50k products. The phrase leg
+matches the span itself via FTS5 phrase queries, scoring n-grams longest-first
+and discarding any span that matches more than 150 products as
+non-discriminative. Weight swept at 2.0; the curve has a genuine interior
+optimum.
 
 **Disclosure extraction and attribute boosting.** Every customer message is
 scanned for material, color and budget (negation-aware). Disclosed values
@@ -65,6 +86,16 @@ entropy threshold it falls back to a fixed order sorted by measured
 *answerability* — `feature, style, size, use_case, budget`. That ordering
 alone was worth +0.0109 TechnicalScore.
 
+**Cross-encoder re-ranking.** The pool head is re-scored by
+`ms-marco-MiniLM-L-6-v2`, the first stage in the pipeline that reads the query
+and a document *jointly* — BM25 and the phrase leg match terms, and the dense
+leg embeds the two sides independently and takes a cosine. The re-ranked order
+is fused back by RRF rather than replacing the retrieval order outright. The
+scored depth is deliberately deeper than the returned slate: at depth equal to
+`top_k` the re-ranker can only permute the ten items already destined for the
+slate, so it cannot convert a miss into a hit under any ordering. Depth is
+what opens the recall channel.
+
 **Intent-override handling.** The agent API exposes no signal for a
 mid-session pivot, so it is detected from text: a trimmed nearest-prototype
 rule (mean of the 4 closest prototypes) scored over both the full message and
@@ -79,9 +110,18 @@ are cleared. This replaced a centroid rule that missed terse pivots
 
 | component | model | size | why |
 |---|---|---:|---|
-| dense retrieval + both classifiers | `BAAI/bge-small-en-v1.5` | 129 MB | strong retrieval quality per MB; runs on CPU in-process |
+| dense retrieval + all three classifiers | `BAAI/bge-small-en-v1.5` | 129 MB | strong retrieval quality per MB; runs on CPU in-process |
+| cross-encoder re-ranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 87 MB | ~17 ms/pair on CPU, which is what makes the stage measurable at all |
 | masked-LM attribute inference | `distilbert-base-uncased` | 257 MB | **optional**, see §6 |
-| lexical retrieval | SQLite FTS5 (BM25) | — | stdlib, no model |
+| lexical + phrase retrieval | SQLite FTS5 (BM25) | — | stdlib, no model |
+
+We also evaluated `Qwen/Qwen3-Reranker-0.6B` for the re-ranking stage. It
+judges noticeably better, but needs **~27 s per pair** on this hardware
+against MiniLM's ~17 ms — roughly 75 hours for a single 200-sample
+evaluation, so it cannot be A/B'd, let alone shipped. It is retained for the
+demo only. This is a case where the honest engineering constraint was
+measurement throughput rather than inference latency: a model we cannot
+evaluate is a model we cannot justify.
 
 **No LLM API is called at inference time.** Both models are local, frozen, and
 CPU-only. Nothing is fine-tuned: `TODO.md` § 4.3 places "training or
@@ -263,7 +303,50 @@ the part that is not (removing the leg entirely).
 
 ---
 
-## 8. Setup and reproducibility
+## 8. Team contributions and development process
+
+Required by `docs/competition_specification.md` § Final Deliverables ("a short
+report covering architecture, models, cost, limitations, and team
+contributions").
+
+### Contributions
+
+| member | contribution to Track 4 |
+|---|---|
+| **[PRIMARY_AUTHOR]** | All of it: architecture, retrieval design, every experiment and measurement, the evaluation tooling, and this report. |
+| **[TEAMMATE]** | Registered team member. No implementation on this track. |
+
+Stated plainly because the specification asks for it: this track's system was
+designed, built, measured and written up by one person. The division is not a
+reflection of effort withheld — the second member is newer to the stack, and
+the work here is dense with retrieval-evaluation methodology that is a poor
+first project.
+
+### Development process, and the use of AI assistance
+
+This submission was built with heavy use of an AI coding assistant (Claude
+Code) for implementation, refactoring and documentation. `docs/submission_rules.md`
+§ Model Policy permits prototyping with any legally accessible model and does
+not require this disclosure; we state it because it is materially true.
+
+What the assistant did **not** decide is the part that determined the score.
+Every experiment in §6 was specified, run against the frozen 200-sample public
+set, and accepted or rejected on its measured number — including the four that
+were rejected. The discipline that produced the result is visible in the
+repository's own record: a documented rule that an identity setting must
+reproduce the shipped score before any swept point is believed, absolute
+session counts rather than rates when judging small deltas, and predictions
+written down *before* the run that produced them. That rule caught a real bug
+in this project — a feature flag whose zero value was not the identity, which
+had silently shifted an entire A/B's control leg.
+
+The honest summary is that AI assistance made the implementation fast and the
+measurement discipline made it correct, and the second of those is the one
+that separated the ideas that worked from the four that did not.
+
+---
+
+## 9. Setup and reproducibility
 
 **Python 3.12+** (`requires-python = ">=3.12"`). Dependencies: `numpy>=2.5.2`,
 `sentence-transformers>=6.0.0`, `torch>=2.9.0` (CPU wheel index pinned in
@@ -339,4 +422,9 @@ a background download.
 | `scripts/eval_lm_confidence.py` | masked-LM entropy-gate calibration |
 | `scripts/train_intent_head.py` | trained-head diagnostic (rejected; `--save` opt-in) |
 | `scripts/sweep_fusion_weights.py` | RRF dense:bm25 weight curve |
+| `scripts/sweep_phrase_weight.py` | phrase-leg RRF weight curve (§6) |
+| `scripts/sweep_rerank.py` | cross-encoder weight x scored depth |
+| `scripts/sweep_bm25_fields.py` | BM25F per-field weights, coordinate descent |
+| `scripts/sweep_boost_weights.py` | disclosed-attribute resort magnitudes |
+| `scripts/sweep_prf_weight.py` | pseudo-relevance-feedback leg weight |
 | `scripts/build_submission.py` | assemble and verify the submission bundle |
