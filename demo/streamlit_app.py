@@ -24,8 +24,12 @@ and loads the encoder. Both are cached for the session afterwards.
 """
 from __future__ import annotations
 
+import gzip
 import json
+import os
 import sys
+import tempfile
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -43,13 +47,117 @@ from starter.agent import Agent, routing_params  # noqa: E402
 # explicitly out of scope. If the attribute is ever renamed, this panel
 # breaks loudly rather than showing stale state.
 
-CATALOG = REPO_ROOT / "data" / "catalog.jsonl"
 MAX_TURNS = 10
+
+# Cap on how many sessions the shared Agent keeps. Streamlit caches ONE Agent
+# across every visitor, and Agent never evicts from its session dict -- fine
+# for the evaluator, which runs 200 sessions and exits, but an unbounded leak
+# for a long-lived server that a few people are hammering. Pruned in
+# start_session() below.
+MAX_TRACKED_SESSIONS = 200
+
+# Point the long-term profile store at a scratch file. It is a write-through
+# JSON file keyed by an anonymised profile hash, and the default path lives in
+# the repository. On a shared demo that means every visitor writing to one
+# file from a pool of worker threads, which is both a concurrency hazard and a
+# privacy smell. The store has no effect on ranking anyway (measured dead), so
+# a throwaway path costs nothing.
+os.environ.setdefault(
+    "TECHJAM_PROFILE_STORE",
+    str(Path(tempfile.gettempdir()) / "techjam_demo_profiles.json"),
+)
 
 st.set_page_config(page_title="TechJam Shopping Agent", page_icon="🛍️", layout="wide")
 
 
-@st.cache_resource(show_spinner="Building the index and loading models…")
+def resolve_catalog() -> Path | None:
+    """Find the catalog, or fetch it if we were given somewhere to fetch from.
+
+    The catalog is 58 MB of organizer-provided Amazon metadata and is
+    deliberately not committed, so a cloud deploy clones a repository without
+    it. Resolution order:
+
+      1. TECHJAM_CATALOG, or a `catalog_path` secret
+      2. data/catalog.jsonl beside the repository
+      3. a `catalog_url` secret -- downloaded once into the container
+
+    Option 3 exists so the file never has to be committed. Note that
+    DATA_ATTRIBUTION.md requires following the source dataset's terms, so
+    point it at storage you control and keep private, not a public mirror.
+    """
+    explicit = os.environ.get("TECHJAM_CATALOG") or _secret("catalog_path")
+    if explicit and Path(explicit).exists():
+        return Path(explicit)
+
+    local = REPO_ROOT / "data" / "catalog.jsonl"
+    if local.exists():
+        return local
+
+    url = os.environ.get("TECHJAM_CATALOG_URL") or _secret("catalog_url")
+    if url:
+        return download_catalog(url)
+    return None
+
+
+def _secret(name: str) -> str | None:
+    try:
+        return st.secrets.get(name)  # type: ignore[no-any-return]
+    except Exception:
+        # No secrets.toml at all -- normal for a local run.
+        return None
+
+
+@st.cache_resource(show_spinner="Downloading the catalog (one time)…")
+def download_catalog(url: str) -> Path | None:
+    target = Path(tempfile.gettempdir()) / "techjam_catalog.jsonl"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    try:
+        with urllib.request.urlopen(url, timeout=300) as response:  # noqa: S310
+            raw = response.read()
+        if url.endswith(".gz"):
+            raw = gzip.decompress(raw)
+        target.write_bytes(raw)
+        return target
+    except Exception as exc:
+        st.error(f"Could not download the catalog from the configured URL: {exc}")
+        return None
+
+
+CATALOG = resolve_catalog()
+
+if CATALOG is None:
+    st.title("🛍️ TechJam shopping agent")
+    st.error("**The product catalog is missing, so the agent cannot start.**")
+    st.markdown(
+        """
+The catalog is 58 MB of organizer-provided data. It is deliberately **not**
+committed to this repository, so a fresh clone — including a Streamlit Cloud
+deploy — does not have it.
+
+**Running locally:** download `catalog.jsonl.gz` from the competition release,
+then:
+
+```bash
+gzip -dk catalog.jsonl.gz
+mv catalog.jsonl data/catalog.jsonl
+```
+
+**Deploying to Streamlit Cloud:** add a secret pointing at storage you
+control, under *Manage app → Settings → Secrets*:
+
+```toml
+catalog_url = "https://.../catalog.jsonl.gz"
+```
+
+`DATA_ATTRIBUTION.md` requires following the source dataset's terms, so use
+private storage rather than a public mirror.
+"""
+    )
+    st.stop()
+
+
+@st.cache_resource(show_spinner="Building the search index and loading models…")
 def load_agent() -> Agent:
     return Agent(str(CATALOG))
 
@@ -75,10 +183,16 @@ def price_of(product: dict) -> str:
 
 
 def start_session() -> None:
+    agent = load_agent()
+    # Evict oldest-first before adding another. dicts preserve insertion
+    # order, so the first keys are the least recently created.
+    tracked = agent._sessions
+    while len(tracked) >= MAX_TRACKED_SESSIONS:
+        tracked.pop(next(iter(tracked)), None)
     st.session_state.session_id = str(uuid.uuid4())
     st.session_state.turn = 0
     st.session_state.history = []
-    load_agent().reset(st.session_state.session_id, {})
+    agent.reset(st.session_state.session_id, {})
 
 
 if "session_id" not in st.session_state:
@@ -91,6 +205,32 @@ catalog = load_catalog()
 with st.sidebar:
     st.title("🛍️ Agent state")
     st.caption("Everything here is read from the live agent, not replayed.")
+
+    # Which components actually came up. This is shown rather than hidden on
+    # purpose: the agent's degrade path is silent by design (it keeps serving
+    # ten products with a missing model and raises nothing), and that silence
+    # has already cost this project real debugging time. A demo that hides it
+    # would be misrepresenting what is running.
+    with st.expander("Live components", expanded=agent.dense is None):
+        components = [
+            ("keyword search (BM25)", agent.bm25 is not None),
+            ("phrase search", agent.bm25 is not None),
+            ("dense search", agent.dense is not None),
+            ("intent classifier", agent.intent_classifier is not None),
+            ("override detector", agent.override_detector is not None),
+            ("non-answer detector", agent.non_answer_detector is not None),
+        ]
+        for label, live in components:
+            st.write(("✅ " if live else "⚪ ") + label)
+        if agent.dense is None:
+            st.info(
+                "Running **lite**: keyword and phrase retrieval only. The model "
+                "weights are not present, so the neural components are off.\n\n"
+                "This is a fair demo of the ranking, not a crippled one — our "
+                "ablation measured the dense leg to add **no** hit-rate on this "
+                "benchmark. It only reorders. The phrase leg, which is on, is "
+                "the component that actually finds products."
+            )
 
     state = agent._sessions.get(st.session_state.session_id)
     turn = st.session_state.turn

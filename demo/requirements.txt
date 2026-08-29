@@ -1,0 +1,23 @@
+# Dependencies for the Streamlit Cloud demo ONLY.
+#
+# This is deliberately NOT the submission's requirements.txt at the repo root.
+# The hosted demo runs "lite": keyword + phrase retrieval, no neural
+# components. Two reasons, and the first is the honest one.
+#
+# 1. Streamlit Community Cloud gives a container about 1 GB of memory. The
+#    full agent needs the FTS5 index over 50k products, plus torch, plus
+#    bge-small, plus a 74 MB dense index. That does not fit, and an OOM kill
+#    mid-demo is worse than a component being visibly off.
+#
+# 2. It costs less than it sounds. Our own ablation measured the dense leg to
+#    contribute NO hit rate on this benchmark -- identical to four decimal
+#    places with it enabled or disabled. It only reorders. The phrase leg,
+#    which needs nothing but SQLite, is the component that finds products and
+#    is our largest measured win.
+#
+# The UI states which components are live, so nobody has to take that on
+# trust. To host the full agent, use a container with ~2 GB and install the
+# root requirements.txt instead, plus the model weights.
+
+streamlit>=1.40
+numpy>=2.0
