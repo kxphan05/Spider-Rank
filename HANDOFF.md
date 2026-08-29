@@ -39,15 +39,30 @@ two changes interact and +0.0280 was measured against a `STOPWORDS` that no
 longer exists once #26 lands. The next measurement should be #26 and
 `PHRASE_CLAUSE_SPANS` together, with identity re-established on that HEAD.
 
-## Another session is working in this tree
+## HEAD is now an unmeasured configuration — measure it first
 
-`starter/agent.py`, `classifier.py`, `retrieval.py` and `text_utils.py` carry
-uncommitted changes that are **not** from this handoff — a root-category IDF
-fix, request-verb stopwords, en-GB spelling normalization, purchase verbs in
-the intent classifier, and a narrow category-naming override rewrite. They are
-written up as CLAUDE.md #26 and were verified in the REPL, but **never measured
-on the 200-sample set**. `_REQUEST_STOPWORDS` removes tokens from every query,
-which is the shape that cost -0.041 in #19. Measure before shipping.
+`56f9df0` ("Restore category-word IDF...") landed while the A/B was running.
+It is CLAUDE.md #26: a root-category IDF fix in `BM25Index._build`,
+request-verb stopwords, en-GB spelling normalization, purchase verbs in the
+intent classifier, and a narrow category-naming override rewrite. It was
+found by using the demo and **verified in the REPL, but never scored on the
+200-sample set.**
+
+So **0.7020 is no longer HEAD's number.** It was measured before that commit,
+and #26 changes how the catalog is indexed and how every query is tokenized —
+the two things BM25 is made of, on a benchmark BM25 carries.
+
+The next full eval should therefore be a plain
+`uv run python3 -m evaluator.local_evaluator` on HEAD, before anything else is
+swept or shipped. Two specific things to watch:
+
+- `_REQUEST_STOPWORDS` removes tokens from **every** query. That is the shape
+  that cost -0.041 in #19, where text the detector called contentless turned
+  out to be an exact-match key to the target. The argument that this list is
+  different (ways of *asking*, never things to ask about) is a prediction, and
+  #19 is the standing reminder that predictions of this shape have been wrong.
+- It interacts with the phrase-leg flags above, which read `STOPWORDS`
+  directly.
 
 ## Do these before any more tuning
 
