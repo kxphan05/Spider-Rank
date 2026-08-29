@@ -350,6 +350,37 @@ Notable things confirmed empirically along the way, not just assumed:
    script first if the hidden set's profiles look different. Full write-up,
    including all three experiments and the store-contamination landmine:
    `.claude/skills/retrieval-experiments/SKILL.md`.
+
+   **Judge-facing justification: `docs/user_profile_decision.md`.** Written
+   2026-08-29 with two *new* tests that #5's original evidence did not cover,
+   both null: `preference_tags` -> target coarse category (every conditional
+   within noise of the 0.590 marginal, and the top four tags appear on 50-82%
+   of samples so they cannot separate customers anyway), and
+   `average_prior_rating` -> target `average_rating`. The second is worth
+   knowing about because it **passes significance and should still be
+   rejected**: r = 0.1824, permutation p = 0.0094 over 20,000 shuffles, which
+   clears p < 0.05 — but it explains 3.3% of the variance (a 1.7% improvement
+   in predictive precision), it is non-monotone (prior 1.0 -> 4.393 vs prior
+   5.0 -> 4.413, reversed between the two largest cells), and dropping the one
+   9-sample cell at prior = 2.0 collapses it to r = 0.0929, below the null's
+   own 95th percentile of 0.1389. It is the canonical "significant but neither
+   robust nor large enough to act on" case, and about a dozen tests were run
+   across the three fields, so one pass at p < 0.05 is what chance produces.
+   Two fields never needed testing: `purchase_frequency` is the constant
+   `"3-4 prior purchases"` on all 200 samples, and `summary` is a template
+   restatement of `preference_tags` + `rating_style`.
+
+   That doc also records the signal the same analysis *did* find, which is
+   profile-independent: `rating_number` is the only 100%-covered catalog field
+   and targets come overwhelmingly from the popular tail (catalog median 12
+   reviews, target median 7,078; the top 5.9% of the catalog by review count
+   holds 83% of the targets, a 14x lift). `scripts/sweep_prior_leg.py` was
+   built for exactly this and **has never been run** — no result in this file,
+   no log in `logs/`. Its `popularity` variant was designed as the *control*
+   for the profile idea, and the control is the leg with the effect size.
+   Caveat before shipping it: the concentration is a property of how the
+   evaluation samples were drawn, not of shopping, so it transfers only if the
+   hidden set was drawn the same way.
 6. Remaining gaps from the original spec analysis (`TODO.md` has the full
    competition spec): no cross-encoder or LLM reranking stage (`4.2.I`
    mentions "LLM Semantic Ranking" — current ranking is hybrid retrieval +
