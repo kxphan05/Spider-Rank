@@ -26,6 +26,39 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Thread pinning for concurrent sweeps. Torch defaults to one thread per core
+# and each scored run spawns ~40, so two sweeps on an 8-core box drive load
+# past 18 and both starve -- measured, and it has cost this project a wasted
+# run more than once. Setting the OMP/MKL variables alone does NOT bind torch
+# once it is imported, so the interop/intraop counts are set explicitly too.
+# Must run before torch is imported, which is why it lives in the module every
+# script imports first.
+#
+# TECHJAM_THREADS caps a single run; leave it unset for a solo run on an idle
+# machine, set it to roughly cores/jobs when running sweeps side by side.
+def _pin_threads() -> None:
+    requested = os.environ.get("TECHJAM_THREADS")
+    if not requested:
+        return
+    try:
+        count = max(1, int(requested))
+    except ValueError:
+        return
+    for variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                     "NUMEXPR_NUM_THREADS", "TOKENIZERS_PARALLELISM"):
+        os.environ.setdefault(variable, "false" if variable == "TOKENIZERS_PARALLELISM" else str(count))
+    try:
+        import torch
+
+        torch.set_num_threads(count)
+        torch.set_num_interop_threads(1)
+    except (ImportError, RuntimeError):
+        # RuntimeError: interop count can only be set once per process.
+        pass
+
+
+_pin_threads()
+
 DEFAULT_CATALOG = REPO_ROOT / "data" / "catalog.jsonl"
 DEFAULT_DATASET = REPO_ROOT / "data" / "public_set.jsonl"
 DEFAULT_MODEL_DIR = REPO_ROOT / "model"

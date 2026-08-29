@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .paths import catalog_fingerprint, model_cache_dir
+from . import prf
 from .text_utils import STOPWORDS, field_text, phrase_tokens, terms
 
 logger = logging.getLogger(__name__)
@@ -46,11 +47,40 @@ MAX_PHRASE_QUERIES = 24
 PHRASE_MAX_MATCHES = 150
 
 
+# BM25F field weights, in the FTS5 column order declared above:
+#
+#   parent_asin, title, categories, features, details, store, description
+#
+# parent_asin is UNINDEXED so its weight is inert and pinned at 0.0. The rest
+# were hand-picked when the index was first built and have never been swept --
+# the IR literature is consistent that BM25F field weights are collection- and
+# query-dependent and need a grid search, so hand-picked values on a 50k
+# clothing catalog are unlikely to be right. `scripts/sweep_bm25_fields.py`
+# sweeps them; DEFAULT_FIELD_WEIGHTS is the identity and must reproduce the
+# shipped score exactly before any swept point is believed.
+DEFAULT_FIELD_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
+FIELD_WEIGHTS = DEFAULT_FIELD_WEIGHTS
+
+
+def _bm25_expression() -> str:
+    """Render the ORDER BY term from the current FIELD_WEIGHTS.
+
+    Read at call time rather than baked in at import, so a sweep can rebind
+    the module constant between runs without rebuilding the index.
+    """
+    return "bm25(products, " + ", ".join(f"{w:g}" for w in FIELD_WEIGHTS) + ")"
+
+
 class BM25Index:
     """FTS5-backed keyword retrieval over catalog text fields."""
 
     def __init__(self, catalog_path: Path) -> None:
         self.connection = sqlite3.connect(":memory:")
+        self.size = 0
+        # Catalog document frequencies, memoised across the process for the
+        # PRF leg (prf.py). Lives on the index rather than in prf.py so it is
+        # scoped to the index it describes, not to the module.
+        self._df_cache: dict[str, int] = {}
         self._build(catalog_path)
 
     def _build(self, catalog_path: Path) -> None:
@@ -86,6 +116,7 @@ class BM25Index:
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
+        self.size = count
         logger.info("BM25Index: indexed %d products", count)
 
     def document_text(self, parent_asins: list[str]) -> dict[str, str]:
@@ -147,7 +178,7 @@ class BM25Index:
             try:
                 rows = self.connection.execute(
                     "SELECT parent_asin FROM products WHERE products MATCH ? "
-                    "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                    f"ORDER BY {_bm25_expression()} LIMIT ?",
                     (expression, PHRASE_MAX_MATCHES + 1),
                 ).fetchall()
             except sqlite3.OperationalError:
@@ -172,9 +203,47 @@ class BM25Index:
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         rows = self.connection.execute(
             "SELECT parent_asin FROM products WHERE products MATCH ? "
-            "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+            f"ORDER BY {_bm25_expression()} LIMIT ?",
             (expression, top_n),
         ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def prf_search(self, query: str, top_n: int, seed: list[str]) -> list[str]:
+        """Re-retrieve with terms harvested from the top `seed` results.
+
+        `seed` is the ranking an earlier leg already produced, so the feedback
+        round costs no extra retrieval -- only the expansion query itself.
+        Returns [] whenever expansion finds nothing worth adding, which makes
+        the caller's fusion leg simply absent rather than degenerate.
+        """
+        if not seed:
+            return []
+        feedback = seed[:prf.FEEDBACK_DOCS]
+        documents = self.document_text(feedback)
+        expansion = prf.expansion_terms(
+            documents, query, self.connection, self._df_cache, max(1, self.size)
+        )
+        if not expansion:
+            return []
+        # Anchor the expansion to the original query rather than replacing it.
+        # Searching the expansion terms alone drifts badly and visibly: for
+        # "Men's Shoes ... leather" the harvested terms are `coats, jackets,
+        # faux, jacket, genuine, collar, zipper`, because leather in this
+        # catalog is dominated by outerwear -- so the leg would retrieve
+        # jackets for a shoe query. RM3 interpolates the expansion *into* the
+        # original query model for exactly this reason; ORing both term sets
+        # is the FTS5-shaped version of that.
+        original = list(dict.fromkeys(terms(query)))[:40]
+        expression = " OR ".join(f'"{term}"' for term in original + expansion)
+        try:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM products WHERE products MATCH ? "
+                f"ORDER BY {_bm25_expression()} LIMIT ?",
+                (expression, top_n),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            logger.debug("PRF expansion produced an invalid MATCH expression: %r", expression)
+            return []
         return [str(row[0]) for row in rows]
 
 

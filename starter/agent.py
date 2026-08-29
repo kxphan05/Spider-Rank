@@ -258,6 +258,28 @@ BELIEF_REORCHESTRATION = False
 # choice between them is arbitrary; 2.00 is the lower-variance pick.
 PHRASE_WEIGHT = 2.0
 
+# Pseudo-relevance feedback (prf.py): a fourth RRF leg that re-retrieves with
+# terms harvested from the top FEEDBACK_DOCS of the BM25 ranking.
+#
+# Rationale is the buying diagnostic, not a general preference for PRF. Buying
+# scores 0.688 hit rate against browsing's 0.825, and the cause is measured:
+# the median turn-1 hard constraint is *one token*, and the modal values are
+# `cotton` (18.8% of the catalog), `polyester` (13.8%) and `leather` (12.6%).
+# That is a low-entropy query, not a contentless one, and every other lever
+# here redistributes weight among existing signal rather than adding any. PRF
+# is the one classical technique that adds vocabulary: it replaces "cotton"
+# with the words that actually co-occur in the products "cotton" already ranks
+# well.
+#
+# Shipped at 0.0 (exact identity) until swept. The known failure mode is query
+# drift when the feedback documents are wrong, which is a live risk on a
+# benchmark where the target is frequently already in the top handful -- there
+# is more to lose on the sessions that already work than to gain on the ones
+# that don't. That asymmetry is why this is a weighted leg rather than a
+# rewrite of the BM25 query: a leg turns down continuously, a rewrite does not
+# (#17 is the cautionary case -- an aggressive query rewrite measured -0.0580).
+PRF_WEIGHT = 0.0
+
 # Cross-encoder reranking (reranker.py, Qwen3-Reranker-0.6B). Closes the one
 # remaining named gap against spec Pillar I, "Multi-Route Retrieval -> LLM
 # Semantic Ranking" (CLAUDE.md #6): until now nothing learned or generative
@@ -276,10 +298,21 @@ RERANK_WEIGHT = 0.0
 # which is ~75 hours for one 200-sample evaluation and therefore cannot be
 # A/B'd at all.
 RERANK_BACKEND = "minilm"
-# Depth of the pool handed to the cross-encoder. Cost is linear in this and
-# dominated by prefill; reranking beyond the returned slate cannot change
-# HitRate, only which of the top items lead.
-RERANK_TOP_N = 10
+# Depth of the pool handed to the cross-encoder. Cost is linear in this.
+#
+# This must be strictly greater than `top_k` to be worth running at all, and
+# an earlier version of this comment had the reasoning backwards. It claimed
+# reranking beyond the returned slate "cannot change HitRate, only which of
+# the top items lead" -- but at RERANK_TOP_N == top_k == 10 the reranker only
+# ever permutes the slate the agent was already going to return, so it cannot
+# add a hit under *any* ordering; it can move MRR and nothing else. Scoring
+# deeper than the slate is precisely what opens the recall channel: an item
+# the retrieval fusion left at rank 11-20 can be promoted into the returned
+# ten. That is the only way this stage can convert a miss into a hit.
+#
+# Swept against RERANK_WEIGHT in scripts/sweep_rerank.py, which is why both
+# are constants rather than one.
+RERANK_TOP_N = 20
 
 # Do not re-recommend a product that has already been shown and rejected.
 #
@@ -736,12 +769,24 @@ class Agent:
                 phrase_ranked = self.bm25.phrase_search(query, leg_n)
             except Exception:
                 logger.exception("phrase search failed for query %r", query)
+        prf_ranked: list[str] = []
+        if PRF_WEIGHT > 0.0 and bm25_ranked:
+            # Seeded from the BM25 ranking rather than the fused pool: PRF
+            # assumes its feedback documents are relevant, and BM25 is the leg
+            # measurement says carries this benchmark (#14 -- the dense leg
+            # adds no recall at all, so seeding from the fusion would feed the
+            # expansion documents dense put there on its own).
+            try:
+                prf_ranked = self.bm25.prf_search(query, leg_n, bm25_ranked)
+            except Exception:
+                logger.exception("PRF search failed for query %r", query)
 
         routing = routing_params(intent_label, belief)
         legs = [
             (bm25_ranked, routing.bm25_weight),
             (dense_ranked, routing.dense_weight),
             (phrase_ranked, PHRASE_WEIGHT),
+            (prf_ranked, PRF_WEIGHT),
         ]
         rank_lists = [ranked for ranked, _ in legs if ranked]
         weights = [weight for ranked, weight in legs if ranked]
@@ -765,9 +810,11 @@ class Agent:
         reranking is a relevance judgement, diversity is a presentation choice
         on top of the final relevance order.
 
-        Only the head is scored. Cost is linear in RERANK_TOP_N and dominated
-        by prefill, and an item outside the returned slate cannot affect
-        HitRate no matter how it is ordered.
+        Only the head is scored, and the head is deliberately deeper than the
+        returned slate (RERANK_TOP_N > top_k): scoring exactly the slate can
+        only permute what was already going to be returned, so it moves MRR
+        and can never turn a miss into a hit. The extra depth is where the
+        recall comes from.
         """
         if self.reranker is None or RERANK_WEIGHT <= 0.0 or not candidate_ids:
             return candidate_ids
