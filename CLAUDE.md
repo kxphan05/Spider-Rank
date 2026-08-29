@@ -202,6 +202,14 @@ Phrase-query A/B: `uv run python3 scripts/ab_phrase_query.py` — scores the fiv
 legs of "Known open problems" #25 (identity, each phrase-query fix alone, both,
 and a raised-budget control). About five full evals, so run it alone.
 
+Reachability ceiling: `uv run python3 scripts/eval_ceiling.py` — hands the
+agent every constraint the customer could ever state, in one turn-1 message,
+and reports whether the target comes back plus its best rank across the raw
+legs. One turn per sample, so it is far cheaper than a scored run. Use it to
+ask "is this target findable at all"; it is **not** an upper bound on the
+score, because it returns one slate of ten where a live session returns up to
+ten (see #27). Writes `logs/ceiling.json`.
+
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
 departure from the null, profile field→scenario_type, profile-key
@@ -1142,7 +1150,12 @@ Notable things confirmed empirically along the way, not just assumed:
     anything else shipped here.
 
 24. **Miss taxonomy at 0.7020: the remaining failures are buying-side recall,
-    not ranking.** `scripts/eval_failures.py` (new) replays the evaluator loop,
+    not ranking.** **Superseded in part by #27 — read that first.** The probes
+    below use each session's *actual* final query, which is starved of
+    constraints; probed with everything the customer could disclose, every one
+    of the 200 targets is reachable and none is missing from the catalog's
+    reach. "Recall" here means the live query never carried the signal, not
+    that the target cannot be found. `scripts/eval_failures.py` (new) replays the evaluator loop,
     then probes each retrieval leg to depth 2000 for every miss and classifies
     the cause. Run it before proposing any further retrieval work.
 
@@ -1418,6 +1431,106 @@ Notable things confirmed empirically along the way, not just assumed:
     "show me some dresses"
       + "actually forget that, i want to buy a watch" -> browsing -> buying, watches
     ```
+
+27. **Every target is reachable. #24's "recall problem" was an artifact of the
+    starved session query, and the attribute-boost fix it pointed at is
+    falsified.** New diagnostic: `scripts/eval_ceiling.py`. It hands the agent
+    *everything the customer could ever disclose* in one turn-1 message and
+    asks whether the target comes back. Read-only, one turn per sample rather
+    than ten, so it costs a fraction of a scored run.
+
+    The motivation is a property of the simulator worth stating on its own.
+    The customer's entire vocabulary for a whole session is
+
+        coarse_category(target) + hard_constraints[:2] + soft_preferences[2:4]
+
+    -- at most four constraint strings, all sliced out of the target's own
+    record by `intent_card()`. There is nothing else they can say, ever.
+
+    ```
+    oracle (all constraints, one turn, one slate)   173/200   0.8650
+    actual (10-turn dialogue)                       171/200   0.8550
+
+    of the 27 oracle misses, where is the target?
+      in some leg's top 10                12
+      11-50                               10
+      51-500                               5
+      not found at depth 2000              0
+    worst best-leg rank across all 200 samples:    192
+    ```
+
+    **No target is unreachable.** Given the full constraint set, some leg puts
+    every one of the 200 targets inside the top 192. So #24's headline --
+    "15 of 27 misses are buying, and in almost all of them no retrieval leg
+    finds the target at all" -- is true only of the query the agent actually
+    holds at the end of a live session, which is starved: `customer_reply()`
+    discloses a constraint only when `classify_constraint()` buckets it as the
+    attribute just asked, and at most two per turn. #24's inference from that
+    ("further retrieval tuning cannot fix these; only more information can")
+    should be read as being about *elicitation*, not about reach. Do not quote
+    it as evidence that the catalog or the retrieval legs are the limit.
+
+    **The oracle number is not a ceiling, and an earlier draft of this entry
+    wrongly called it one.** The oracle condition returns a single slate of
+    ten; a live session returns up to ten slates, and with `EXCLUDE_SHOWN` up
+    to 100 distinct products. It is not strictly more informative than the
+    dialogue -- the two differ on 34 samples, 17 in each direction, which is
+    the direct evidence that neither dominates. Use it to ask "is this target
+    findable at all", never "is this the most we could score".
+
+    **A real extractor defect, measured.** `AttributeIndex` stores one material
+    and one colour per product, chosen by vocab order from everything the text
+    matched, and `_boost_by_disclosed` compares that single value to the
+    customer's for equality. The evaluator picks its value from the same
+    product by a different rule, so the two disagree whenever a product lists
+    several. Over the 200 targets:
+
+    ```
+                                                     material   colour
+    agree -> +1                                         58.5%    12.5%
+    FALSE mismatch: value IS in the product -> -1        9.5%     3.0%
+    disagree, value outside the fields we read -> -1     6.5%     1.0%
+    customer never states it                            23.5%    80.0%
+    ```
+
+    Worked example, `public_0008`: the product text carries
+    `{nylon, polyester, spandex}`, we store `polyester`, the customer says
+    `nylon`, and the target takes a -1 that puts it below every neutral
+    candidate. 7 of the 27 known misses have the true target penalized this
+    way, all 7 `buying`, `public_0111` among them -- which is the unexplained
+    BM25-rank-5-to-final-rank-80 anomaly #24 flagged as a loose end.
+
+    **But the causal claim does not survive its own test.** Replaying those 7
+    sessions with `DISCLOSED_MISMATCH_PENALTY = 0.0` recovers **none of them**:
+
+    ```
+    penalty 1.0 (shipped)   all 7 MISS
+    penalty 0.0             all 7 MISS
+    ```
+
+    So the -1 is not what costs these sessions. The "all three legs rank it
+    top-3" observation that motivated the hypothesis came from the *oracle*
+    query, which carries all four constraints; the live turn-1 query for
+    `public_0008` is only "I'm looking for Bras Everyday Bras. A key
+    requirement is: nylon." The target is not in the live pool for the boost to
+    sink in the first place. This is the same mistake shape as #24 -- a probe
+    run with a richer query than the agent actually has, and a conclusion drawn
+    about the agent.
+
+    Where that leaves the multi-value idea: the extraction census above is
+    real and the representation is genuinely wrong, but **its measured value is
+    now zero on the only sessions it was supposed to explain.** Note
+    `penalty = 0.0` tests only the removal of the -1; the set fix would also
+    convert those cases to +1, which is a different intervention. If anyone
+    builds it, build it as a `contains()` predicate used *only* by the boost,
+    leave `value_for`/`values_for` returning the canonical single value so
+    `select_dynamic_attribute`'s entropy stays bit-identical, and measure it on
+    the full set rather than on these 7. Do not bundle a weight retune with it.
+
+    **The direction the evidence actually supports is elicitation.** 12 of the
+    27 oracle misses have the target in some leg's top 10, so the information
+    is reachable when it arrives; what is missing in a live session is the
+    constraints themselves.
 
 ## Blockers / mistakes already made (so they aren't repeated)
 
