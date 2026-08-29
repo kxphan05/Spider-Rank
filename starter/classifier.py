@@ -33,6 +33,13 @@ BUYING_PHRASES = (
     r"\bhas\s+to\s+be\b", r"\bspecifically\b", r"\bexactly\b",
     r"\bkey\s+requirement\b", r"\bshould\s+be\b", r"\bwith\s+an?\b",
     r"\bmade\s+of\b", r"\bin\s+size\b",
+    # Purchase verbs. This list had no way at all to say "I am here to buy
+    # something" -- "i want to buy shoes" scored zero buying evidence and fell
+    # through to the browsing tie-break below, which is the wrong answer to
+    # the most explicit purchase sentence a customer can write. Negation is
+    # handled by _is_negated, so "not looking to buy yet" still reads
+    # browsing.
+    r"\bbuy(?:ing)?\b", r"\bpurchase\b", r"\bplace\s+an?\s+order\b",
 )
 
 # Hedging / exploratory framing.
@@ -184,6 +191,13 @@ PROTOTYPE_BUYING = (
     "I want a wool sweater, crew neck, for under $50.",
     "Show me a leather handbag, brown, with a shoulder strap.",
     "I need a size 8 sandal, preferably suede.",
+    # Explicit purchase framing with no attribute stated. Kept separate in
+    # intent from the "something for <occasion>" browsing shape added below:
+    # naming an occasion states no requirement, but saying "buy" states that
+    # the customer is past the exploring stage even when the item is bare.
+    "I want to buy a pair of shoes.",
+    "I'm here to buy a watch today.",
+    "Ready to purchase a handbag.",
 )
 PROTOTYPE_BROWSING = (
     "I'm just browsing for some new shoes, not sure what style yet.",

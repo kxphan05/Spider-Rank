@@ -3,11 +3,92 @@ from __future__ import annotations
 import re
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
-STOPWORDS = {
+
+# Ordinary English function words: frequent everywhere, so they carry no
+# retrieval signal in either direction.
+_FUNCTION_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
     "that", "the", "this", "to", "want", "with", "would", "you", "looking",
 }
+
+# Request verbs and discourse markers -- the words a customer wraps a request
+# in ("I want to *buy* shoes", "*actually*, *forget* that, *show* me X").
+#
+# These are stopwords for the opposite reason to the list above, and the
+# distinction matters: they are not common in this catalog, they are RARE.
+# Measured document frequencies over the 50k catalog:
+#
+#     actually 0.0018   forget 0.0032   buy 0.0261   find 0.0318
+#     need 0.0404       show 0.0428     give 0.0453  get 0.0576
+#
+# A rare term is a high-IDF term, so BM25 hands the ranking to it. "i want to
+# buy shoes" reduced to the terms {buy, shoes}, and since "shoes" sits in the
+# catalog-universal root category (df 1.000, i.e. zero IDF -- see
+# CATALOG_ROOT_MIN_SHARE in retrieval.py) the whole query was decided by "buy",
+# which returned products from the store "Buy Caps and Hats". Conversational
+# framing was outranking the only content word in the sentence.
+#
+# This is deliberately a list of ways to *ask*, never of things to ask about.
+# CLAUDE.md #19 measured that pruning contentful customer text costs 0.041,
+# because 89.7% of it is a verbatim substring of the target's own record; none
+# of the words below can be part of a product description of anything.
+_REQUEST_STOPWORDS = {
+    "actually", "anything", "buy", "buying", "find", "forget", "get", "give",
+    "hello", "hey", "hi", "instead", "need", "needs", "nevermind", "purchase",
+    "recommend", "scratch", "show", "shopping", "something", "suggest",
+    "thanks", "thank",
+}
+
+STOPWORDS = _FUNCTION_STOPWORDS | _REQUEST_STOPWORDS
+
+
+# en-GB spellings mapped onto the catalog's en-US ones. The catalog is a US
+# Amazon export, so a British spelling is not a rare term, it is a *wrong*
+# term: "jewellery" matches 146 products (0.29%) while "jewelry" matches all
+# 50,000, so "show me jewellery" searched the catalog for the 146 products
+# that happen to spell it the British way and found no jewelry at all.
+#
+# Only genuine variants where the US form is the catalog's dominant one are
+# listed. "grey" is deliberately absent: it occurs in 2,017 products against
+# "gray"'s 751, so normalizing it would be the wrong direction.
+SPELLING_VARIANTS = {
+    "jewellery": "jewelry",
+    "jewelery": "jewelry",
+    "jewellry": "jewelry",
+    "colour": "color",
+    "colours": "colors",
+    "coloured": "colored",
+    "favourite": "favorite",
+    "favourites": "favorites",
+}
+
+
+def normalize_query(text: str) -> str:
+    """Rewrite customer text into the catalog's spelling conventions.
+
+    Applied once in the agent's query builders so every leg -- BM25, phrase,
+    PRF and dense -- sees the same normalized string. Word-boundary matched,
+    like every other vocabulary match in this project (CLAUDE.md #10 is the
+    bug that comes from forgetting that).
+    """
+    if not isinstance(text, str) or not text:
+        return "" if text is None else str(text)
+
+    def substitute(match: re.Match) -> str:
+        word = match.group(0)
+        replacement = SPELLING_VARIANTS[word.lower()]
+        return replacement.upper() if word.isupper() else (
+            replacement.capitalize() if word[0].isupper() else replacement
+        )
+
+    return _SPELLING_RE.sub(substitute, text)
+
+
+_SPELLING_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(SPELLING_VARIANTS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
 
 
 # Clause boundaries for phrase_clauses: sentence-final punctuation plus the

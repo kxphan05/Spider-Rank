@@ -21,6 +21,7 @@ from .session_belief import SessionBelief
 from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attribute
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
 from .user_profile import UserProfileStore
+from .text_utils import normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +485,11 @@ def _build_query(state: SessionState) -> str:
     first = state.first_message or ""
     budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
     parts = [first[:budget_for_first], recent]
-    return " ".join(part for part in parts if part)
+    # Normalized once, here, so BM25, phrase, PRF and dense all see the same
+    # string -- the dense leg embeds the raw text and never passes through
+    # terms(), so a spelling fix applied in text_utils.terms() alone would
+    # reach three legs out of four.
+    return normalize_query(" ".join(part for part in parts if part))
 
 
 def _build_phrase_query(state: SessionState) -> str:
@@ -500,7 +505,7 @@ def _build_phrase_query(state: SessionState) -> str:
     first = state.first_message or ""
     budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
     parts = [first[:budget_for_first], recent]
-    return " ".join(part for part in parts if part)
+    return normalize_query(" ".join(part for part in parts if part))
 
 
 def _next_attribute(
@@ -657,6 +662,33 @@ class Agent:
                 state.informative_messages.clear()
                 state.profile_hint.clear()
                 state.asked_attributes.clear()
+                # Erasing the slots is only half of what a pivot asks for
+                # (spec 4.2.II says "slot erasure and rewriting"): the text
+                # the slots were extracted from still feeds _build_query, so
+                # the discarded preference keeps driving BM25 and dense.
+                #
+                # It is only half-safe to act on, though. CLAUDE.md #17
+                # measured that restarting the query from the pivot message
+                # costs 0.058, because in the local simulator the *category*
+                # is stated once in turn 1 and the pivot carries only the
+                # changed attribute -- "What I need is: leather" against a
+                # turn 1 that said "Belts". Dropping turn 1 there searches
+                # 50k products for "leather".
+                #
+                # So the history is dropped only when the pivot names a
+                # product category itself, i.e. when the customer has changed
+                # *what they are shopping for* rather than a property of it.
+                # "Actually, forget that, show me jewellery" replaces the
+                # framing and turn 1 is genuinely obsolete; "What I need is:
+                # leather" does not, and turn 1 stays. Measured against the
+                # evaluator's own 30 override turns, this fires on 2.
+                if self.bm25.names_category(user_message):
+                    logger.debug(
+                        "respond(%s, turn=%s): pivot names a new category %s; dropping prior query text",
+                        session_id, turn, self.bm25.names_category(user_message),
+                    )
+                    state.first_message = user_message
+                    state.recent_messages.clear()
             # Observe what last turn's question actually bought us -- the
             # feedback signal the agent has never had. `asked_attributes`
             # records that a question was asked; nothing recorded whether it

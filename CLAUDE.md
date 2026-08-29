@@ -1233,6 +1233,140 @@ Notable things confirmed empirically along the way, not just assumed:
     if simply raising the budget matches the fixes, the fixes have not earned
     their complexity.
 
+26. **The catalog's root category destroyed the IDF of every category word,
+    and conversational filler inherited the ranking. Two user-reported demo
+    bugs, one root cause.** Reported from live use, not from a sweep:
+    "i want to buy shoes" returned t-shirts and baseball caps, and
+    "actually forget that, show me jewellery" (after a browsing turn) returned
+    no jewellery.
+
+    Both are the same mechanism. Every product hangs off one root category,
+    `"Clothing, Shoes & Jewelry"` (49,990 of 50,000), so the three words in it
+    sit at document frequency ~1.000 and BM25 scores them at ~0 IDF. Meanwhile
+    request verbs are *rare* in a product catalog, so they are high-IDF:
+
+    ```
+    shoes    df 1.000  (0.235 with the root dropped)     actually  df 0.0018
+    jewelry  df 1.000  (0.111 with the root dropped)     forget    df 0.0032
+    clothing df 1.000  (0.433 with the root dropped)     buy       df 0.0261
+                                                         show      df 0.0428
+    ```
+
+    `terms("i want to buy shoes")` is `{buy, shoes}`. "shoes" was worth
+    nothing, so the query was decided entirely by "buy" -- which matched the
+    store name "Buy Caps and Hats". The customer's only content word could not
+    outrank the verb they wrapped it in.
+
+    Three fixes, each independently justified:
+
+    - **`BM25Index._build` strips the universal root from the indexed
+      `categories` column** (`retrieval.py`). Detected, not hardcoded: the
+      value leading `categories` on >= `CATALOG_ROOT_MIN_SHARE` of the first
+      `CATALOG_ROOT_SAMPLE` products, decided from the first insert batch
+      while it is still in memory, so it costs no extra pass over the catalog.
+      A catalog with no universal root is left untouched.
+    - **Request verbs and discourse markers are stopwords** (`_REQUEST_STOPWORDS`
+      in `text_utils.py`). Note this is *not* the query pruning that measured
+      -0.041 in #19: that deleted contentful customer text, which on this
+      benchmark is 89.7% verbatim target copy. This list is ways of *asking*
+      ("buy", "show", "actually", "forget"), never things to ask about.
+    - **en-GB spellings are normalized to the catalog's en-US ones**
+      (`SPELLING_VARIANTS`, applied by `normalize_query()` in the agent's two
+      query builders so all four legs see the same string -- the dense leg
+      embeds raw text and never passes through `terms()`). "jewellery" is not
+      a rare term, it is a *wrong* one: it matches 146 products while
+      "jewelry" matches 50,000. "grey" is deliberately excluded -- it occurs
+      in 2,017 products against "gray"'s 751, so normalizing it would run
+      backwards.
+
+    **Intent, separately: `BUYING_PHRASES` had no purchase verb at all**, so
+    "i want to buy shoes" scored zero buying evidence and fell through to the
+    browsing tie-break. Added `buy|buying|purchase|place an order` plus three
+    `PROTOTYPE_BUYING` entries of that shape. `scripts/eval_intent.py`
+    turn-1 accuracy **0.975 -> 0.981** (one of #22's deliberate regressions
+    recovered), accumulated and OOD both unchanged.
+
+    **Override rewriting, narrowly.** #17 measured that restarting the query
+    from the pivot message costs 0.058, because the local simulator states the
+    category once in turn 1 and the pivot carries only the changed attribute.
+    That argument does not cover a pivot that names a category itself, which
+    is what a real user writes. `respond()` now drops `first_message` and
+    `recent_messages` on a detected override **only when the pivot names a
+    product category** (`BM25Index.names_category`). The vocabulary is built
+    from single-word category nodes with df >= 20, excluding material/colour
+    words and demographic nodes -- three exclusions that each earned their
+    place against the evaluator's own 30 override turns:
+
+    ```
+    rule                                    fires on
+    any category-path token                  6 of 30
+    single-word nodes only                   2 of 30   <- shipped
+    ```
+
+    Tokens pulled out of multi-word nodes are modifiers, not product types
+    ("Water Shoes" -> "water", "Hand Wash Only" -> "only"), and firing on them
+    is exactly how a category rewrite turns back into #17.
+
+    **The corpus-driven generalization of the stopword list was tried and is
+    unsafe. Do not build it.** The obvious objection to `_REQUEST_STOPWORDS`
+    is that it is hand-written, so the natural next step is to derive
+    relevance from the catalog instead: keep a query word only if it names or
+    describes a product, measured as its document frequency in `title` +
+    `categories` (where product vocabulary lives) rather than anywhere in the
+    record (where marketing copy and store names live). On hand-picked words
+    the separation looks clean:
+
+    ```
+                 df in title+cat            df in title+cat
+    buy                  0.0001      shoes           0.9998
+    purchase             0.0000      watch           0.0316
+    recommend            0.0000      dress           0.0765
+    ```
+
+    It collapses on real queries. Applied to all 200 turn-1 messages, scored
+    by how many of the words it deletes are present verbatim in the *target
+    product's own text*:
+
+    ```
+    threshold   words dropped   of those, in the target's text
+      0.0002              322             59  (18.3%)
+      0.0005              347             83  (23.9%)
+      0.0010              385            116  (30.1%)
+      0.0020              449            168  (37.4%)
+      0.0050              636            262  (41.2%)
+    ```
+
+    There is no usable setting. The threshold has to reach 0.005 to catch
+    "show" (0.0034), "my" (0.0045) and "hi" (0.0025) at all -- and by then it
+    is deleting `closure` (0.00206), `material` (0.00052) and `alloy`
+    (0.00092), i.e. two in five of the words it removes are exact-match keys
+    into the target. `closure` is the canonical case from #20: "Buckle
+    closure" is the span the phrase leg wins on, and it is *rarer* in titles
+    and categories than "show" is. A ratio rule (title+cat df over total df)
+    is worse still -- it scores `closure` at 0.005 and `show` at 0.080, i.e.
+    exactly inverted.
+
+    This is #19's finding reached from a different direction: on this catalog
+    "is this word conversational?" and "is this word rare in product titles?"
+    are different questions, and only the first one is the one being asked. A
+    closed list of ways to *ask* is checkable by reading it; a frequency
+    threshold is not, and here it is wrong 41% of the time on the words that
+    matter most.
+
+    **Verified end to end in the REPL, both reported bugs and both
+    directions of the buying/browsing switch the user asked for:**
+
+    ```
+    "i want to buy shoes"                     -> buying track, 10/10 shoes
+    "something for the summer"
+      + "actually forget that, show me jewellery"  -> jewellery, summer gone
+    "just browsing, not sure what i want"
+      + "actually i need a black leather belt"     -> browsing -> buying, belts
+      + "under $30"                                -> budget slot filled
+    "show me some dresses"
+      + "actually forget that, i want to buy a watch" -> browsing -> buying, watches
+    ```
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
 - **A feature flag whose zero value is not the identity silently corrupts

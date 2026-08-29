@@ -11,15 +11,21 @@ import logging
 import os
 import sqlite3
 import threading
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 from .paths import catalog_fingerprint, model_cache_dir
 from . import prf
-from .text_utils import STOPWORDS, field_text, phrase_clauses, phrase_tokens, terms
+from .attributes import COLORS, MATERIALS
+from .text_utils import (STOPWORDS, field_text, normalize_query, phrase_clauses,
+                         phrase_tokens, terms)
 
 logger = logging.getLogger(__name__)
+
+# Words that describe a product rather than name a kind of product.
+ATTRIBUTE_WORDS = {word.lower() for word in COLORS} | {word.lower() for word in MATERIALS}
 
 DENSE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DENSE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
@@ -77,6 +83,51 @@ PHRASE_CLAUSE_SPANS = False
 # sweeps them; DEFAULT_FIELD_WEIGHTS is the identity and must reproduce the
 # shipped score exactly before any swept point is believed.
 DEFAULT_FIELD_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
+
+# Every product in this catalog hangs off one root category
+# ("Clothing, Shoes & Jewelry", 49,990 of 50,000), so the three words in it
+# are present on essentially every document. BM25 gives a term appearing in
+# ~100% of documents an IDF of ~0, which means the customer's own category
+# word was worth nothing:
+#
+#     term      df with root      df with root dropped
+#     shoes           1.000                     0.235
+#     jewelry         1.000                     0.111
+#     clothing        1.000                     0.433
+#
+# So "show me shoes" could not rank a shoe above a t-shirt -- the only query
+# word that mattered was whatever conversational filler came with it (see
+# _REQUEST_STOPWORDS in text_utils.py). Dropping the root restores the IDF of
+# the leaf category words, which are the ones that actually discriminate.
+#
+# Detected rather than hardcoded: the root is whatever value leads
+# `categories` on at least CATALOG_ROOT_MIN_SHARE of the first
+# CATALOG_ROOT_SAMPLE products. Below that threshold nothing is stripped, so a
+# catalog without a universal root is left exactly as it was. The decision is
+# made from the first insert batch, which is still in memory, so this costs no
+# extra pass over the catalog file.
+CATALOG_ROOT_SAMPLE = 1000
+CATALOG_ROOT_MIN_SHARE = 0.95
+
+# What counts as naming a product category, for names_category() below.
+#
+# Only category nodes that are a SINGLE word qualify ("Shoes", "Jewelry",
+# "Dresses", "Watches"). Tokens drawn out of multi-word nodes do not, because
+# they are modifiers rather than product types: "Water Shoes" contributes
+# "water", "Hand Wash Only" contributes "only", and treating either as a
+# category pivot fires on ordinary attribute talk. Measured against the
+# evaluator's own 30 override turns, the loose token rule fired on 6 of them
+# and the single-word-node rule fires on 1.
+#
+# The df floor drops store names and one-off merchandising nodes ("Westlake",
+# "Toddler Test"), which are category-shaped strings naming no product type.
+CATEGORY_TERM_MIN_DF = 20
+
+# Category nodes that describe who a product is for, not what it is. A pivot
+# naming only one of these has not changed what the customer is shopping for.
+DEMOGRAPHIC_CATEGORIES = {"women", "men", "girls", "boys", "baby", "kids",
+                          "unisex", "adult", "novelty"}
+
 FIELD_WEIGHTS = DEFAULT_FIELD_WEIGHTS
 
 
@@ -115,6 +166,21 @@ class BM25Index:
         self._df_cache: dict[str, int] = {}
         self._build(catalog_path)
 
+    @staticmethod
+    def _detect_root_category(samples: list[list]) -> str | None:
+        """The category value leading nearly every product, if there is one.
+
+        See CATALOG_ROOT_MIN_SHARE. Returns None when no single value clears
+        the threshold, in which case nothing is stripped.
+        """
+        leads = [str(categories[0]) for categories in samples if categories]
+        if not leads:
+            return None
+        candidate = Counter(leads).most_common(1)[0]
+        if candidate[1] / len(samples) < CATALOG_ROOT_MIN_SHARE:
+            return None
+        return candidate[0]
+
     def _build(self, catalog_path: Path) -> None:
         cursor = self.connection.cursor()
         cursor.execute(
@@ -122,19 +188,39 @@ class BM25Index:
             "parent_asin UNINDEXED, title, categories, features, details, store, description, "
             "tokenize='unicode61 remove_diacritics 2')"
         )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
+        # Rows are held with `categories` still a list until the root is
+        # known, so the sample that decides it can itself be stripped.
+        batch: list[tuple] = []
+        category_df: Counter[str] = Counter()
         count = 0
+        root: str | None = None
+        root_decided = False
+
+        def flush() -> None:
+            rows = []
+            for row in batch:
+                stripped = self._strip_root(row[2], root)
+                categories = field_text(stripped)
+                category_df.update({
+                    node.strip().lower() for node in map(str, stripped)
+                    if node and " " not in node.strip() and node.strip().isalpha()
+                })
+                rows.append(row[:2] + (categories,) + row[3:])
+            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            batch.clear()
+
         with catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
                     continue
                 product = json.loads(line)
+                categories = product.get("categories")
                 batch.append(
                     (
                         str(product["parent_asin"]),
                         field_text(product.get("title")),
-                        field_text(product.get("categories")),
+                        categories if isinstance(categories, list) else [categories],
                         field_text(product.get("features")),
                         field_text(product.get("details")),
                         field_text(product.get("store")),
@@ -142,14 +228,55 @@ class BM25Index:
                     )
                 )
                 count += 1
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
+                if not root_decided and len(batch) >= CATALOG_ROOT_SAMPLE:
+                    root = self._detect_root_category([row[2] for row in batch])
+                    root_decided = True
+                    logger.info("BM25Index: universal root category = %r", root)
+                if root_decided and len(batch) >= CATALOG_ROOT_SAMPLE:
+                    flush()
+        if not root_decided:
+            root = self._detect_root_category([row[2] for row in batch])
+            logger.info("BM25Index: universal root category = %r", root)
         if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+            flush()
         self.connection.commit()
         self.size = count
-        logger.info("BM25Index: indexed %d products", count)
+        self.category_terms = {
+            term for term, df in category_df.items()
+            if df >= CATEGORY_TERM_MIN_DF and term not in DEMOGRAPHIC_CATEGORIES
+        }
+        logger.info(
+            "BM25Index: indexed %d products, %d category terms", count, len(self.category_terms)
+        )
+
+    def names_category(self, text: str) -> set[str]:
+        """Category words the text names, excluding attribute vocabulary.
+
+        Used to tell a pivot that changes *what the customer is shopping for*
+        ("show me jewellery") from one that changes an attribute of it
+        ("what I need is: leather"). Material and colour words are excluded
+        because several of them are also category path elements -- "Leather"
+        is a node under handbags -- and treating an attribute as a category
+        change is precisely the mistake that made the whole-history rewrite in
+        CLAUDE.md #17 cost 0.058.
+        """
+        found = set()
+        for term in terms(normalize_query(text)):
+            if term in ATTRIBUTE_WORDS:
+                continue
+            # Category nodes are plural ("Watches", "Dresses"); customers name
+            # them in the singular at least as often ("show me a watch").
+            for form in (term, term + "s", term + "es"):
+                if form in self.category_terms:
+                    found.add(form)
+                    break
+        return found
+
+    @staticmethod
+    def _strip_root(categories: list, root: str | None) -> list:
+        if root is not None and categories and str(categories[0]) == root:
+            return categories[1:]
+        return categories
 
     def document_text(self, parent_asins: list[str]) -> dict[str, str]:
         """Title + categories + features for the given products.
