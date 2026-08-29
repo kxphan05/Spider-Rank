@@ -204,6 +204,18 @@ DIVERSIFY_LAMBDA = 0.5
 # The non-answer *observation* is kept and still feeds SessionBelief -- it is
 # the query surgery that fails, not the detection.
 SKIP_NON_ANSWERS_IN_QUERY = False
+# Drop contentless replies from the *phrase leg's* query only, leaving the
+# BM25 and dense query untouched.
+#
+# This is deliberately narrower than the flag above, which measured -0.0410 and
+# was reverted (CLAUDE.md #19). That loss had a specific mechanism: 89.7% of
+# customer text is a verbatim substring of the target's own catalog record
+# (#14), so text the detector called contentless was still an exact-match key
+# for BM25, and deleting it deleted what BM25 wins with. The phrase leg has the
+# opposite problem -- it is span-budget-limited (MAX_PHRASE_QUERIES), and
+# filler spans match nothing while still consuming the budget that the
+# informative spans needed. Same classifier, opposite cost structure.
+PHRASE_QUERY_SKIP_NON_ANSWERS = False
 
 # Geometric decay applied to a disclosed slot's boost per turn since it was
 # stated (_boost_by_disclosed). 1.0 == no decay == the shipped behaviour, and
@@ -454,6 +466,10 @@ class SessionState:
     # session continues -- see EXCLUDE_SHOWN. Cleared on a detected override,
     # because the evaluator does not count pre-pivot turns as hits.
     shown: set[str] = field(default_factory=set)
+    # The subset of `recent_messages` that carried an actual constraint, kept
+    # as a parallel window so the phrase leg can be given a cleaner query than
+    # the other legs (see PHRASE_QUERY_SKIP_NON_ANSWERS).
+    informative_messages: list[str] = field(default_factory=list)
 
 
 MAX_QUERY_CHARS = 2000
@@ -465,6 +481,22 @@ def _build_query(state: SessionState) -> str:
     # only cut into `recent` (keeping its tail -- the most recent text) if
     # recent alone still exceeds the cap.
     recent = " ".join(state.recent_messages)[-MAX_QUERY_CHARS:]
+    first = state.first_message or ""
+    budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
+    parts = [first[:budget_for_first], recent]
+    return " ".join(part for part in parts if part)
+
+
+def _build_phrase_query(state: SessionState) -> str:
+    """Query for the phrase leg, optionally with contentless replies removed.
+
+    Kept separate from `_build_query` rather than switched inside it: the two
+    have different failure modes, and conflating them is what made the whole-
+    query version of this idea lose 0.041 (CLAUDE.md #19).
+    """
+    if not PHRASE_QUERY_SKIP_NON_ANSWERS:
+        return _build_query(state)
+    recent = " ".join(state.informative_messages)[-MAX_QUERY_CHARS:]
     first = state.first_message or ""
     budget_for_first = max(0, MAX_QUERY_CHARS - len(recent) - 1)
     parts = [first[:budget_for_first], recent]
@@ -622,6 +654,7 @@ class Agent:
                 # Pre-pivot slates were never eligible to hit, so they carry
                 # no proof of non-membership and must become offerable again.
                 state.shown.clear()
+                state.informative_messages.clear()
                 state.profile_hint.clear()
                 state.asked_attributes.clear()
             # Observe what last turn's question actually bought us -- the
@@ -639,6 +672,9 @@ class Agent:
             if not (contentless and SKIP_NON_ANSWERS_IN_QUERY):
                 state.recent_messages.append(user_message)
                 del state.recent_messages[:-RECENT_WINDOW]
+            if not contentless:
+                state.informative_messages.append(user_message)
+                del state.informative_messages[:-RECENT_WINDOW]
 
         for attribute in FILTERABLE_ATTRIBUTES:
             value = extract_disclosed_value(attribute, user_message)
@@ -648,6 +684,7 @@ class Agent:
                 self.profile_store.record_disclosure(state.profile_key, state.profile_session_index, attribute, value)
 
         query = _build_query(state)
+        phrase_query = _build_phrase_query(state)
 
         signal = self.intent_classifier.classify(query) if self.intent_classifier is not None else classify_intent(query)
         routing = routing_params(signal.label, state.belief)
@@ -672,6 +709,7 @@ class Agent:
         candidate_pool = self._retrieve(
             query, top_k, pool_size, signal.label, state.disclosed, inferred,
             state.disclosed_turn, turn if isinstance(turn, int) else 1, state.belief,
+            phrase_query,
         )
         if EXCLUDE_SHOWN and state.shown:
             fresh = [pid for pid in candidate_pool if pid not in state.shown]
@@ -756,6 +794,7 @@ class Agent:
         disclosed_turn: dict[str, int] | None = None,
         turn: int = 1,
         belief: SessionBelief | None = None,
+        phrase_query: str | None = None,
     ) -> list[str]:
         if not query.strip():
             return []
@@ -778,7 +817,8 @@ class Agent:
         phrase_ranked: list[str] = []
         if PHRASE_WEIGHT > 0.0:
             try:
-                phrase_ranked = self.bm25.phrase_search(query, leg_n)
+                phrase_ranked = self.bm25.phrase_search(
+                    phrase_query if phrase_query is not None else query, leg_n)
             except Exception:
                 logger.exception("phrase search failed for query %r", query)
         prf_ranked: list[str] = []

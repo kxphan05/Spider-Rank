@@ -17,7 +17,7 @@ import numpy as np
 
 from .paths import catalog_fingerprint, model_cache_dir
 from . import prf
-from .text_utils import STOPWORDS, field_text, phrase_tokens, terms
+from .text_utils import STOPWORDS, field_text, phrase_clauses, phrase_tokens, terms
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,23 @@ MAX_PHRASE_QUERIES = 24
 # A span appearing in more than this many products carries no identifying
 # information, so it is dropped rather than scored.
 PHRASE_MAX_MATCHES = 150
+# Build spans within a clause instead of across the whole query, and require
+# both edge tokens to carry content.
+#
+# The budget above is spent longest-first, on the assumption that a longer span
+# is a more specific one. That holds for catalog copy and fails for
+# conversation: the longest spans of a 10-turn query are sentences of filler
+# that match nothing. Measured on public_0008's final query -- 135 spans built,
+# and all 24 that fit the budget matched zero products, while "bras everyday
+# bras" (verbatim in the target) sat unqueried at 3-gram depth.
+#
+# Two rules, both properties of language rather than of this simulator's
+# wording -- a template blacklist would score well locally and transfer nothing
+# (CLAUDE.md #12/#13):
+#   1. no span crosses a clause boundary, since catalog text never does
+#   2. no span begins or ends on a stopword, which is the standard
+#      phrase-extraction heuristic for a span that is a fragment of one
+PHRASE_CLAUSE_SPANS = False
 
 
 # BM25F field weights, in the FTS5 column order declared above:
@@ -173,18 +190,24 @@ class BM25Index:
         "for the") from drowning the rare spans that actually identify a
         product.
         """
-        tokens = phrase_tokens(query)
+        clauses = (phrase_clauses(query) if PHRASE_CLAUSE_SPANS
+                   else [phrase_tokens(query)])
         grams: list[tuple[str, ...]] = []
         seen: set[tuple[str, ...]] = set()
         # Longest first, so the per-query budget is spent on the most
         # specific spans available.
         for size in range(PHRASE_MAX_N, PHRASE_MIN_N - 1, -1):
-            for start in range(len(tokens) - size + 1):
-                gram = tuple(tokens[start:start + size])
-                if gram in seen or all(token in STOPWORDS for token in gram):
-                    continue
-                seen.add(gram)
-                grams.append(gram)
+            for tokens in clauses:
+                for start in range(len(tokens) - size + 1):
+                    gram = tuple(tokens[start:start + size])
+                    if gram in seen or all(token in STOPWORDS for token in gram):
+                        continue
+                    if PHRASE_CLAUSE_SPANS and (gram[0] in STOPWORDS or gram[-1] in STOPWORDS):
+                        # A span hanging off a stopword is a fragment of a
+                        # phrase, not a phrase.
+                        continue
+                    seen.add(gram)
+                    grams.append(gram)
         if not grams:
             return []
 

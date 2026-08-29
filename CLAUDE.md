@@ -191,6 +191,17 @@ Intent-detection research + staged plan: `docs/intent_detection_plan.md`
 (industry practice, where this pipeline is strong vs thin, and why slot filling
 rather than the intent classifier is the bottleneck).
 
+Miss diagnostics: `uv run python3 scripts/eval_failures.py` — replays the
+evaluator loop, then probes every retrieval leg to depth 2000 for each miss and
+classifies the cause (`unreachable` / `lost-in-fusion` / `ranked-11+` /
+`excluded-as-shown`). Read "Known open problems" #24 before trusting the
+`lost-in-fusion` label — it means "not in the pool", not "fusion dropped it".
+Writes `logs/failures.json`. Takes about an hour on an idle box.
+
+Phrase-query A/B: `uv run python3 scripts/ab_phrase_query.py` — scores the five
+legs of "Known open problems" #25 (identity, each phrase-query fix alone, both,
+and a raised-budget control). About five full evals, so run it alone.
+
 Profile diagnostics: `uv run python3 scripts/eval_profile_signal.py` — asks
 whether `user_profile` carries any usable signal at all (tag→answerable-bucket
 departure from the null, profile field→scenario_type, profile-key
@@ -205,15 +216,21 @@ Full-public-set (`uv run python3 -m evaluator.local_evaluator`, 200 samples)
 results as of the last run:
 
 ```
-HitRate@10: 0.790   MRR: 0.4176   MTTC: 4.745   Efficiency: 0.6255
-TechnicalScore: 0.6454
+HitRate@10: 0.855   MRR: 0.4622   MTTC: 4.205   Efficiency: 0.6795
+TechnicalScore: 0.7020
 ```
 
-(That line is with the **phrase-match retrieval leg at `PHRASE_WEIGHT = 2.0`**,
+(That line is with **`EXCLUDE_SHOWN = True`**, shipped after the A/B in #23 —
+the same HEAD without it scores 0.6366, so the change is worth **+0.0837**, by
+a factor of three the largest win in this project. Note it lands on top of the
+phrase leg, not instead of it.)
+
+(The 0.6454 line it replaced was with the **phrase-match retrieval leg at
+`PHRASE_WEIGHT = 2.0`**,
 shipped after the sweep in #20 — the previous 0.6182 is the same HEAD with the
-leg disabled, so the change is worth **+0.0272**, the largest single measured
-win in this project, and the only one that is a *recall* gain rather than a
-reordering.)
+leg disabled, so the change is worth **+0.0272** — the largest retrieval-side
+win here, and the first one that was a *recall* gain rather than a reordering.
+Superseded as the project's largest win by #23.)
 
 (The 0.6182 line it replaced was with the buying dense:bm25 ratio at **0.25**,
 shipped after the sweep in #16 — the previous 0.50 scored 0.6070 on that same
@@ -1090,6 +1107,132 @@ Notable things confirmed empirically along the way, not just assumed:
     valid while that remains true** -- if the label ever starts driving
     something score-bearing, re-measure before keeping these prototypes.
 
+23. **Shown-item exclusion: +0.0837, the largest win in the project by a
+    factor of three.** `EXCLUDE_SHOWN = True` (`agent.py`). The agent kept
+    re-offering products it had already recommended on earlier turns. The
+    evaluator ends a session the moment the target enters the top 10, so being
+    asked for another turn is *proof* that every item shown so far is wrong.
+    Re-offering them spends slots on answers already known to be dead.
+
+    Measured on the full public set, all legs on one HEAD
+    (`scripts/ab_phrase_exclude.py`):
+
+    ```
+                             HitRate      hits      MRR     MTTC  Technical
+    phrase 0.0 (identity)     0.7550  151/200   0.3989    4.940     0.6184
+    phrase 2.0                0.7800  156/200   0.4103    4.825     0.6366
+    phrase 2.0 + exclude      0.8550  171/200   0.4622    4.205     0.7020
+    ```
+
+    Identity reproduced the shipped 0.6184, so the legs are comparable.
+
+    Two things make this worth reading twice. **It is the only change here that
+    moves all three score terms the same way at once** — every prior win traded
+    MRR against MTTC (#9, #20), because converting a late hit into an earlier,
+    worse-ranked one costs MRR and pays in Efficiency. This one improves rank
+    *and* speed, because the excluded slots are refilled from deeper in the
+    same pool. And **it required no new signal at all** — it is a rule read off
+    the evaluator's own stopping condition. The project spent weeks on
+    retrieval mechanisms for +0.01 each while a re-read of `evaluate()` was
+    worth +0.08. When stuck, read the scorer again before building anything.
+
+    Caveat for the hidden grader: the win assumes the grader also ends the
+    session on first hit. That is stated in the rules and implemented in
+    `evaluate()`, but it is a stronger dependency on scorer semantics than
+    anything else shipped here.
+
+24. **Miss taxonomy at 0.7020: the remaining failures are buying-side recall,
+    not ranking.** `scripts/eval_failures.py` (new) replays the evaluator loop,
+    then probes each retrieval leg to depth 2000 for every miss and classifies
+    the cause. Run it before proposing any further retrieval work.
+
+    27 misses observed (the run died at sample 187 of 200 under memory
+    pressure from concurrent evals, so treat these as a near-complete census,
+    not an exact one — and note it never wrote its JSON):
+
+    ```
+    by reason                      by scenario
+      lost-in-fusion    17           buying           15
+      ranked-11+         6           browsing          6
+      unreachable        3           intent_override   3
+      excluded-as-shown  1           boundary          3
+    ```
+
+    **`lost-in-fusion` is a mislabel, and reading it as a fusion bug wastes a
+    day.** It means "the fused pool did not contain the target", and the
+    obvious inference is that fusion discarded something a leg had found. It
+    did not: 16 of those 17 have *no* leg ranking the target better than ~198,
+    against a candidate pool of a few dozen. The target was never in reach.
+    Only `public_0018` (dense rank 25) is arguable. The label describes the
+    probe's depth, not a defect.
+
+    The genuinely anomalous session is filed under a boring reason.
+    `public_0111`, classified `ranked-11+`:
+
+    ```
+    legs={'bm25': 5, 'phrase': None, 'dense': 312}   fused=80
+    ```
+
+    BM25 ranks the target 5th and the final list puts it 80th. One session, so
+    it is worth ten minutes of reading and not a research direction.
+
+    **What the census actually says**: 15 of 27 misses are `buying`, and the
+    phrase leg reaches the target in only 2 of 27. Both follow from the
+    diagnostic already in the plan file — a buying session's turn-1 signal is
+    usually a single very common material word ("cotton" -> 9,414 products), so
+    there is no multi-word span for the phrase leg to match and no fusion
+    weighting that manufactures signal the query never carried. Further
+    retrieval *tuning* cannot fix these; only more information can.
+
+25. **Phrase-leg query hygiene: implemented, shipped dark, unmeasured.** Two
+    changes aimed at the phrase leg's span budget, both behind flags that
+    default to the identity value. **The A/B measuring them did not finish
+    before the session ended — do not enable either without running it.**
+
+    The budget (`MAX_PHRASE_QUERIES = 24`) is spent longest-first, assuming a
+    longer span is a more specific one. True of catalog copy, false of
+    conversation: the longest spans of a 10-turn query are sentences of filler
+    that match nothing. Measured on `public_0008`'s final query — 135 spans
+    built, and all 24 that fit the budget matched zero products, while "bras
+    everyday bras" (verbatim in the target) sat unqueried at 3-gram depth.
+
+    - `PHRASE_CLAUSE_SPANS` (`retrieval.py`): spans may not cross a clause
+      boundary and may not begin or end on a stopword.
+    - `PHRASE_QUERY_SKIP_NON_ANSWERS` (`agent.py`): drop contentless replies
+      from the **phrase leg's query only**, via the existing
+      `EmbeddingNonAnswerDetector`. `SessionState.informative_messages` keeps
+      the filtered window in parallel with `recent_messages`.
+
+    Static effect on `public_0008`, before any scoring:
+
+    ```
+                                        spans   fit budget   reaches the target span?
+    current (longest-first, whole query)  135        24          no
+    + clause + edge rules                  38        24          yes
+    filtered query, current                80        24          no
+    filtered + clause + edge                11        11          yes
+    ```
+
+    **Why this is not a repeat of #19** (query hygiene, -0.0410). That loss had
+    a specific mechanism: 89.7% of customer text is a verbatim substring of the
+    target's catalog record (#14), so text the detector called contentless was
+    still an exact-match key, and deleting it deleted what BM25 wins with. The
+    BM25 and dense queries are untouched here. The phrase leg has the opposite
+    cost structure — it is budget-limited, and filler spans match nothing while
+    consuming lookups the informative spans needed. Same classifier, opposite
+    economics. That argument is a *prediction*, and #19 is the standing
+    reminder that predictions of this shape have been wrong before.
+
+    Deliberately **not** done: blacklisting the simulator's template strings
+    ("A key requirement is"). That scores well locally and transfers nothing —
+    #12 and #13 are two separate instances of exactly that trap. Clause
+    boundaries and stopword edges are properties of written language.
+
+    `scripts/ab_phrase_query.py` runs the five legs: identity, each fix alone,
+    both, and `MAX_PHRASE_QUERIES = 96` as a control. The control matters —
+    if simply raising the budget matches the fixes, the fixes have not earned
+    their complexity.
+
 ## Blockers / mistakes already made (so they aren't repeated)
 
 - **A feature flag whose zero value is not the identity silently corrupts
@@ -1152,3 +1295,17 @@ Notable things confirmed empirically along the way, not just assumed:
   project's own convention (measure before trusting a design argument)
   applies to safety arguments about a design, not just its expected
   benefit.
+- **Do not run more than two full evals at once on this box.** Three concurrent
+  runs drove load average past 17 on 8 cores, and `eval_failures.py` was killed
+  after its last miss line but before it printed its summary or wrote its JSON
+  — so the run looked like it had finished cleanly (the wrapper's exit code was
+  0, because that code came from the `tail` after the `;`). The per-sample
+  output survived only because it was `flush=True`, and the summary had to be
+  recomputed from the log by hand. Two lessons: cap concurrency at two, and
+  when chaining `long_command; tail log`, the exit code you see belongs to
+  `tail`, not to the thing you care about.
+- **Check whether a queued run is redundant before letting it hold the box.**
+  A standalone `python3 -m evaluator.local_evaluator` was left running for 1h46
+  to confirm the shipped score, while a five-leg A/B whose *first leg is that
+  exact configuration* ran beside it. The confirmation was duplicated work
+  competing with the thing that would produce the same number.

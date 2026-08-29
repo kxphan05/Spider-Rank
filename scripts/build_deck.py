@@ -325,6 +325,56 @@ def slide_task(prs):
     return slide
 
 
+def slide_conversation(prs):
+    """One real session, turn by turn.
+
+    Replayed from demo/sessions.json (public_0006, captured against the live
+    agent), not written by hand. This is the only slide that shows the product
+    actually behaving like a conversation, which is the whole track.
+    """
+    slide = _blank(prs)
+    heading(slide, "One real session, turn by turn", "what it looks like")
+
+    frame = _textbox(slide, Inches(0.7), Inches(1.6), Inches(11.9), Inches(0.35))
+    run = frame.paragraphs[0].add_run()
+    run.text = ("Target, hidden from the agent:  Pro Club Men's Heavyweight Mesh Basketball Shorts")
+    _set(run, size=12, bold=True, color=MUTED)
+
+    turns = [
+        ("1", "I'm looking for Basketball Men,\nbut I'm still exploring.",
+         "What material are you\nlooking for?", "—",
+         "Routed BROWSING. No attribute stated,\nso ask the most answerable one.", SURFACE, MUTED),
+        ("2", "For that, what matters is:\npolyester; 100% Polyester.",
+         "Do you have a colour\npreference?", "—",
+         "Slot filled: material = polyester.\nBoosts matching items, deletes nothing.", SURFACE, MUTED),
+        ("3", "I don't have an additional\npreference for colour.",
+         "Is there a specific feature\nthat matters most?", "—",
+         "A non-answer. We keep the text in the\nquery anyway — pruning it measured −0.041.", SURFACE, MUTED),
+        ("4", "For that, what matters is:\nDrawstring closure; High quality\nmesh for breathability.",
+         "Any particular style\nor fit you'd like?", "rank 3",
+         "Phrase leg matches the exact span\n\u201cDrawstring closure\u201d. HIT — session ends.",
+         GOOD_TINT, GOOD),
+    ]
+
+    top = Inches(2.05)
+    for number, said, asked, rank, why, fill, colour in turns:
+        box(slide, Inches(0.7), top, Inches(0.5), Inches(1.05), number,
+            fill=fill, border=colour, color=colour, size=14)
+        box(slide, Inches(1.3), top, Inches(3.5), Inches(1.05), "SHOPPER", said,
+            fill=fill, border=RULE, color=MUTED, size=9, sub_size=11)
+        arrow(slide, Inches(4.9), top + Inches(0.42), Inches(0.4), color=RULE)
+        box(slide, Inches(5.4), top, Inches(2.8), Inches(1.05), "WE ASK", asked,
+            fill=fill, border=RULE, color=MUTED, size=9, sub_size=11)
+        box(slide, Inches(8.3), top, Inches(1.0), Inches(1.05), rank,
+            fill=fill, border=colour, color=colour, size=12)
+        caption(slide, Inches(9.5), top + Inches(0.2), Inches(3.1), why.split("\n"), size=10)
+        top += Inches(1.15)
+
+    note(slide, "Found on turn 4 of 10, at rank 3. Every question was chosen by the live policy — "
+                "nothing here is scripted.", top=Inches(6.75), color=GOOD, bold=True)
+    return slide
+
+
 def slide_architecture(prs):
     slide = _blank(prs)
     heading(slide, "Architecture", "how it works")
@@ -332,7 +382,7 @@ def slide_architecture(prs):
     stages = [
         ("UNDERSTAND", "Slot extraction\nIntent routing\nPivot detection"),
         ("RETRIEVE", "4 independent legs\nover all 50k products"),
-        ("RANK", "Fuse · boost · drop shown\nCross-encoder re-rank"),
+        ("RANK", "Fuse · boost\ndrop already-shown"),
         ("RESPOND", "Top 10 products\n+ the next question"),
     ]
     width = Inches(2.75)
@@ -387,11 +437,16 @@ def slide_retrieval(prs):
 
     chain = [("1 · Attribute boost", "agree +1 · clash −1 · delete nothing"),
              ("2 · Drop shown items", "proven not the target"),
-             ("3 · Cross-encoder re-rank", "top 20 → the shown 10")]
+             ("3 · Cross-encoder re-rank", "built, switched off")]
     arrow(slide, Inches(7.2), Inches(2.32), Inches(0.5))
     top = Inches(2.0)
     for index, (title, sub) in enumerate(chain):
-        box(slide, Inches(7.8), top, Inches(3.0), Inches(0.85), title, sub, size=12)
+        # The re-rank stage is greyed for the same reason PRF is: RERANK_WEIGHT
+        # is 0.0, so it is built and not running. Showing it as live would
+        # claim a stage the report lists as a limitation.
+        off = index == 2
+        box(slide, Inches(7.8), top, Inches(3.0), Inches(0.85), title, sub, size=12,
+            color=MUTED if off else INK, fill=PAPER if off else SURFACE)
         if index < 2:
             down_arrow(slide, Inches(9.19), top + Inches(0.9), Inches(0.35))
         top += Inches(1.25)
@@ -590,22 +645,22 @@ def slide_models(prs):
     table(slide, ["Model", "Size", "Speed", "Used for", "Verdict"], [
         ("bge-small-en-v1.5", "129 MB", "fast", "Dense search, intent, pivot and non-answer detection",
          ("shipped", GOOD)),
-        ("MiniLM cross-encoder", "87 MB", "~17 ms / pair", "Re-ranking the top 20 down to the shown 10",
-         ("shipped", GOOD)),
-        ("distilbert (masked LM)", "255 MB", "246 ms / call", "Guessing an unstated material from turn 1",
-         ("marginal", MUTED)),
+        ("distilbert (masked LM)", "257 MB", "246 ms / call", "Guessing an unstated material from turn 1",
+         ("shipped, marginal", MUTED)),
+        ("MiniLM cross-encoder", "88 MB", "~17 ms / pair", "Would re-rank the top 20 into the shown 10",
+         ("built, weight 0", MUTED)),
         ("Qwen3-Reranker-0.6B", "1.2 GB", ("~27 s / pair", BAD),
          "Would re-rank better — 75 hours for ONE evaluation run", ("rejected", BAD)),
     ], top=Inches(1.85), col_widths=(2.7, 1.1, 1.6, 5.2, 1.3), row_height=Inches(0.62), size=11)
 
     box(slide, Inches(0.7), Inches(4.9), Inches(11.93), Inches(0.9),
         "A model we cannot A/B is a model we cannot justify.",
-        "Qwen judges relevance better than MiniLM. We still cut it, because we could never have proven it helped.",
+        "Qwen judges relevance better than MiniLM — but one A/B run would have taken 75 hours. Both re-rankers ship at weight zero: built, wired, never measured, so never switched on.",
         fill=TINT, border=ACCENT, color=ACCENT, size=16)
     note(slide, "Nothing is fine-tuned. The rules put training base models out of scope, and we had no "
                 "labelled data that was not the simulator's own two templates.", top=Inches(6.1))
-    note(slide, "Everything runs on CPU with the network off. Total shipped assets: ~291 MB.",
-         top=Inches(6.75))
+    note(slide, "Everything runs on CPU with the network off. Loaded assets: 460 MB "
+                "(encoder 129 + masked LM 257 + dense index 74).", top=Inches(6.75))
     return slide
 
 
@@ -694,6 +749,89 @@ def slide_silent(prs):
     return slide
 
 
+def slide_offline(prs):
+    """The it-has-to-run-on-someone-else's-machine slide.
+
+    Numbers from docs/team_report.md sec.4 (measure_latency.py) and from a real
+    scripts/preflight.py --strict run. The point a judge cares about: none of
+    this degrades loudly, so every guard here exists because the failure was
+    silent.
+    """
+    slide = _blank(prs)
+    heading(slide, "It has to run on someone else's machine", "engineering")
+
+    stats = [("0", "network calls\nat scoring time"),
+             ("$0.00", "model cost\n0 tokens, 0 API calls"),
+             ("408 ms", "mean turn\np95 716 ms, CPU only"),
+             ("1.3 GB", "peak memory\n460 MB of assets")]
+    left = Inches(0.7)
+    for value, label in stats:
+        head, sub = label.split("\n")
+        box(slide, left, Inches(1.75), Inches(2.83), Inches(1.0), value,
+            head + "\n" + sub, fill=TINT, border=ACCENT, color=ACCENT,
+            size=20, sub_size=10)
+        left += Inches(3.03)
+
+    frame = _textbox(slide, Inches(0.7), Inches(3.0), Inches(11.9), Inches(0.45))
+    run = frame.paragraphs[0].add_run()
+    run.text = ("The problem: with no network and a cold cache, the agent does not crash. "
+                "It starts, returns ten products, and is silently a different system.")
+    _set(run, size=14, bold=True, color=BAD)
+
+    body = ("Dense retrieval, both classifiers and the masked LM all fail open at once. "
+            "Nothing in the score says so — the run just gets worse. So the check is a "
+            "build step, not a habit:")
+    frame = _textbox(slide, Inches(0.7), Inches(3.5), Inches(5.2), Inches(0.9))
+    run = frame.paragraphs[0].add_run()
+    run.text = body
+    _set(run, size=12, color=MUTED)
+
+    guards = [("fetch_assets.py", "the only step that touches the network, ever"),
+              ("preflight.py --strict", "exits non-zero if any component is dark"),
+              ("build_submission.py --verify", "re-imports the bundle and re-scores it")]
+    top = Inches(4.35)
+    for name, what in guards:
+        box(slide, Inches(0.7), top, Inches(2.5), Inches(0.36), name,
+            fill=PAPER, border=ACCENT, color=ACCENT, size=10,
+            shape=MSO_SHAPE.RECTANGLE)
+        frame = _textbox(slide, Inches(3.3), top + Inches(0.09), Inches(2.7), Inches(0.3))
+        run = frame.paragraphs[0].add_run()
+        run.text = what
+        _set(run, size=10, color=MUTED)
+        top += Inches(0.44)
+
+    lines = [("$ preflight.py --strict", ACCENT),
+             ("[  ok  ] dense retrieval        live", GOOD),
+             ("[  ok  ] intent classifier      live", GOOD),
+             ("[  ok  ] override detector      live", GOOD),
+             ("[  ok  ] non-answer detector    live", GOOD),
+             ("[ warn ] cross-encoder          off", MUTED),
+             ("OK: the agent runs fully offline.", GOOD)]
+    panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(6.2),
+                                   Inches(3.42), Inches(6.43), Inches(2.05))
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = SURFACE
+    panel.line.color.rgb = RULE
+    panel.shadow.inherit = False
+    panel.text_frame.word_wrap = True
+    frame = _textbox(slide, Inches(6.45), Inches(3.6), Inches(6.0), Inches(1.8))
+    for index, (text, colour) in enumerate(lines):
+        para = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        para.space_after = Pt(2)
+        run = para.add_run()
+        run.text = text
+        _set(run, size=10, color=colour, font=MONO_FONT,
+             bold=colour is not MUTED)
+
+    note(slide, "Same class of bug, twice more: our search index worked from one thread only, "
+                "and our data paths were relative to the working directory — so the agent "
+                "quietly lost half its pipeline when launched from anywhere but the repo root.",
+         top=Inches(5.75))
+    note(slide, "The submission bundle is generated, then re-imported from a neutral directory "
+                "and re-scored before we believe it.", top=Inches(6.4), color=ACCENT, bold=True)
+    return slide
+
+
 def slide_next(prs):
     slide = _blank(prs)
     heading(slide, "What we would do with more time", "known open work")
@@ -713,11 +851,15 @@ def slide_next(prs):
         ("Extract catalog attributes\nwith an LLM, offline",
          "Only 3 of 10 attributes have an extractor at all. Style, size, use case and feature have none.",
          "A one-time batch pass over\n50,000 products. Hours."),
-    ], top=Inches(1.8), col_widths=(2.6, 6.6, 2.7), row_height=Inches(0.82), size=10.5)
+        ("Switch on the\ncross-encoder re-rank",
+         "It scores the top 20 and can promote a rank-11 item into the shown ten — the one stage "
+         "that could convert a miss into a hit rather than just reorder.",
+         "Wired and greyed out at weight 0.\nNever A/B'd, so never trusted."),
+    ], top=Inches(1.8), col_widths=(2.6, 6.6, 2.7), row_height=Inches(0.72), size=10.5)
     note(slide, "The honest summary: the ideas were never the constraint. Evaluation time was.",
-         top=Inches(5.75), color=ACCENT, bold=True)
+         top=Inches(6.05), color=ACCENT, bold=True)
     note(slide, "This hackathon rewards engineering intuition. Ours says: sweep the knobs nobody has "
-                "checked, because that is where four of our five wins came from.", top=Inches(6.15))
+                "checked, because that is where four of our five wins came from.", top=Inches(6.45))
     return slide
 
 
@@ -750,6 +892,7 @@ def build() -> Path:
 
     slide_title(prs)
     slide_task(prs)
+    slide_conversation(prs)
     slide_architecture(prs)
     slide_retrieval(prs)
     slide_scoreboard(prs)
@@ -761,6 +904,7 @@ def build() -> Path:
     slide_rejected(prs)
     slide_discipline(prs)
     slide_silent(prs)
+    slide_offline(prs)
     slide_next(prs)
     slide_team(prs)
 
