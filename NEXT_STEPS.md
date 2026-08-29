@@ -12,13 +12,17 @@ attribute filtering, a filter-then-rerank buying track, embedding-similarity
 reranking, user-profile personalization, and a trained intent head were each
 built, measured, and rejected with numbers recorded.
 
-Current score on the 200-sample public set: **TechnicalScore 0.6182**
-(HitRate 0.7500 / MRR 0.4096 / MTTC 4.985). Verified reproducible: with every
-adaptive-layer switch at its identity value the harness returns that line
-exactly, which is the check to run before trusting any new measurement.
+Current score on the 200-sample public set: **TechnicalScore 0.7020**
+(HitRate 0.8550, 171/200 / MRR 0.4622 / MTTC 4.205), measured with the
+identity leg reproducing the previous 0.6184 first — which is the check to run
+before trusting any new measurement.
 
-Old score line, for reading older notes below: **0.6070**
-(HitRate 0.745 / MRR 0.3876 / MTTC 5.09).
+Older score lines, for reading the notes below, which were written against
+them: **0.6454** (phrase leg, before shown-item exclusion), **0.6182**
+(HitRate 0.7500 / MRR 0.4096 / MTTC 4.985, before the phrase leg), and
+**0.6070** (HitRate 0.745 / MRR 0.3876 / MTTC 5.09, before the fusion retune).
+Deltas quoted below are against whichever baseline that note names; they have
+not been re-measured on top of 0.7020.
 
 ---
 

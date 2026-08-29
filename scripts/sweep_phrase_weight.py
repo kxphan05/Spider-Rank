@@ -12,7 +12,10 @@ against it. Every previous retrieval change that lost score (#14 dense weight,
 #17 override rewrite, #19 query pruning) lost by adding tolerance to an
 exact-match benchmark.
 
-`PHRASE_WEIGHT = 0.0` is the identity and must reproduce 0.6182 exactly. Check
+`PHRASE_WEIGHT = 0.0` was the identity when this was written and reproduced
+0.6182 exactly. That predates shown-item exclusion (#23); on current HEAD the
+identity leg of this sweep is 0.6184-with-exclusion, not 0.6182 -- re-establish
+the identity number on the HEAD you are sweeping before believing a point. Check
 that row before believing any other.
 
     uv run python3 scripts/sweep_phrase_weight.py

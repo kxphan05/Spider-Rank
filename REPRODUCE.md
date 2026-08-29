@@ -6,8 +6,8 @@ implied and nothing is left to guess.
 **Target result** (full 200-sample public set):
 
 ```
-HitRate@10  0.790    MRR  0.4176    MTTC  4.745    Efficiency  0.6255
-TechnicalScore  0.6454
+HitRate@10  0.855    MRR  0.4622    MTTC  4.205    Efficiency  0.6795
+TechnicalScore  0.7020
 ```
 
 ---
@@ -131,11 +131,11 @@ It prints JSON to the terminal and writes the full per-session detail to
 ```json
 {
   "sample_count": 200,
-  "hit_rate_at_10": 0.79,
-  "mrr": 0.4176,
-  "mttc": 4.745,
-  "efficiency": 0.6255,
-  "recommended_technical_score": 0.6454
+  "hit_rate_at_10": 0.855,
+  "mrr": 0.4622,
+  "mttc": 4.205,
+  "efficiency": 0.6795,
+  "recommended_technical_score": 0.702
 }
 ```
 

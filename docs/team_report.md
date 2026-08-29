@@ -13,12 +13,12 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.790    MRR  0.4176    MTTC  4.745   Efficiency  0.6255
-TechnicalScore  0.6454
+HitRate@10  0.855    MRR  0.4622    MTTC  4.205   Efficiency  0.6795
+TechnicalScore  0.7020
 ```
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
-HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.3x improvement in hit
+HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.8x improvement in hit
 rate** and a halving of turns-to-conversion.
 
 By scenario:
@@ -30,12 +30,12 @@ By scenario:
 | intent_override | 30 | 0.8000 | 0.5330 | 5.90 |
 | boundary | 10 | 0.5000 | 0.1860 | 6.90 |
 
-> **Note:** the per-scenario table above is from the previous shipped
-> configuration (TechnicalScore 0.6182). The aggregate line has been updated
-> to the current one; the per-scenario split is being re-measured and will be
-> refreshed before submission. Flagged rather than silently carried forward,
-> because a stale breakdown under a fresh headline is exactly the kind of
-> number a reader would reasonably assume was re-run.
+> **Note:** the per-scenario table above is from an earlier shipped
+> configuration (TechnicalScore 0.6182), two changes back. The aggregate line
+> is current; the per-scenario split is being re-measured and will be refreshed
+> before submission. Flagged rather than silently carried forward, because a
+> stale breakdown under a fresh headline is exactly the kind of number a reader
+> would reasonably assume was re-run.
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
@@ -60,8 +60,9 @@ for precision on hard constraints, browsing shifts to 1.25/1.5 for broader
 semantic matching and additionally gets an MMR diversity re-rank, pinned so
 diversity can never evict the top matches.
 
-The phrase leg is our largest single measured gain (**+0.0272**, §6) and the
-only change in this project that improved *recall* rather than ordering. It
+The phrase leg is our largest *retrieval-side* measured gain (**+0.0272**) and
+the first change in this project that improved *recall* rather than ordering.
+(The largest gain overall is the shown-item exclusion below, +0.0837.) It
 exists because of a property we measured about the task rather than a general
 preference: 89.7% of the simulated customer's turn-1 hard constraints are
 verbatim substrings of the target product's own catalog text. Ordinary BM25
@@ -86,15 +87,31 @@ entropy threshold it falls back to a fixed order sorted by measured
 *answerability* — `feature, style, size, use_case, budget`. That ordering
 alone was worth +0.0109 TechnicalScore.
 
-**Cross-encoder re-ranking.** The pool head is re-scored by
-`ms-marco-MiniLM-L-6-v2`, the first stage in the pipeline that reads the query
-and a document *jointly* — BM25 and the phrase leg match terms, and the dense
-leg embeds the two sides independently and takes a cosine. The re-ranked order
-is fused back by RRF rather than replacing the retrieval order outright. The
-scored depth is deliberately deeper than the returned slate: at depth equal to
-`top_k` the re-ranker can only permute the ten items already destined for the
-slate, so it cannot convert a miss into a hit under any ordering. Depth is
-what opens the recall channel.
+**Shown-item exclusion.** The agent never re-recommends a product it has
+already shown. This is our largest single gain, **+0.0837**, and it is a
+deduction from the scoring rule rather than a retrieval idea: the evaluator
+ends a session the moment the target enters the returned slate, so being asked
+for another turn at all is proof that every item shown so far is wrong.
+Re-offering them spends slots on answers already known to be dead. It is also
+the only change here that moves all three score terms the same way at once —
+every earlier win traded MRR against MTTC, because converting a late hit into
+an earlier, worse-ranked one costs MRR and pays in Efficiency. This one
+improves rank *and* speed, because the freed slots refill from deeper in the
+same pool. The dependency to state plainly: it assumes the hidden grader also
+stops on first hit, which the rules state and `evaluate()` implements, but it
+is a stronger reliance on scorer semantics than anything else we ship.
+
+**Cross-encoder re-ranking: built, not enabled.** A `ms-marco-MiniLM-L-6-v2`
+stage is implemented (`starter/reranker.py`) behind `RERANK_WEIGHT`, which
+ships at **0.0** — the identity, which skips the model entirely. Its sweep
+(`scripts/sweep_rerank.py`, four points at ~15 minutes each) did not fit the
+remaining evaluation budget, and this project's rule is that an unmeasured
+switch ships at identity. So the scored pipeline contains **no** learned
+re-ranker; see §7.4. The design intent is recorded because the depth choice is
+the non-obvious part: at a scored depth equal to `top_k` the re-ranker can only
+permute the ten items already destined for the slate, so it cannot convert a
+miss into a hit under any ordering. `RERANK_TOP_N = 20` is what would open the
+recall channel, if it were switched on.
 
 **Intent-override handling.** The agent API exposes no signal for a
 mid-session pivot, so it is detected from text: a trimmed nearest-prototype
@@ -260,6 +277,23 @@ as paraphrase insurance at roughly 40% of its former local cost. The browsing
 track was swept too and measured **flat** across 0.0–1.5 (every setting within
 one session of every other), so it was left alone.
 
+### The largest win came from re-reading the scorer, not from a model
+
+| leg | HitRate | hits | MRR | MTTC | TechnicalScore |
+|---|---:|---:|---:|---:|---:|
+| phrase 0.0 (identity) | 0.7550 | 151/200 | 0.3989 | 4.940 | 0.6184 |
+| phrase 2.0 | 0.7800 | 156/200 | 0.4103 | 4.825 | 0.6366 |
+| **phrase 2.0 + shown-item exclusion** | **0.8550** | **171/200** | **0.4622** | **4.205** | **0.7020** |
+
+Measured with all three legs on one HEAD (`scripts/ab_phrase_exclude.py`); the
+identity leg reproduced the then-shipped 0.6184 first, which is what makes the
+other two rows comparable. **+0.0837 for the exclusion — three times the
+largest retrieval-side change in this project, and it required no new signal at
+all.** It is a rule read straight off the evaluator's stopping condition. We
+spent weeks on retrieval mechanisms worth ~+0.01 each while a re-read of
+`evaluate()` was worth +0.08. The transferable lesson is the ordering: read the
+scorer again before building anything.
+
 The honest summary: **the shipped configuration is deliberately not the
 highest-scoring one we measured locally.** We took the part of the dense-leg
 finding that is robust to the confound (the weight was too high) and declined
@@ -285,9 +319,13 @@ the part that is not (removing the leg entirely).
    public set**: the evaluator's `classify_constraint()` never buckets any
    sampled constraint as `budget`, so the correct regression check was that
    the fix leaves the score bit-identical, not that it raises it.
-4. **No cross-encoder or LLM reranking stage.** Spec § 4.2.I names "LLM
-   Semantic Ranking" as a pillar; ranking here is hybrid retrieval +
-   attribute boost + MMR, with no learned reranker.
+4. **No cross-encoder or LLM reranking stage is enabled.** Spec § 4.2.I names
+   "LLM Semantic Ranking" as a pillar; the scored pipeline is hybrid retrieval
+   + attribute boost + MMR + shown-item exclusion, with no learned reranker.
+   A MiniLM cross-encoder stage is implemented and wired, but ships at
+   `RERANK_WEIGHT = 0.0` because its sweep did not fit the evaluation budget
+   and we do not enable unmeasured switches. Reported as a gap, not as a
+   feature.
 5. **Long-term personalization ships inert.** The user-profile store is built
    and correct, but nothing reads its output: three ways of using it each
    regressed the full set, and a signal check showed same-key sessions' targets

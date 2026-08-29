@@ -1,5 +1,9 @@
 """Sweep the intent-conditioned RRF fusion weights and report score as a curve.
 
+Baseline note: the numbers quoted below were measured when the shipped score
+was 0.6070. The shipped score is now 0.7020 (CLAUDE.md #23); re-establish this
+sweep's identity point on the HEAD you are sweeping before believing a curve.
+
 Motivation (CLAUDE.md #14): ablating the dense leg entirely *raises*
 TechnicalScore 0.6070 -> 0.6216 on the public set, with HitRate identical to
 four decimals. We did not drop the leg, because 89.7% of local hard
