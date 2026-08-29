@@ -344,7 +344,19 @@ RERANK_TOP_N = 20
 # Assumption worth stating in the report: this relies on first-hit-ends-the-
 # session, which the spec implies by defining MTTC as turns-to-conversion but
 # which is only *verified* against the local evaluator.
-EXCLUDE_SHOWN = False
+#
+# Measured on the full 200-sample public set (scripts/ab_phrase_exclude.py),
+# all three legs on one HEAD:
+#
+#     leg                      HitRate      hits     MRR    MTTC  Technical
+#     phrase 0.0 (identity)     0.7550  151/200  0.3989   4.940     0.6184
+#     phrase 2.0                0.7800  156/200  0.4103   4.825     0.6366
+#     phrase 2.0 + exclude      0.8550  171/200  0.4622   4.205     0.7020
+#
+# +0.0837, and unlike every reordering change here it moves all three terms at
+# once: +15 sessions of HitRate, MRR up, MTTC down 0.62 turns. Every scenario
+# improves (buying 0.738 -> 0.812, browsing 0.825 -> 0.925, boundary flat).
+EXCLUDE_SHOWN = True
 
 # Prepend a plain-language rationale to `turn_response.message` (spec's
 # "transparent recommendation explanations"). Score-neutral by construction --
