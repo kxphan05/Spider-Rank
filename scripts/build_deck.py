@@ -281,8 +281,8 @@ def slide_title(prs):
         run.text = text
         _set(run, size=size, color=MUTED)
 
-    metrics = (("0.702", "TechnicalScore"), ("0.855", "HitRate@10"),
-               ("0.462", "MRR"), ("4.21", "turns to find"))
+    metrics = (("0.756", "TechnicalScore"), ("0.915", "HitRate@10"),
+               ("0.504", "MRR"), ("3.64", "turns to find"))
     for index, (value, label) in enumerate(metrics):
         left = Inches(0.9) + Inches(2.7) * index
         box(slide, left, Inches(5.05), Inches(2.4), Inches(1.0), value, label,
@@ -378,8 +378,8 @@ def slide_architecture(prs):
     heading(slide, "Architecture", "how it works")
 
     stages = [
-        ("UNDERSTAND", "Slot extraction\nIntent routing\nPivot detection"),
-        ("RETRIEVE", "4 independent legs\nover all 50k products"),
+        ("UNDERSTAND", "Slot extraction\nTrack routing\nPivot · hand-back"),
+        ("RETRIEVE", "5 independent legs\nover all 50k products"),
         ("RANK", "Fuse · boost\ndrop already-shown"),
         ("RESPOND", "Top 10 products\n+ the next question"),
     ]
@@ -397,10 +397,10 @@ def slide_architecture(prs):
                "each new reply re-runs the whole pipeline — state carries forward")
 
     table(slide, ["Stage", "What it decides", "Design rule we committed to"], [
-        ("UNDERSTAND", "material · colour · budget · buying vs browsing",
+        ("UNDERSTAND", "material · colour · budget · track · pivot · hand-back",
          "Never trust one label. Negation-aware, and a pivot wipes state."),
         ("RETRIEVE", "~30 candidates from 50,000",
-         "Every leg sees the whole catalog. No leg may filter another."),
+         "Every leg sees the whole catalog. Each leg votes; none may filter another."),
         ("RANK", "which 10 to show, in what order",
          ("Boost, never delete. Only proven-wrong items are removed.", ACCENT)),
         ("RESPOND", "the single question to ask next",
@@ -411,25 +411,27 @@ def slide_architecture(prs):
 
 def slide_retrieval(prs):
     slide = _blank(prs)
-    heading(slide, "Retrieval: four legs, one fusion", "architecture")
+    heading(slide, "Retrieval: five legs, one fusion", "architecture")
 
     legs = [
-        ("BM25 keyword", "query split into words", "1.00", INK),
+        ("BM25 keyword", "query split into words", "1.25\u20132.0", INK),
         ("Exact phrase", "whole spans, stopwords kept", "2.00", ACCENT),
-        ("Dense vectors", "bge-small cosine", "0.25", INK),
-        ("PRF expansion", "built, switched off", "0.00", MUTED),
+        ("Dense vectors", "bge-small cosine", "1.50", INK),
+        ("PRF expansion", "re-query on the top hits' own words", "0.50", INK),
+        ("Popularity prior", "the pool, re-sorted by review count", "0.50\u20131.0", ACCENT),
     ]
-    top = Inches(2.0)
+    top = Inches(1.95)
     for title, sub, weight, colour in legs:
-        box(slide, Inches(0.75), top, Inches(3.0), Inches(0.82), title, sub,
-            fill=TINT if colour is ACCENT else SURFACE, color=colour, size=12)
-        box(slide, Inches(3.85), top + Inches(0.24), Inches(0.62), Inches(0.34),
-            weight, fill=PAPER, border=RULE, color=colour, size=11,
+        box(slide, Inches(0.75), top, Inches(3.0), Inches(0.72), title, sub,
+            fill=TINT if colour is ACCENT else SURFACE, color=colour, size=12,
+            sub_size=9.5)
+        box(slide, Inches(3.85), top + Inches(0.19), Inches(0.9), Inches(0.34),
+            weight, fill=PAPER, border=RULE, color=colour, size=10,
             shape=MSO_SHAPE.RECTANGLE)
-        arrow(slide, Inches(4.55), top + Inches(0.3), Inches(0.55), color=RULE)
-        top += Inches(0.95)
+        arrow(slide, Inches(4.85), top + Inches(0.25), Inches(0.35), color=RULE)
+        top += Inches(0.79)
 
-    box(slide, Inches(5.2), Inches(2.0), Inches(1.9), Inches(3.6),
+    box(slide, Inches(5.25), Inches(1.95), Inches(1.85), Inches(3.55),
         "WEIGHTED\nRRF", "rank-based,\nnot score-based", fill=TINT, border=ACCENT,
         color=ACCENT, size=14)
 
@@ -437,7 +439,7 @@ def slide_retrieval(prs):
              ("2 · Drop shown items", "proven not the target"),
              ("3 · Cross-encoder re-rank", "built, switched off")]
     arrow(slide, Inches(7.2), Inches(2.32), Inches(0.5))
-    top = Inches(2.0)
+    top = Inches(1.95)
     for index, (title, sub) in enumerate(chain):
         # The re-rank stage is greyed for the same reason PRF is: RERANK_WEIGHT
         # is 0.0, so it is built and not running. Showing it as live would
@@ -454,8 +456,8 @@ def slide_retrieval(prs):
 
     note(slide, "Weighted RRF is scale-invariant per leg, so only the ratios matter — "
                 "that is what makes each leg sweepable on its own.", top=Inches(5.85))
-    note(slide, "Legs are independent by design: one leg failing degrades the score, "
-                "it does not break the agent.", top=Inches(6.25))
+    note(slide, "The two track-dependent weights are BM25 and popularity. Every leg is independent, "
+                "so a leg that fails costs score and the agent keeps answering.", top=Inches(6.25))
     return slide
 
 
@@ -471,8 +473,16 @@ def slide_scoreboard(prs):
          ("+0.013", GOOD), ("SHIPPED", GOOD)),
         ("Ask answerable questions first", "A question that gets no answer burns a whole turn.",
          ("+0.011", GOOD), ("SHIPPED", GOOD)),
-        ("Halve the dense weight", "Dense adds no recall here; it demotes correct keyword hits.",
-         ("+0.011", GOOD), ("SHIPPED", GOOD)),
+        ("Popularity prior leg", "63% of the hidden targets sit in the catalog's top 1% by review count.",
+         ("+0.006", GOOD), ("SHIPPED", GOOD)),
+        ("Boundary mode on a hand-back", "\"Use your judgment\" is a request for exactly the prior we hold.",
+         ("bundled", MUTED), ("SHIPPED", GOOD)),
+        ("Weighted question score", "Entropy and answerability were taking turns over one ordering.",
+         ("bundled", MUTED), ("SHIPPED", GOOD)),
+        ("Eight knobs, changed together", "Each looked safe alone, so we moved them in one commit.",
+         ("+0.046", GOOD), ("SHIPPED,\nunattributed", MUTED)),
+        ("Cut the buying dense weight", "Dense adds no recall here; it demotes correct keyword hits.",
+         ("+0.011", GOOD), ("later reversed\nin that bundle", MUTED)),
         ("Rewrite query on a pivot", "Stale preferences keep biasing search after the shopper changes their mind.",
          ("−0.058", BAD), ("REJECTED", BAD)),
         ("Strip non-answer replies", "\"I don't have a preference\" is noise in the query.",
@@ -483,10 +493,11 @@ def slide_scoreboard(prs):
          ("0.000", MUTED), ("REJECTED", BAD)),
         ("Trained intent classifier", "A learned boundary should beat hand-written prototypes.",
          ("worse", BAD), ("REJECTED", BAD)),
-    ], top=Inches(1.8), col_widths=(3.0, 6.4, 1.2, 1.3), row_height=Inches(0.4),
-        size=11, header_size=11)
-    note(slide, "Five shipped, five thrown away. The rejected half is where the engineering is.",
-         top=Inches(6.5), color=ACCENT, bold=True)
+    ], top=Inches(1.68), col_widths=(3.0, 6.2, 1.2, 1.5), row_height=Inches(0.32),
+        size=9.5, header_size=10)
+    note(slide, "Eight shipped, five thrown away. The rejected half is where the engineering is — "
+                "and the two bundled rows are where we stopped learning.",
+         top=Inches(6.85), color=ACCENT, bold=True, size=12)
     return slide
 
 
@@ -566,6 +577,8 @@ def slide_exclusion(prs):
     note(slide, "The subtlety: on a mid-chat pivot the grader restarts its checking, so a pre-pivot item "
                 "may become the target again. We clear the shown set on exactly that signal.",
          top=Inches(6.1))
+    note(slide, "Those are the numbers of that experiment. Later changes carried the same agent from "
+                "0.7020 to today's 0.7560.", top=Inches(6.7))
     return slide
 
 
@@ -581,18 +594,23 @@ def slide_legs_table(prs):
          "Tuned to a measured quirk; helps less if the grader paraphrases.", ("core", GOOD)),
         ("Dense vectors",
          "Insurance: the only leg that survives paraphrasing.",
-         "Adds zero recall here. At full weight it evicts correct hits.",
-         ("weight 0.25", ACCENT)),
+         "Added zero recall in its own A/B. At full weight it evicts correct hits.",
+         ("weight 1.5", ACCENT)),
         ("PRF expansion",
          "Turns a one-word query into the vocabulary of its own best hits.",
          "Drifts when the first results are wrong — we saw \"leather\" for shoes pull in jackets.",
-         ("off", MUTED)),
-    ], top=Inches(1.8), col_widths=(1.9, 4.3, 4.6, 1.3), row_height=Inches(0.78), size=11)
+         ("weight 0.5", ACCENT)),
+        ("Popularity prior",
+         "63% of targets sit in the catalog's top 1% by review count.",
+         "Describes how these samples were drawn, so it may flatten on the hidden set.",
+         ("0.5, 1.0 at\nthe boundary", ACCENT)),
+    ], top=Inches(1.8), col_widths=(1.9, 4.3, 4.6, 1.3), row_height=Inches(0.72), size=11)
 
-    note(slide, "Why dense stays at 0.25 rather than 0: removing it scores higher locally, "
-                "but the local shopper is a near-exact-match shopper.", top=Inches(5.35))
-    note(slide, "The downside is asymmetric. Keeping it costs ~0.008 if the grader is like ours, "
-                "and saves us entirely if it is not.", top=Inches(5.78), color=ACCENT, bold=True)
+    note(slide, "Dense earns its weight on a bet, not a local number: removing it scored higher here, "
+                "and here the shopper quotes the target verbatim.", top=Inches(5.85))
+    note(slide, "The downside is asymmetric. Carrying it costs a little if the grader resembles ours, "
+                "and rescues us entirely if the grader paraphrases.", top=Inches(6.28),
+         color=ACCENT, bold=True)
     return slide
 
 
@@ -625,15 +643,24 @@ def slide_questions(prs):
         _set(run, size=12, color=ACCENT if pct >= 70 else MUTED, bold=pct >= 70)
         top += Inches(0.42)
 
-    box(slide, Inches(9.0), Inches(2.4), Inches(3.65), Inches(2.35),
-        "The old order asked\nstyle, size, use case first",
-        "The three rarest, before the one\nanswered 96% of the time.\n\nRe-ordering: +0.011",
-        fill=BAD_TINT, border=BAD, color=BAD, size=13)
+    box(slide, Inches(9.0), Inches(2.4), Inches(3.65), Inches(0.95),
+        "How much it splits the pool", "entropy of the attribute\nacross the live candidates",
+        fill=SURFACE, size=12, sub_size=10)
+    box(slide, Inches(9.0), Inches(3.45), Inches(3.65), Inches(0.95),
+        "How often it gets answered", "the bars at left, decayed by\nthis shopper's own silences",
+        fill=SURFACE, size=12, sub_size=10)
+    box(slide, Inches(9.0), Inches(4.5), Inches(3.65), Inches(0.6),
+        "One score, one question", fill=TINT, border=ACCENT, color=ACCENT, size=13)
+    down_arrow(slide, Inches(10.72), Inches(3.38), Inches(0.14))
+    down_arrow(slide, Inches(10.72), Inches(4.43), Inches(0.14))
 
+    note(slide, "The old policy ordered by entropy alone and fell back to this fixed list, so the two "
+                "terms took turns. One score lets them trade off on every turn.",
+         top=Inches(5.3), color=ACCENT, bold=True)
     note(slide, "Honest caveat: \"feature\" is the simulator's catch-all bucket, so 96% is partly an "
-                "artifact of how it labels answers.", top=Inches(5.3))
-    note(slide, "We re-ordered the fallback list rather than deleting the rare options — the real grader "
-                "may bucket answers differently.", top=Inches(5.7))
+                "artifact of how it labels answers.", top=Inches(5.9))
+    note(slide, "Answerability starts at these population rates and then tracks the shopper in front of "
+                "us: each silence lowers that attribute for the rest of the session.", top=Inches(6.35))
     return slide
 
 
@@ -842,10 +869,14 @@ def slide_next(prs):
          "It is +1 / −1 by assumption, chosen back when 40% of our colour labels were fictional. "
          "We fixed the labels and never revisited the weights.",
          "Ran out of evaluation budget\nbefore this one."),
-        ("Turn on pseudo-relevance\nfeedback",
-         "It expands a thin one-word query using the vocabulary of its own best hits — exactly the "
-         "buying track's failure mode.",
-         "Built and committed, switched off.\nUnmeasured, so unshipped."),
+        ("Attribute the two\nbundles we shipped",
+         "Thirteen knobs moved in two commits worth +0.052 between them. We know the sum, and we "
+         "know nothing about the parts — one of them re-enabled a change that lost 0.041 alone.",
+         "One knob is one 15-minute run,\nand there are thirteen."),
+        ("Sweep the popularity\nweight on its own",
+         "It runs on every track at 0.50 and doubles at the boundary, both chosen by argument. The "
+         "prior is the strongest single signal in the catalog.",
+         "Shipped inside the boundary\nbundle, so it has no curve yet."),
         ("Extract catalog attributes\nwith an LLM, offline",
          "Only 3 of 10 attributes have an extractor at all. Style, size, use case and feature have none.",
          "A one-time batch pass over\n50,000 products. Hours."),
@@ -853,11 +884,11 @@ def slide_next(prs):
          "It scores the top 20 and can promote a rank-11 item into the shown ten — the one stage "
          "that could convert a miss into a hit rather than just reorder.",
          "Wired and greyed out at weight 0.\nNever A/B'd, so never trusted."),
-    ], top=Inches(1.8), col_widths=(2.6, 6.6, 2.7), row_height=Inches(0.72), size=10.5)
+    ], top=Inches(1.75), col_widths=(2.6, 6.6, 2.7), row_height=Inches(0.66), size=10)
     note(slide, "The honest summary: the ideas were never the constraint. Evaluation time was.",
-         top=Inches(6.05), color=ACCENT, bold=True)
+         top=Inches(6.2), color=ACCENT, bold=True)
     note(slide, "This hackathon rewards engineering intuition. Ours says: sweep the knobs nobody has "
-                "checked, because that is where four of our five wins came from.", top=Inches(6.45))
+                "checked, because that is where most of our wins came from.", top=Inches(6.6))
     return slide
 
 
@@ -883,6 +914,237 @@ def slide_team(prs):
     return slide
 
 
+def slide_classification(prs):
+    """How the agent reads a message. Four questions, one encoder.
+
+    The diagram at the bottom is the centroid-vs-trimmed comparison, because
+    that is the one classification decision here with a mechanism worth
+    drawing: the numbers come from scripts/eval_override.py (CLAUDE.md #7).
+    """
+    slide = _blank(prs)
+    heading(slide, "Reading the shopper: four questions, one encoder", "how it works")
+
+    table(slide, ["What we ask of the message", "How it is decided",
+                  "The error we tune against", "What it changes"], [
+        ("Buying, or browsing?",
+         "Nearest centroid over 20 hand-written prototype sentences.",
+         "Balanced. The label only picks weights, so both errors cost the same.",
+         ("Fusion weights,\nquestion threshold", ACCENT)),
+        ("Did they just change\ntheir mind?",
+         "A closed cue list OR similarity to the 4 nearest pivot prototypes.",
+         ("Recall. A missed pivot leaves stale slots for the rest of the session.", BAD),
+         "Clears every slot, and\nthe query if a category\nis named"),
+        ("Did that reply carry\nanything?",
+         "Attribute vocabulary vetoes first, then the same trimmed rule.",
+         ("Precision. A false positive throws away a real disclosure.", GOOD),
+         "Answerability belief,\nphrase-leg query"),
+        ("Did they hand the\ndecision back to us?",
+         "A closed cue list, read only on a reply already judged contentless.",
+         ("Precision. It latches for the whole session.", GOOD),
+         "Switches the session\ninto boundary mode"),
+    ], top=Inches(1.72), col_widths=(2.5, 3.6, 3.5, 2.3), row_height=Inches(0.68),
+        size=10.5, header_size=10.5)
+
+    frame = _textbox(slide, Inches(0.7), Inches(5.0), Inches(11.9), Inches(0.35))
+    run = frame.paragraphs[0].add_run()
+    run.text = ("One prototype set needed a different rule. All 12 pivot examples are long two-clause "
+                "sentences, so their mean encodes that shape rather than the pivot:")
+    _set(run, size=13, bold=True)
+
+    box(slide, Inches(0.75), Inches(5.45), Inches(3.4), Inches(1.1),
+        "Mean of all 12", "“never mind, give me white shoes”\nis mostly its request half, and lands\nnearer the continuation mean",
+        fill=BAD_TINT, border=BAD, color=BAD, size=13, sub_size=10)
+    box(slide, Inches(4.3), Inches(5.45), Inches(2.3), Inches(1.1),
+        "recall 0.900", "242 false positives\nper 1600 turns",
+        fill=BAD_TINT, border=BAD, color=BAD, size=15, sub_size=10)
+    arrow(slide, Inches(6.75), Inches(5.9), Inches(0.5))
+    box(slide, Inches(7.4), Inches(5.45), Inches(3.0), Inches(1.1),
+        "Mean of the nearest 4", "compared against the closest\nphrasings only, so a terse pivot\nfinds its own kind",
+        fill=GOOD_TINT, border=GOOD, color=GOOD, size=13, sub_size=10)
+    box(slide, Inches(10.55), Inches(5.45), Inches(2.1), Inches(1.1),
+        "recall 1.000", "2 false positives\nper 1600 turns",
+        fill=GOOD_TINT, border=GOOD, color=GOOD, size=15, sub_size=10)
+
+    note(slide, "The same trimmed rule made the intent classifier worse — 0.988 down to 0.769 — so that "
+                "one keeps its centroid. Fragile centroids were a fact about one prototype set, not a rule of thumb.",
+         top=Inches(6.75), color=ACCENT, bold=True)
+    return slide
+
+
+def slide_popularity(prs):
+    """The fifth RRF leg: a popularity prior over the pool.
+
+    Numbers recomputed from data/catalog.jsonl and data/public_set.jsonl at
+    build time of this deck, not copied from a note.
+    """
+    slide = _blank(prs)
+    heading(slide, "A fifth leg: search where the targets actually live", "architecture")
+
+    stats = [("12", "median reviews\nacross the 50,000 catalog"),
+             ("6,846", "median reviews\nacross the 200 hidden targets"),
+             ("63%", "of targets sit in the\ntop 1% of the catalog — a 63x lift")]
+    left = Inches(0.75)
+    for value, label in stats:
+        head, sub = label.split("\n")
+        box(slide, left, Inches(1.8), Inches(3.85), Inches(1.05), value,
+            head + "\n" + sub, fill=TINT, border=ACCENT, color=ACCENT,
+            size=24, sub_size=10)
+        left += Inches(4.05)
+
+    box(slide, Inches(0.75), Inches(3.25), Inches(2.5), Inches(0.95),
+        "The four legs run", "each over all 50k", fill=SURFACE, size=12)
+    arrow(slide, Inches(3.35), Inches(3.62), Inches(0.45))
+    box(slide, Inches(3.95), Inches(3.25), Inches(2.5), Inches(0.95),
+        "Take their union", "~200 products, and\nonly those", fill=SURFACE, size=12)
+    arrow(slide, Inches(6.55), Inches(3.62), Inches(0.45))
+    box(slide, Inches(7.15), Inches(3.25), Inches(2.5), Inches(0.95),
+        "Sort by review count", "most-reviewed first",
+        fill=TINT, border=ACCENT, color=ACCENT, size=12)
+    arrow(slide, Inches(9.75), Inches(3.62), Inches(0.45))
+    box(slide, Inches(10.35), Inches(3.25), Inches(2.3), Inches(0.95),
+        "Fifth RRF vote", "weight 0.50\n1.00 in boundary mode",
+        fill=GOOD_TINT, border=GOOD, color=GOOD, size=12, sub_size=10)
+
+    box(slide, Inches(0.75), Inches(4.5), Inches(5.85), Inches(1.35),
+        "Why over the pool, and never the catalog",
+        "A leg that ranks all 50,000 products by review count hands every session the same list. "
+        "It would separate one session from another by zero.",
+        fill=SURFACE, size=13, sub_size=11)
+    box(slide, Inches(6.9), Inches(4.5), Inches(5.75), Inches(1.35),
+        "Why the weight stays at 0.50",
+        "The concentration describes how these samples were drawn. Under RRF the leg is one vote "
+        "among five, so a grader drawn differently costs us a vote, rather than the slate.",
+        fill=SURFACE, size=13, sub_size=11)
+
+    note(slide, "Between the last full run and today's: 0.7503 → 0.7560, and the boundary scenario "
+                "carries it — 7 of 10 found becomes 9 of 10, at 3.90 turns instead of 5.50.",
+         top=Inches(6.05), color=GOOD, bold=True)
+    note(slide, "This leg and the boundary knobs moved in the same step, so each holds a share of that "
+                "and neither holds a number. We state the bundle rather than credit the leg.",
+         top=Inches(6.5))
+    return slide
+
+
+def slide_tracks(prs):
+    """Four scenario types, two real tracks and two modifiers."""
+    slide = _blank(prs)
+    heading(slide, "One pipeline, four tracks", "how it works")
+
+    box(slide, Inches(0.75), Inches(1.7), Inches(2.2), Inches(0.72),
+        "Every message", fill=SURFACE, size=12)
+    arrow(slide, Inches(3.05), Inches(1.95), Inches(0.4))
+
+    box(slide, Inches(3.55), Inches(1.7), Inches(2.9), Inches(0.72),
+        "Intent classifier", "picks the base track", fill=TINT, border=ACCENT,
+        color=ACCENT, size=12, sub_size=10)
+    box(slide, Inches(6.75), Inches(1.7), Inches(2.75), Inches(0.72),
+        "Pivot detector", "layers on top", fill=SURFACE, size=12, sub_size=10)
+    box(slide, Inches(9.8), Inches(1.7), Inches(2.85), Inches(0.72),
+        "Hand-back cue", "layers on top, and latches", fill=SURFACE, size=12, sub_size=10)
+
+    for x, w, label, fill, colour in (
+        (3.55, 1.35, "BUYING", TINT, ACCENT), (5.1, 1.35, "BROWSING", TINT, ACCENT),
+        (6.75, 2.75, "INTENT OVERRIDE", SURFACE, INK),
+        (9.8, 2.85, "BOUNDARY", SURFACE, INK)):
+        down_arrow(slide, Inches(x + w / 2 - 0.11), Inches(2.48), Inches(0.28))
+        box(slide, Inches(x), Inches(2.82), Inches(w), Inches(0.45), label,
+            fill=fill, border=colour, color=colour, size=11)
+
+    table(slide, ["Track", "What selects it", "Retrieval", "Slate", "Questions", "Measured"], [
+        ("BUYING", "Classifier leans buying — a stated, concrete need.",
+         "BM25 2.0 · dense 1.5\nphrase 2.0 · PRF 0.5\npopularity 0.5",
+         "Ranked as fused. MMR stays off — it was measured null here.",
+         "Entropy floor 0.10, so it asks readily.",
+         ("0.888 hit\n3.51 turns", ACCENT)),
+        ("BROWSING", "The default, and where an open-ended opener lands.",
+         "BM25 1.25 · dense 1.5\nphrase 2.0 · PRF 0.5\npopularity 0.5",
+         "MMR re-rank, λ 0.50, top 3 pinned, window 40.",
+         "Entropy floor 0.30, so it asks only when the pool is genuinely split.",
+         ("0.950 hit\n3.19 turns", GOOD)),
+        ("INTENT\nOVERRIDE", "Pivot detected mid-session.",
+         "Inherits whichever base track the new message reads as.",
+         "The shown set clears too — after a pivot an earlier item can be the target.",
+         "Every slot cleared, so it asks from scratch.",
+         ("0.900 hit\n5.07 turns", ACCENT)),
+        ("BOUNDARY", "“no preference — please use your judgment”.",
+         "Popularity leg doubles to 1.0: they asked us to pick.",
+         "MMR on either track, λ 0.35, and repelled away from what they passed on.",
+         "Latched, so the rest of the session stays in this mode.",
+         ("0.900 hit\n3.90 turns", ACCENT)),
+    ], top=Inches(3.5), col_widths=(1.3, 2.4, 2.4, 2.6, 2.0, 1.2),
+        row_height=Inches(0.68), size=9.5, header_size=10)
+
+    note(slide, "Two of the four are modifiers rather than tracks. Override and boundary ride on top of "
+                "buying or browsing, which keeps every label-dependent knob resolving in one function.",
+         top=Inches(6.9), color=ACCENT, bold=True)
+    return slide
+
+def slide_provenance(prs):
+    """Which parts are off the shelf, and which are ours.
+
+    Citations are to the originating paper for each mechanism, so a judge can
+    check the claim rather than take the word for it. The three-way split
+    matters more than the count: most of this deck's score came from the
+    adapted and original rows, and every one of those was measured.
+    """
+    slide = _blank(prs)
+    heading(slide, "What is standard, what is adapted, what is ours", "provenance")
+
+    table(slide, ["Component", "Where it comes from", "What we did with it", ""], [
+        ("BM25 ranking",
+         "Robertson & Walker, SIGIR 1994 · Robertson & Zaragoza, FnTIR 2009",
+         "Used as published, over SQLite FTS5. It carries this benchmark.",
+         ("STANDARD", MUTED)),
+        ("Bi-encoder dense retrieval",
+         "Reimers & Gurevych, Sentence-BERT, EMNLP 2019 · Xiao et al., C-Pack (BGE), SIGIR 2024",
+         "bge-small-en-v1.5, frozen. One encoder serves retrieval and all three classifiers.",
+         ("STANDARD", MUTED)),
+        ("Reciprocal rank fusion",
+         "Cormack, Clarke & Büttcher, SIGIR 2009",
+         "Weighted RRF over five legs. The weights are ours; the formula is theirs.",
+         ("STANDARD", MUTED)),
+        ("Pseudo-relevance feedback",
+         "Rocchio, 1971 · Lavrenko & Croft, relevance models, SIGIR 2001",
+         "A second BM25 pass seeded from the first ranking's own top documents.",
+         ("STANDARD", MUTED)),
+        ("MMR slate diversity",
+         "Carbonell & Goldstein, SIGIR 1998",
+         "Standard on browsing. Ours: seeding the penalty term with items the shopper "
+         "already rejected, so the next slate leaves that neighbourhood.",
+         ("ADAPTED", ACCENT)),
+        ("Asking the clarifying question",
+         "Zou & Kanoulas, Learning to Ask, CIKM 2019 · Aliannejadi et al., SIGIR 2019",
+         "They search relevance mass with binary questions. Ours is multi-way categorical "
+         "entropy scored against a per-shopper answerability belief that decays on silence.",
+         ("ADAPTED", ACCENT)),
+        ("Nearest-centroid classification",
+         "Rocchio classifier — Manning, Raghavan & Schütze, IIR 2008, ch. 14",
+         "Kept for intent. Ours: the trimmed top-4 variant for pivots, unioned with a "
+         "clause-initial cue list, because that prototype set has a shape pathology.",
+         ("ADAPTED", ACCENT)),
+        ("Popularity prior",
+         "Popularity bias is a known recsys hazard — Abdollahpouri et al., RecSys 2017",
+         "Ours: entered as one RRF vote over the pool the other legs found, never as a "
+         "score over the catalog, and doubled only when the shopper asks us to choose.",
+         ("OURS", GOOD)),
+        ("Dropping shown items",
+         "No paper. It falls out of reading the scorer.",
+         "The session ends at first hit, so a further turn proves every item shown is wrong. "
+         "Our largest single win, +0.084.",
+         ("OURS", GOOD)),
+        ("Boost, never filter",
+         "Soft constraints are folklore; the failure mode here was measured.",
+         "Our own attribute labels disagree with the target 16–37% of the time, so a hard "
+         "filter deletes the answer. Agreement scores ±1 and deletes nothing.",
+         ("OURS", GOOD)),
+    ], top=Inches(1.68), col_widths=(2.3, 3.4, 4.9, 1.3), row_height=Inches(0.46),
+        size=9.5, header_size=10)
+
+    note(slide, "Every retrieval primitive here is off the shelf and unmodified. The score came from "
+                "how they are combined, and from three mechanisms this task needed that the literature "
+                "does not supply.", top=Inches(6.9), color=ACCENT, bold=True, size=12)
+    return slide
+
 def build() -> Path:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -892,7 +1154,11 @@ def build() -> Path:
     slide_task(prs)
     slide_conversation(prs)
     slide_architecture(prs)
+    slide_classification(prs)
     slide_retrieval(prs)
+    slide_popularity(prs)
+    slide_tracks(prs)
+    slide_provenance(prs)
     slide_scoreboard(prs)
     slide_insight(prs)
     slide_exclusion(prs)

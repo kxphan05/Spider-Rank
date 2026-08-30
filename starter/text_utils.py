@@ -48,6 +48,28 @@ _REQUEST_STOPWORDS = {
     # so BM25 ranked "never mind" as the most informative thing in the
     # sentence. Same shape as the "Buy Caps and Hats" bug, one layer up.
     "mind", "never", "nope", "wait",
+
+    # Literal wrapper words from the local evaluator's own reply templates
+    # (`evaluator/local_evaluator.py`: "I'm looking for X. A *key
+    # *requirement* is: ...", "For that, *what matters* is: ...", "I don't
+    # have an *additional* *preference* ...", "Ask me about one *specific*
+    # *attribute*."). These frame the real constraint text but are never part
+    # of it, and like the rest of this list they are rare in the catalog --
+    # measured document frequency over the 50k catalog:
+    #
+    #     key 0.0122        requirement 0.0007   matters 0.0006
+    #     what 0.0393       preference 0.0013    additional 0.0152
+    #     specific 0.0365   attribute 0.0001      options 0.0188
+    #     yet 0.0220        quite 0.0029          ignore 0.0011
+    #     earlier 0.0002    judgment 0.0001
+    #
+    # so left in, they hand the ranking to whichever of them the query
+    # happens to contain -- same "Buy Caps and Hats" shape as the rest of
+    # this set, this time from "A key requirement is: blue" surfacing
+    # products keyed on "key" instead of "blue".
+    "key", "requirement", "requirements", "matters", "what", "preference",
+    "additional", "specific", "attribute", "options", "yet", "quite",
+    "ignore", "earlier", "judgment", "judgement",
 }
 
 STOPWORDS = _FUNCTION_STOPWORDS | _REQUEST_STOPWORDS

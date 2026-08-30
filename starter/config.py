@@ -37,7 +37,23 @@ ENTROPY_POOL_SIZE = 30  # fused-candidate pool size used for attribute-entropy s
 # browsing
 BUYING_BM25_WEIGHT = 2.0
 BUYING_DENSE_WEIGHT = 1.5
+# Push the buying slate away from the neighbourhood of items already shown,
+# rather than merely past the items themselves. EXCLUDE_SHOWN drops the shown
+# products; their near-duplicates stay, and buying misses sit in coarse
+# categories 2.4x more crowded than its hits (#24), so a rejected slate is
+# followed by ten more of much the same thing.
+#
+# False is the identity setting. Distinct from BUYING_DIVERSIFY, which #28
+# measured null here: that spreads the slate against itself, this pushes it
+# away from a known-wrong region, and the buying arm runs with the intra-slate
+# term off so the two never ride together unmeasured.
 BUYING_REPEL_SHOWN = True
+
+# Relevance against repulsion once BUYING_REPEL_SHOWN is on. 1.0 is pure
+# relevance (the identity), 0.0 is pure repulsion. Relevance here is 1/(rank+1)
+# and decays steeply, so below ~0.3 the tail of the window reorders freely
+# while DIVERSIFY_PIN still holds the top of the slate.
+BUYING_REPEL_LAMBDA = 0.5
 BROWSING_BM25_WEIGHT = 1.25
 BROWSING_DENSE_WEIGHT = 1.5
 
@@ -161,7 +177,7 @@ PRF_WEIGHT = 0.5
 POPULARITY_WEIGHT = 0.5
 
 # Cross-encoder reranking (reranker.py, Qwen3-Reranker-0.6B). 
-RERANK_WEIGHT = 0.0
+RERANK_WEIGHT = 3
 
 # Which backend scores the pairs. "minilm" is the shipped, measurable stage;
 # "qwen" is the LLM-scale variant kept for the report and the demo.

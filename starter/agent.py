@@ -26,7 +26,8 @@ from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_r
 from .user_profile import UserProfileStore
 from .text_utils import normalize_query
 from .config import (ANSWERABILITY_PRIOR, BOUNDARY_DIVERSIFY, BOUNDARY_DIVERSIFY_LAMBDA, 
-    BOUNDARY_POPULARITY_WEIGHT, BOUNDARY_REPEL_SHOWN, POPULARITY_WEIGHT, BROWSING_BM25_WEIGHT, 
+    BOUNDARY_POPULARITY_WEIGHT, BOUNDARY_REPEL_SHOWN, BUYING_REPEL_LAMBDA, BUYING_REPEL_SHOWN, 
+    POPULARITY_WEIGHT, BROWSING_BM25_WEIGHT, 
     BROWSING_DENSE_WEIGHT, BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, BUYING_DIVERSIFY, 
     CANDIDATE_N, CATALOG_PATH_ENV, DENSE_INDEX_PATH_ENV, DISCLOSED_MATCH_BOOST, 
     DISCLOSED_MISMATCH_PENALTY, DIVERSIFY_LAMBDA, DIVERSIFY_PIN, DIVERSIFY_WINDOW, 
@@ -104,6 +105,14 @@ def routing_params(intent_label: str, belief: SessionBelief | None = None,
     if intent_label == "buying":
         params = RoutingParams(BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, MIN_ENTROPY_BUYING,
                                diversify=BUYING_DIVERSIFY)
+        if BUYING_REPEL_SHOWN:
+            # Repulsion without the intra-slate MMR term. #28 measured that
+            # term null on this track, so bundling the two would repeat the
+            # mistake #30 is still paying for: the lambda is set here rather
+            # than left at DIVERSIFY_LAMBDA so the buying arm stays sweepable
+            # on its own.
+            params = replace(params, repel_shown=True,
+                             diversify_lambda=BUYING_REPEL_LAMBDA)
     else:
         params = RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
     if boundary:
@@ -698,9 +707,14 @@ class Agent:
 
         candidates = self._rerank(query, candidates)
 
-        if routing.diversify:
-            repel = shown if (routing.repel_shown and shown) else None
-            return self._diversify(candidates, top_k, routing.diversify_lambda, repel)
+        # `repel` alone is enough to earn the re-rank pass: on the buying
+        # track diversify is off, and the two forces are separable. Passing
+        # `intra_diversity=routing.diversify` is what keeps this exact -- a
+        # track with diversify on gets today's behaviour unchanged.
+        repel = shown if (routing.repel_shown and shown) else None
+        if routing.diversify or repel:
+            return self._diversify(candidates, top_k, routing.diversify_lambda, repel,
+                                   intra_diversity=routing.diversify)
         return candidates
 
     def _rerank(self, query: str, candidate_ids: list[str]) -> list[str]:
@@ -732,7 +746,8 @@ class Agent:
 
     def _diversify(self, candidate_ids: list[str], head_n: int,
                    lambda_: float = DIVERSIFY_LAMBDA,
-                   repel: set[str] | None = None) -> list[str]:
+                   repel: set[str] | None = None,
+                   intra_diversity: bool = True) -> list[str]:
         """Greedy MMR re-rank of the pool's front, browsing-track only.
 
         Only the front `head_n` (what respond() truncates the pool to for
@@ -776,7 +791,13 @@ class Agent:
         while remaining and len(selected) < head_n:
             best_idx, best_score = None, -float("inf")
             for idx in remaining:
-                max_sim = max((sim[idx, s] for s in selected), default=0.0)
+                # With `intra_diversity` off the only force is repulsion from
+                # what the customer already rejected, so the slate is never
+                # spread for its own sake. The score then depends on nothing
+                # already selected, which makes this loop a sort -- kept as
+                # one loop so the two modes cannot drift apart.
+                max_sim = (max((sim[idx, s] for s in selected), default=0.0)
+                           if intra_diversity else 0.0)
                 if repel_sim is not None:
                     max_sim = max(max_sim, float(repel_sim[idx]))
                 score = lambda_ * relevance[idx] - (1 - lambda_) * max_sim
