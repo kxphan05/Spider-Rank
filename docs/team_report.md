@@ -41,11 +41,11 @@ previous one. The ordering is stable and matches the miss census: `boundary`
 is hardest and `browsing` easiest, and the two scenarios where the customer
 states a hard constraint up front — `buying` and `intent_override` — sit in
 between. `boundary` is n=10, so a single session moves it 0.1; read it as
-directional only. CLAUDE.md #31 records that the three commits behind this
-number (gated attribute asking, a boundary/popularity leg, and query
-stripping plus a newly-enabled cross-encoder reranker) were bundled and
-measured only as a whole — the individual contribution of each has not been
-isolated.
+directional only. The three commits behind this number (gated attribute
+asking, a boundary/popularity leg, and query stripping plus a newly-enabled
+cross-encoder reranker) were bundled and measured only as a whole — the
+individual contribution of each has not been isolated. See `dist/techjam_track4.pptx`
+("What we would do with more time") for the open work this leaves.
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).

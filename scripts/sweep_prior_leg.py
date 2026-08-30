@@ -11,7 +11,7 @@ overwhelmingly from the popular tail: the top 1% of the catalog holds 63% of all
 **The controls are the point**: a gain from profile_rating means nothing unless
 it beats `rating`, since it could be entirely the global quality prior underneath.
 A weighted RRF leg avoids the pathology that killed the three earlier profile
-attempts (CLAUDE.md #5) -- each leg only ever adds weight/(k+rank), so an unranked
+attempts (retrieval-experiments SKILL.md #5) -- each leg only ever adds weight/(k+rank), so an unranked
 item scores zero rather than sinking below every neutral candidate.
 
 The leg re-ranks the union of the BM25 and dense candidates, never the catalog: a

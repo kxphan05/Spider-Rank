@@ -100,8 +100,8 @@ BOUNDARY_DIVERSIFY = True
 BOUNDARY_REPEL_SHOWN = True
 
 # MMR lambda once a hand-back has been seen, below DIVERSIFY_LAMBDA so the
-# slate spreads wider than a normal browsing turn. Note CLAUDE.md #18 found
-# early-turn diversity is not free -- but that was a schedule applied from
+# slate spreads wider than a normal browsing turn. A turn-annealed schedule
+# found early-turn diversity is not free -- but that was a schedule applied from
 # turn 1, where the top hits are usually already right. This only ever applies
 # after the customer has told us the current direction is not working.
 BOUNDARY_DIVERSIFY_LAMBDA = 0.35
@@ -419,7 +419,8 @@ DEFAULT_STORE_PATH = Path("data/user_profiles.json")
 # sinks the true target below every neutral (unknown-attribute) candidate,
 # regardless of how small its boost weight is -- lowering the weight alone
 # can't fix that (the experiment's PROFILE_HINT_WEIGHT constant is long gone
-# from agent.py; the finding is written up in CLAUDE.md #5). Requiring the
+# from agent.py; the finding is written up in
+# `.claude/skills/retrieval-experiments/SKILL.md` #5). Requiring the
 # *same* value to recur at least twice in history before it's trusted as a
 # hint filters out one-off coincidental collisions while still catching a
 # shopper who has genuinely stated the same preference more than once.

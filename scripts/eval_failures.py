@@ -8,7 +8,7 @@ depth PROBE_N with that session's final query:
     ranked-11+        in the pool, outside the ten returned
     excluded          pushed out by EXCLUDE_SHOWN (only if an override is missed)
 
-Read CLAUDE.md #24 before trusting `lost-in-fusion`: it means "not in the pool",
+Don't trust `lost-in-fusion` at face value: it means "not in the pool",
 not "fusion dropped it". Takes about an hour. Writes logs/failures.json.
 
     uv run python3 scripts/eval_failures.py [--limit N] [--out failures.json]

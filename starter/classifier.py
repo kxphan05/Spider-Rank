@@ -301,7 +301,7 @@ def lead_clause(text: str) -> str:
 # Explicit discard cues, as a closed list. The embedding rule is a similarity
 # comparison, so a terse pivot whose whole content is the cue ("never mind,
 # white shoes") is judged mostly on its request half -- the same shape
-# pathology TOP_PROTOTYPES was tuned against (CLAUDE.md #7). A literal cue is
+# pathology TOP_PROTOTYPES was tuned against. A literal cue is
 # not a similarity at all, so it cannot be outvoted by the rest of the
 # sentence.
 #
@@ -462,7 +462,7 @@ PROTOTYPE_NON_ANSWER = (
 # The contrast class: a reply that *does* carry new constraint content. Kept
 # separate from PROTOTYPE_CONTINUATION rather than slicing it, because that
 # tuple is load-bearing for EmbeddingOverrideDetector and its composition is
-# pinned by the measured table in CLAUDE.md #7 -- editing it would silently
+# pinned by a measured table -- editing it would silently
 # invalidate those numbers.
 PROTOTYPE_INFORMATIVE = (
     "I also need it to be machine washable.",
@@ -480,7 +480,7 @@ PROTOTYPE_INFORMATIVE = (
 )
 
 # Lexical floor for the non-answer detector, used when the embedding model is
-# unavailable (CLAUDE.md #15: that degrade is silent, so every embedding
+# unavailable (that degrade is silent, so every embedding
 # component needs a fallback or it disappears without a trace).
 _DECLINE_RE = re.compile(
     r"\b(?:"
@@ -537,7 +537,7 @@ def classify_reply_lexically(text: str) -> str:
     colour. Concrete content therefore overrides the decline cue rather than
     the other way round, which is the safe direction: a false "non_answer"
     would drop a real disclosure out of the query (the asymmetry that
-    CLAUDE.md #7 documents for the override detector, in the same shape).
+    the override detector's discard-cue rule shares, in the same shape).
     """
     if not isinstance(text, str) or not text.strip():
         return "answer"

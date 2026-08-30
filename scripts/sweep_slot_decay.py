@@ -3,7 +3,7 @@
 Spec 4.3 lists slot decay as in-scope and the agent has none: a value disclosed on
 turn 1 carries full weight on turn 10. The only decay that exists is the override
 detector's all-or-nothing wipe, and the blunt version of that idea measured
--0.0580 (CLAUDE.md #17).
+-0.0580, measured directly.
 
 Only the ratio between turns matters, so this sweeps one scalar. SLOT_DECAY = 1.0
 is the identity and must reproduce the shipped score first.
@@ -44,7 +44,7 @@ def main() -> None:
         report, agent = score_once(samples, catalog)
         if agent.dense is None:
             print("  WARNING: dense index dark -- results are not comparable to the shipped"
-                  " numbers (CLAUDE.md #15)", file=sys.stderr)
+                  " numbers", file=sys.stderr)
         hits = round(report["hit_rate_at_10"] * len(samples))
         technical = report["recommended_technical_score"]
         if baseline is None:

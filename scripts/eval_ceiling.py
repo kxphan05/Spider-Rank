@@ -4,7 +4,7 @@ The simulator's customer has a fixed, small vocabulary -- the whole session can
 only ever convey coarse_category(target) + hard_constraints[:2] +
 soft_preferences[2:4]. This hands the agent all of it in one turn-1 message.
 
-Result (CLAUDE.md #27): 173/200, and no target is unreachable -- some leg puts
+Result: 173/200, and no target is unreachable -- some leg puts
 every one of the 200 inside the top 192. Use it to ask "is this findable", never
 "is this the most we could score": it returns one slate of ten where a live
 session returns up to ten, and the two conditions differ on 34 samples, 17 in
@@ -32,7 +32,7 @@ from starter.agent import Agent  # noqa: E402
 
 PROBE_N = 2000
 
-# Misses observed at the 0.7020 configuration (CLAUDE.md #24, logs/failures.log).
+# Misses observed at the 0.7020 configuration (logs/failures.log).
 # Used only to cross-tabulate ceiling against outcome; not required for the
 # ceiling number itself.
 KNOWN_MISSES = {

@@ -183,8 +183,8 @@ class BM25Index:
         ("what I need is: leather"). Material and colour words are excluded
         because several of them are also category path elements -- "Leather"
         is a node under handbags -- and treating an attribute as a category
-        change is precisely the mistake that made the whole-history rewrite in
-        CLAUDE.md #17 cost 0.058.
+        change is precisely the mistake that made a whole-history rewrite
+        measure -0.058.
         """
         found = set()
         for term in terms(normalize_query(text)):
@@ -229,7 +229,7 @@ class BM25Index:
         Motivation is a measured property of this task, not a general IR
         preference: 89.7% of the local simulator's turn-1 hard constraints are
         verbatim substrings of the target product's own catalog text
-        (CLAUDE.md #14). `search()` above dissolves that structure -- it ORs
+        (measured directly). `search()` above dissolves that structure -- it ORs
         the query's unique tokens, so "Buckle closure" is two independent
         terms against 50k products and any item mentioning either scores.
         FTS5 can match the span itself, which is a far sharper signal when the

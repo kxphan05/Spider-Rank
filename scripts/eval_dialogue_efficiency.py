@@ -6,7 +6,7 @@ Sizing, derived from the evaluator's own reply policy: a session has a mean of
 question-planning work can win.
 
 Read-only, no Agent required. Note the *query surgery* this motivated measured
--0.0410 and was reverted (CLAUDE.md #19); the observation itself is kept and
+-0.0410 and was reverted; the observation itself is kept and
 feeds SessionBelief.
 
     uv run python3 scripts/eval_dialogue_efficiency.py

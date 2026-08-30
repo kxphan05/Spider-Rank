@@ -87,7 +87,7 @@ def _vocab_matcher(vocab: tuple[str, ...]) -> tuple[re.Pattern[str], dict[str, i
 # over the 50k catalog, that mislabeled 21.6% of products on color (10,824
 # products, 9,312 of them a value invented where no color word occurs at all)
 # and 4.7% on material. It also explains the disagreement recorded in
-# CLAUDE.md "Known open problems" #1 -- 16.3% of material and 37.0% of color
+# the retrieval-experiments skill's #1 -- 16.3% of material and 37.0% of color
 # disclosures conflicting with the extractor's value for the *true target* --
 # because `extract_disclosed_value` below (the customer-text side) has always
 # used \b, so only the catalog side was loose. Two extractors over different

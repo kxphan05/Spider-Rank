@@ -1,4 +1,4 @@
-"""Sweep PHRASE_WEIGHT, the phrase-match leg's RRF weight. Results in CLAUDE.md #20.
+"""Sweep PHRASE_WEIGHT, the phrase-match leg's RRF weight.
 
 Shipped at 2.0 (+0.0272). There is a real interior optimum, but 2.0 and 4.0 are
 one session apart, so the top is flat and 2.0 is the lower-variance pick.

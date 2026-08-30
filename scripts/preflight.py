@@ -1,7 +1,7 @@
 """Verify the pipeline comes up whole with the network disabled.
 
 Loads the agent under HF_HUB_OFFLINE=1 and exits non-zero if any required
-component is dark. This is not optional: the degrade is silent (CLAUDE.md #15) --
+component is dark. This is not optional: the degrade is silent --
 with a cold cache and no network, dense retrieval, both classifiers and the
 masked LM go dark at once while the agent still starts and still returns ten
 recommendations.

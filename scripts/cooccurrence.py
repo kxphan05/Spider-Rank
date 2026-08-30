@@ -1,4 +1,4 @@
-"""Attribute co-occurrence priors learned from the frozen catalog (CLAUDE.md #11).
+"""Attribute co-occurrence priors learned from the frozen catalog.
 
 A value the customer never stated can be predicted from one they did:
 

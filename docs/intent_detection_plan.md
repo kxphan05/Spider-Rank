@@ -108,9 +108,9 @@ have done this properly once already, just not here.
 
 ### Stage 1 — Diverse utterances + a SetFit-style head *(1–2 days)*
 
-This is the textbook fix for the failure recorded in CLAUDE.md #12,
-where a trained head hit 0.984 in-distribution and 0.521 on a held-out surface
-form. The diagnosis was **not** bad labels — it was that the simulator has only
+This is the textbook fix for a previously-measured failure: a trained head hit
+0.984 in-distribution and 0.521 on a held-out surface form. The diagnosis was
+**not** bad labels — it was that the simulator has only
 two turn-1 templates, so the head memorised `"still exploring"`. The control
 proved it: training on the 20 hand-written prototypes *alone* reached OOD 1.000,
 while adding 640 simulator turns dragged it to 0.812.
@@ -144,7 +144,7 @@ lexical rule's 1.000 on turn-1 is pure template memorisation.
 
 Where industry practice says the weight belongs, and where ours is thinnest:
 half the allowed attributes have no extractor. This is already designed and
-costed as CLAUDE.md #8 — a one-time `claude-haiku-4-5` Batch API
+costed — a one-time `claude-haiku-4-5` Batch API
 pass over the 50k catalog (~$5–12) emitting a closed-vocabulary JSON sidecar,
 shipped as a local asset.
 

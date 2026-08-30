@@ -30,7 +30,7 @@ _FUNCTION_STOPWORDS = {
 # framing was outranking the only content word in the sentence.
 #
 # This is deliberately a list of ways to *ask*, never of things to ask about.
-# CLAUDE.md #19 measured that pruning contentful customer text costs 0.041,
+# Measured: pruning contentful customer text costs 0.041,
 # because 89.7% of it is a verbatim substring of the target's own record; none
 # of the words below can be part of a product description of anything.
 _REQUEST_STOPWORDS = {
@@ -101,8 +101,8 @@ def normalize_query(text: str) -> str:
 
     Applied once in the agent's query builders so every leg -- BM25, phrase,
     PRF and dense -- sees the same normalized string. Word-boundary matched,
-    like every other vocabulary match in this project (CLAUDE.md #10 is the
-    bug that comes from forgetting that).
+    like every other vocabulary match in this project (substring matching
+    invents attributes that were never stated).
     """
     if not isinstance(text, str) or not text:
         return "" if text is None else str(text)

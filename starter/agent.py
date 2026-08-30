@@ -164,7 +164,8 @@ def routing_params(intent_label: str, belief: SessionBelief | None = None,
 # shared profile_key simply isn't an identity signal on this data: same-key
 # sessions' targets agree on coarse category 0.5% of the time vs a 1.2%
 # random baseline (scripts/eval_profile_signal.py --check collision), so
-# there is nothing correct to carry. See CLAUDE.md #5 for the full write-up.
+# there is nothing correct to carry. See
+# `.claude/skills/retrieval-experiments/SKILL.md` #5 for the full write-up.
 
 
 
@@ -183,7 +184,7 @@ class SessionState:
     # yellow" searched for white and yellow at once, with white the heavier
     # term of the two (df 0.0848 against 0.0251).
     #
-    # This is the narrow form of the rewrite that cost 0.058 in CLAUDE.md #17.
+    # This is the narrow form of a full-message rewrite that measured -0.058.
     # That one dropped whole messages and threw away the category with them;
     # this drops individual vocabulary values the customer has contradicted in
     # so many words, and never touches anything they did not retract.
@@ -201,8 +202,8 @@ class SessionState:
     # the 409 public-set session pairs sharing a key, 0.5% want a target in
     # the same coarse category against a 1.2% +- 0.5% random baseline
     # (scripts/eval_profile_signal.py). Every way of consuming this that was
-    # tried regressed the full set; see _next_attribute below and CLAUDE.md
-    # #5. Kept populated so the store stays exercised and the diagnostic has
+    # tried regressed the full set; see _next_attribute below and
+    # `.claude/skills/retrieval-experiments/SKILL.md` #5. Kept populated so the store stays exercised and the diagnostic has
     # something to check if the hidden set's profiles behave differently.
     profile_hint: dict[str, str] = field(default_factory=dict)
     # identity for the long-term profile store; set once in reset().
@@ -267,7 +268,7 @@ def _build_phrase_query(state: SessionState) -> str:
 
     Kept separate from `_build_query` rather than switched inside it: the two
     have different failure modes, and conflating them is what made the whole-
-    query version of this idea lose 0.041 (CLAUDE.md #19).
+    query version of this idea lose 0.041.
     """
     if not PHRASE_QUERY_SKIP_NON_ANSWERS:
         return _build_query(state)
@@ -365,7 +366,7 @@ class Agent:
                                  else CrossEncoderReranker())
             except Exception as exc:
                 # Same degrade-don't-crash policy as every other optional
-                # component here (CLAUDE.md #15).
+                # component here.
                 logger.error("cross-encoder reranker unavailable, skipping: %s", exc)
 
         self.lm_scorer: MaskedLMScorer | None = None
@@ -846,7 +847,7 @@ class Agent:
         """Did this reply decline to state a preference?
 
         Embedding rule when available, lexical floor otherwise -- the offline
-        degrade is silent (CLAUDE.md #15), so a component with no fallback
+        degrade is silent, so a component with no fallback
         just disappears. The error asymmetry runs opposite to the override
         detector's: a false positive here discards a *real* disclosure, while
         a false negative only leaves the previous behaviour in place, so both

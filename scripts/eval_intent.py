@@ -1,6 +1,6 @@
 """Sweep scoring rules for EmbeddingIntentClassifier (buying vs browsing).
 
-Companion to eval_override.py. Verdict is in CLAUDE.md #13: every trimmed-prototype
+Companion to eval_override.py. Verdict: every trimmed-prototype
 variant is worse than the centroid, and there is no headroom to chase -- the
 centroid is at 0.988 on turn-1 and the label is worth ~nothing to the score.
 

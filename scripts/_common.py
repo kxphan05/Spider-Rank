@@ -64,8 +64,7 @@ def isolate_profile_store(path: str | None = None, *, announce: bool = True) -> 
     """Point the long-term profile store at a fresh temp file for this run.
 
     A store carried across runs is a measured contamination source: history
-    accumulated by an earlier run changes what later runs see (CLAUDE.md
-    CLAUDE.md #5). Diagnostics should start clean unless they are
+    accumulated by an earlier run changes what later runs see. Diagnostics should start clean unless they are
     deliberately testing accumulation, so this is the default everywhere.
 
     Returns the path that was set, so callers can report or reuse it.
@@ -87,8 +86,7 @@ def score_once(samples, catalog, **agent_kwargs):
     module-level constant, build an agent that reads it, score, repeat. The
     agent comes back so callers can report which components actually came up
     live -- a sweep whose conclusions depend on the dense leg or the masked LM
-    should say whether that leg was there (CLAUDE.md #15: the degrade is
-    silent).
+    should say whether that leg was there (the offline degrade is silent).
 
     `catalog` is the tuple returned by `evaluator.local_evaluator.catalog_index`.
     """

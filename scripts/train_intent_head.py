@@ -4,7 +4,7 @@ Scope: the encoder is never touched. TODO.md 4.3 bars fine-tuning base models
 while intent modules are explicitly in scope, so a logistic head over the frozen
 384-d output is the only allowed version of this idea.
 
-**Measured verdict, CLAUDE.md #12: it is worse than the centroid it would
+**Measured verdict: it is worse than the centroid it would
 replace.** The simulator has exactly two turn-1 templates, so a high
 in-distribution CV score is the head memorizing "still exploring". Three checks
 confirm it: a regularization sweep is flat at chance on held-out surface forms

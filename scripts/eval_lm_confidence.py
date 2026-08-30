@@ -7,7 +7,7 @@ target, because that is exactly what _boost_by_disclosed compares against. The
 context is the reconstructed turn-1 message -- what the agent actually holds when
 it picks its first question.
 
-Verdict (CLAUDE.md #11): the gate works and is steep, so MAX_CONFIDENT_ENTROPY =
+Verdict: the gate works and is steep, so MAX_CONFIDENT_ENTROPY =
 0.60 is calibrated rather than guessed. Colour is excluded -- it loses to an
 always-"black" baseline and its gate runs backwards.
 

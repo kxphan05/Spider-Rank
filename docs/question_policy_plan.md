@@ -23,7 +23,7 @@ representation of the one variable that turned out to matter most.
 
 ## 2. The correction that motivates this
 
-CLAUDE.md #9 measured the *answerability* of each attribute — the share of the
+A prior measurement found the *answerability* of each attribute — the share of the
 200 public samples where the customer can still answer a question about it after
 turn 1, derived from the evaluator's own reply policy:
 
@@ -136,8 +136,7 @@ Replace the two-stage body of `_next_attribute` with one ranking over all
 candidate attributes. Structure it so the intent-conditioned `min_entropy`
 becomes the `EV` threshold below which the agent asks nothing, keeping
 `routing_params()` as the single place intent-conditioned behaviour is resolved
-(per CLAUDE.md's code-layout note — add to `RoutingParams`, never a fourth
-branch).
+(add to `RoutingParams`, never a fourth branch).
 
 `select_dynamic_attribute` stays as the entropy primitive; it just stops being
 the decision-maker.
@@ -147,9 +146,9 @@ the decision-maker.
 Full 200-sample A/B against the current **0.7020** baseline (HitRate 0.8550,
 171/200 / MRR 0.4622 / MTTC 4.205), both legs on the same HEAD. Then:
 
-- **Report absolute session counts, not just rates.** Per CLAUDE.md #16, 0.7500
-  vs 0.7450 is one session; the benchmark's resolution is about +-0.0025.
-- **Expect MRR to move against us.** #9 recorded this: the score's MRR uses the
+- **Report absolute session counts, not just rates.** 0.7500 vs 0.7450 is one
+  session; the benchmark's resolution is about +-0.0025.
+- **Expect MRR to move against us.** The answerability-order change recorded this: the score's MRR uses the
   rank at the *first* hit, so converting a late-well-ranked hit into an
   early-worse-ranked one costs MRR while paying more in Efficiency. That trade
   is inherent. Judge on TechnicalScore, never on MRR alone.

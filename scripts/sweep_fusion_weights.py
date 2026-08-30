@@ -1,4 +1,4 @@
-"""Sweep the dense:bm25 RRF ratio per track. Results in CLAUDE.md #16.
+"""Sweep the dense:bm25 RRF ratio per track.
 
 Only the ratio matters -- weighted RRF is scale-invariant per leg -- so bm25 is
 pinned at 1.0. The buying curve is strictly monotone decreasing with no interior

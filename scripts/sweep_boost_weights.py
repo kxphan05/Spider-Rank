@@ -1,4 +1,4 @@
-"""Sweep the disclosed-attribute resort weights (CLAUDE.md #10, NEXT_STEPS #2).
+"""Sweep the disclosed-attribute resort weights.
 
 _boost_by_disclosed scores +DISCLOSED_MATCH_BOOST on agreement,
 -DISCLOSED_MISMATCH_PENALTY on contradiction, 0 when unextractable. The free

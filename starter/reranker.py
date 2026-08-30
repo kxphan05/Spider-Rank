@@ -4,7 +4,7 @@ The competition spec's Pillar I names a "Multi-Route Retrieval -> LLM Semantic
 Ranking" pipeline, and until now this project had only the first half:
 retrieval is BM25 + dense fused by weighted RRF, then reordered by categorical
 attribute agreement and MMR. Nothing learned or generative ever looked at a
-(query, product) pair jointly. That gap is CLAUDE.md #6.
+(query, product) pair jointly, until this module.
 
 `Qwen/Qwen3-Reranker-0.6B` fills it. It is a causal LM repurposed as a binary
 relevance judge: the pair is formatted into a chat template ending at the
@@ -28,8 +28,8 @@ judgements are good -- 0.999 for an exact match, 0.679 for a same-category
 alternative, 0.001 for off-category -- but reranking a 10-item slate across
 ~1000 evaluation turns is roughly 75 hours for a *single* configuration, so it
 cannot be A/B'd, let alone swept. An unmeasurable component is one this
-project will not ship on by default (see CLAUDE.md #14/#19 for what happens
-when plausible retrieval changes go unverified here).
+project will not ship on by default -- plausible retrieval changes have gone
+unverified here before and cost score.
 
 The same argument already excluded larger models: an 8B generative model
 implies ~180 hours per evaluation on this hardware.
@@ -39,7 +39,7 @@ measured, and it closes the same structural gap -- nothing in the pipeline
 previously scored a (query, product) pair *jointly*, which is what
 distinguishes a reranker from the bi-encoder dense leg.
 
-Degrades like every other optional component here (CLAUDE.md #15): if the
+Degrades like every other optional component here: if the
 weights are missing the agent logs and runs without reranking, rather than
 failing to start.
 """
@@ -120,7 +120,7 @@ class CrossEncoderReranker:
     document go through the model *together*, so the score can depend on their
     interaction, unlike the dense leg where each is embedded independently and
     compared by cosine. That joint scoring is the whole point of a reranking
-    stage and is what CLAUDE.md #6 recorded as missing.
+    stage, and this project ran without one for most of its life.
 
     Trained on MS MARCO passage ranking, so it is a purpose-built reranker
     rather than a general LM steered into the role, which is also why it is

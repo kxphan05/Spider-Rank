@@ -5,13 +5,15 @@ description: Full write-ups of retrieval, routing, and personalization approache
 
 # Closed investigations
 
-Archive of resolved entries from `CLAUDE.md`'s "Known open problems" list.
-Each was built and measured on the 200-sample public set, then either fixed
-or abandoned. They live here rather than in `CLAUDE.md` because the detail is
-only needed when working in that area, while the one-line verdict and the
-"do not retry this" warning stay resident in `CLAUDE.md` itself.
+Archive of resolved retrieval/routing/personalization problems on this
+project. Each was built and measured on the 200-sample public set, then
+either fixed or abandoned. Read this before re-attempting hard attribute
+filtering, a filter-then-rerank buying track, embedding-similarity reranking
+of disclosed values, or any user-profile personalization — the numbers below
+are why each was rejected.
 
-Numbering matches `CLAUDE.md`'s list, so #1 here is #1 there.
+Entry numbers are stable identifiers for this file, not references to
+anything external.
 
 ---
 

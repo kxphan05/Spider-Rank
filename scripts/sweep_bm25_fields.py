@@ -3,7 +3,7 @@
 The six weights over (title, categories, features, details, store, description)
 were guessed, and BM25F weights are known to be collection-dependent. This
 matters here because BM25 is the leg that carries the benchmark -- dense adds no
-recall (CLAUDE.md #14) and the phrase leg rides the same ORDER BY, so one
+recall and the phrase leg rides the same ORDER BY, so one
 weighting improves two of three legs.
 
 A full grid is unaffordable at one 200-sample eval per point, so this is

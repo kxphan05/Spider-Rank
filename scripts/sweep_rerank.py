@@ -1,6 +1,6 @@
 """Sweep the cross-encoder rerank stage: fusion weight x pool depth.
 
-Closes the last named gap against spec Pillar I (CLAUDE.md #6) -- until this
+Closes the last named gap against spec Pillar I -- until this
 stage nothing scored a query and a document *jointly*.
 
 **Depth is the interesting axis and it is easy to get backwards.** At

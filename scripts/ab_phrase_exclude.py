@@ -1,4 +1,4 @@
-"""Full-set A/B for the phrase leg and shown-item exclusion (CLAUDE.md #20, #23).
+"""Full-set A/B for the phrase leg and shown-item exclusion.
 
 Both need the same legs, so they run together. Measured churn before the fix:
 5.33 of 10 slots repeated each turn.

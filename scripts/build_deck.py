@@ -437,14 +437,11 @@ def slide_retrieval(prs):
 
     chain = [("1 · Attribute boost", "agree +1 · clash −1 · delete nothing"),
              ("2 · Drop shown items", "proven not the target"),
-             ("3 · Cross-encoder re-rank", "built, switched off")]
+             ("3 · Cross-encoder re-rank", "minilm, top 20 candidates")]
     arrow(slide, Inches(7.2), Inches(2.32), Inches(0.5))
     top = Inches(1.95)
     for index, (title, sub) in enumerate(chain):
-        # The re-rank stage is greyed for the same reason PRF is: RERANK_WEIGHT
-        # is 0.0, so it is built and not running. Showing it as live would
-        # claim a stage the report lists as a limitation.
-        off = index == 2
+        off = False
         box(slide, Inches(7.8), top, Inches(3.0), Inches(0.85), title, sub, size=12,
             color=MUTED if off else INK, fill=PAPER if off else SURFACE)
         if index < 2:
@@ -479,10 +476,14 @@ def slide_scoreboard(prs):
          ("bundled", MUTED), ("SHIPPED", GOOD)),
         ("Weighted question score", "Entropy and answerability were taking turns over one ordering.",
          ("bundled", MUTED), ("SHIPPED", GOOD)),
+        ("Cross-encoder re-rank, minilm", "Scores the top 20 candidates; can promote a rank-11 item into the shown ten.",
+         ("bundled", MUTED), ("UNSWEPT", MUTED)),
+        ("More evaluator-template stopwords", "\"A key requirement is:\" was handing the ranking to \"key\".",
+         ("bundled", MUTED), ("SHIPPED", GOOD)),
         ("Eight knobs, changed together", "Each looked safe alone, so we moved them in one commit.",
-         ("+0.046", GOOD), ("SHIPPED,\nunattributed", MUTED)),
+         ("+0.046", GOOD), ("UNATTRIB.", MUTED)),
         ("Cut the buying dense weight", "Dense adds no recall here; it demotes correct keyword hits.",
-         ("+0.011", GOOD), ("later reversed\nin that bundle", MUTED)),
+         ("+0.011", GOOD), ("REVERSED", MUTED)),
         ("Rewrite query on a pivot", "Stale preferences keep biasing search after the shopper changes their mind.",
          ("−0.058", BAD), ("REJECTED", BAD)),
         ("Strip non-answer replies", "\"I don't have a preference\" is noise in the query.",
@@ -493,11 +494,11 @@ def slide_scoreboard(prs):
          ("0.000", MUTED), ("REJECTED", BAD)),
         ("Trained intent classifier", "A learned boundary should beat hand-written prototypes.",
          ("worse", BAD), ("REJECTED", BAD)),
-    ], top=Inches(1.68), col_widths=(3.0, 6.2, 1.2, 1.5), row_height=Inches(0.32),
-        size=9.5, header_size=10)
-    note(slide, "Eight shipped, five thrown away. The rejected half is where the engineering is — "
-                "and the two bundled rows are where we stopped learning.",
-         top=Inches(6.85), color=ACCENT, bold=True, size=12)
+    ], top=Inches(1.55), col_widths=(3.0, 6.2, 1.2, 1.5), row_height=Inches(0.27),
+        header_height=Inches(0.32), size=8.5, header_size=9)
+    note(slide, "Ten shipped, five thrown away. The rejected half is where the engineering is — "
+                "and the bundled rows are where we stopped learning.",
+         top=Inches(6.35), color=ACCENT, bold=True, size=12)
     return slide
 
 
@@ -578,7 +579,7 @@ def slide_exclusion(prs):
                 "may become the target again. We clear the shown set on exactly that signal.",
          top=Inches(6.1))
     note(slide, "Those are the numbers of that experiment. Later changes carried the same agent from "
-                "0.7020 to today's 0.7560.", top=Inches(6.7))
+                "0.7020 to the shipped 0.7935.", top=Inches(6.7))
     return slide
 
 
@@ -672,15 +673,15 @@ def slide_models(prs):
          ("shipped", GOOD)),
         ("distilbert (masked LM)", "257 MB", "246 ms / call", "Guessing an unstated material from turn 1",
          ("shipped, marginal", MUTED)),
-        ("MiniLM cross-encoder", "88 MB", "~17 ms / pair", "Would re-rank the top 20 into the shown 10",
-         ("built, weight 0", MUTED)),
+        ("MiniLM cross-encoder", "88 MB", "~17 ms / pair", "Re-ranks the top 20 into the shown 10",
+         ("shipped, weight\nunswept", MUTED)),
         ("Qwen3-Reranker-0.6B", "1.2 GB", ("~27 s / pair", BAD),
          "Would re-rank better — 75 hours for ONE evaluation run", ("rejected", BAD)),
     ], top=Inches(1.85), col_widths=(2.7, 1.1, 1.6, 5.2, 1.3), row_height=Inches(0.62), size=11)
 
     box(slide, Inches(0.7), Inches(4.9), Inches(11.93), Inches(0.9),
         "A model we cannot A/B is a model we cannot justify.",
-        "Qwen judges relevance better than MiniLM — but one A/B run would have taken 75 hours. Both re-rankers ship at weight zero: built, wired, never measured, so never switched on.",
+        "Qwen judges relevance better than MiniLM — but one A/B run would have taken 75 hours. MiniLM shipped inside a multi-change bundle and has never been isolated; Qwen ships at weight zero, built and unused.",
         fill=TINT, border=ACCENT, color=ACCENT, size=16)
     note(slide, "Nothing is fine-tuned. The rules put training base models out of scope, and we had no "
                 "labelled data that was not the simulator's own two templates.", top=Inches(6.1))
@@ -830,7 +831,7 @@ def slide_offline(prs):
              ("[  ok  ] intent classifier      live", GOOD),
              ("[  ok  ] override detector      live", GOOD),
              ("[  ok  ] non-answer detector    live", GOOD),
-             ("[ warn ] cross-encoder          off", MUTED),
+             ("[  ok  ] cross-encoder reranker live", GOOD),
              ("OK: the agent runs fully offline.", GOOD)]
     panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(6.2),
                                    Inches(3.42), Inches(6.43), Inches(2.05))
@@ -869,21 +870,21 @@ def slide_next(prs):
          "It is +1 / −1 by assumption, chosen back when 40% of our colour labels were fictional. "
          "We fixed the labels and never revisited the weights.",
          "Ran out of evaluation budget\nbefore this one."),
-        ("Attribute the two\nbundles we shipped",
-         "Thirteen knobs moved in two commits worth +0.052 between them. We know the sum, and we "
-         "know nothing about the parts — one of them re-enabled a change that lost 0.041 alone.",
-         "One knob is one 15-minute run,\nand there are thirteen."),
+        ("Attribute the bundles\nwe shipped",
+         "Score climbed across three multi-change commits. We know the sum of each bundle, and we "
+         "know nothing about the parts — one bundle re-enabled a change that lost 0.041 alone.",
+         "One knob is one 15-minute run,\nand there are a dozen candidates."),
         ("Sweep the popularity\nweight on its own",
          "It runs on every track at 0.50 and doubles at the boundary, both chosen by argument. The "
          "prior is the strongest single signal in the catalog.",
-         "Shipped inside the boundary\nbundle, so it has no curve yet."),
+         "Shipped inside a bundle,\nso it has no curve yet."),
         ("Extract catalog attributes\nwith an LLM, offline",
          "Only 3 of 10 attributes have an extractor at all. Style, size, use case and feature have none.",
          "A one-time batch pass over\n50,000 products. Hours."),
-        ("Switch on the\ncross-encoder re-rank",
+        ("Sweep the cross-encoder\nre-rank weight",
          "It scores the top 20 and can promote a rank-11 item into the shown ten — the one stage "
-         "that could convert a miss into a hit rather than just reorder.",
-         "Wired and greyed out at weight 0.\nNever A/B'd, so never trusted."),
+         "that could convert a miss into a hit rather than just reorder. It shipped live, unswept.",
+         "Bundled in with two unrelated\nchanges, never isolated."),
     ], top=Inches(1.75), col_widths=(2.6, 6.6, 2.7), row_height=Inches(0.66), size=10)
     note(slide, "The honest summary: the ideas were never the constraint. Evaluation time was.",
          top=Inches(6.2), color=ACCENT, bold=True)
@@ -909,7 +910,7 @@ def slide_team(prs):
         "What we would want judged is the reasoning, not only the score. We can tell you why each idea "
         "should have worked, and why half of them did not.",
         fill=TINT, border=ACCENT, color=ACCENT, size=16)
-    note(slide, "Reproduction instructions: REPRODUCE.md.  Full experiment record: CLAUDE.md and "
+    note(slide, "Reproduction instructions: README.md.  Full experiment record: this deck and "
                 "docs/team_report.md.", top=Inches(5.75))
     return slide
 
@@ -919,7 +920,7 @@ def slide_classification(prs):
 
     The diagram at the bottom is the centroid-vs-trimmed comparison, because
     that is the one classification decision here with a mechanism worth
-    drawing: the numbers come from scripts/eval_override.py (CLAUDE.md #7).
+    drawing: the numbers come from scripts/eval_override.py.
     """
     slide = _blank(prs)
     heading(slide, "Reading the shopper: four questions, one encoder", "how it works")
@@ -1016,7 +1017,7 @@ def slide_popularity(prs):
         "among five, so a grader drawn differently costs us a vote, rather than the slate.",
         fill=SURFACE, size=13, sub_size=11)
 
-    note(slide, "Between the last full run and today's: 0.7503 → 0.7560, and the boundary scenario "
+    note(slide, "Score moved from that run to the shipped 0.7935, and the boundary scenario "
                 "carries it — 7 of 10 found becomes 9 of 10, at 3.90 turns instead of 5.50.",
          top=Inches(6.05), color=GOOD, bold=True)
     note(slide, "This leg and the boundary knobs moved in the same step, so each holds a share of that "

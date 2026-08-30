@@ -2,7 +2,8 @@
 __pycache__/
 *.py[oc]
 build/
-dist/
+dist/*
+!dist/techjam_track4.pptx
 wheels/
 *.egg-info
 
@@ -19,7 +20,7 @@ data/user_profiles.json
 model/
 
 # Local tool state, not project source. The skills directory is the exception:
-# CLAUDE.md cites .claude/skills/retrieval-experiments/SKILL.md as the
+# starter/*.py cites .claude/skills/retrieval-experiments/SKILL.md as the
 # authoritative write-up for three closed investigations, so leaving it
 # untracked made those citations dangle on a fresh clone.
 .claude/*

@@ -1,7 +1,7 @@
 """Does `user_profile` carry any signal worth acting on? Measured: no.
 
-Asks the prior question the three failed personalization A/Bs skipped (CLAUDE.md
-#5). Four read-only checks, seconds rather than minutes:
+Asks the prior question the three failed personalization A/Bs skipped
+(retrieval-experiments SKILL.md #5). Four read-only checks, seconds rather than minutes:
 
     tags       does preference_tags predict which attribute buckets the customer
                can answer? Needs no cross-session assumption. Cells compared

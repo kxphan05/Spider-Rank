@@ -1,4 +1,4 @@
-"""A/B the MMR diversity re-rank on the buying track (CLAUDE.md #24).
+"""A/B the MMR diversity re-rank on the buying track.
 
 Browsing has always had the re-rank, buying never has, and the switch has never
 been measured. Buying misses sit in coarse categories 2.4x more crowded than its

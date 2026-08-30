@@ -24,8 +24,9 @@ implies no more shared taste than picking two sessions at random. So
 `start_session()` still returns a `carried` dict and `Agent` still threads it
 into `SessionState.profile_hint`, but nothing reads it: three ways of
 consuming it were each measured to regress the full public set, and the
-collision number above explains why they had to (see CLAUDE.md "Known open
-problems" #5). Recording still happens unconditionally -- it is what TODO.md
+collision number above explains why they had to
+(`.claude/skills/retrieval-experiments/SKILL.md` #5 has the full write-up).
+Recording still happens unconditionally -- it is what TODO.md
 III asks for, it is cheap, and re-running the diagnostic is how you would
 find out whether the hidden set behaves differently.
 

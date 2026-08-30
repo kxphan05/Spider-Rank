@@ -1,4 +1,4 @@
-"""Sweep scoring rules for EmbeddingOverrideDetector. Verdict in CLAUDE.md #7.
+"""Sweep scoring rules for EmbeddingOverrideDetector.
 
 Three pools:
 

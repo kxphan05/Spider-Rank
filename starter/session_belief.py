@@ -7,7 +7,8 @@ history into state that changes the agent's own strategy mid-session. The
 cross-session disclosures, and `scripts/eval_profile_signal.py` measures that
 the provided profile carries no signal to act on (same-key sessions share a
 coarse category 0.5% of the time against a 1.2% +- 0.5% random baseline), so
-`SessionState.profile_hint` is deliberately inert. See CLAUDE.md #5.
+`SessionState.profile_hint` is deliberately inert. See
+`.claude/skills/retrieval-experiments/SKILL.md` #5 for the full write-up.
 
 This module is the short-term half, and it has an actual signal behind it.
 
@@ -37,7 +38,7 @@ class SessionBelief:
     Initialized from the population marginals and updated only from observed
     outcomes. Deliberately carries no cross-session state: seeding this from
     `profile_hint` is the fourth variant of an idea whose first three were each
-    measured to regress the full public set (CLAUDE.md #5).
+    measured to regress the full public set (retrieval-experiments SKILL.md #5).
     """
 
     answerable: dict[str, float] = field(

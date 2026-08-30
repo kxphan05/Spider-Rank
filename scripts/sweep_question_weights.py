@@ -27,7 +27,7 @@ from _common import (DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store,  #
 import starter.agent as agent_mod  # noqa: E402
 from evaluator.local_evaluator import catalog_index, load_jsonl  # noqa: E402
 
-# Shipped score at a9d3999, the number `identity` must reproduce (CLAUDE.md).
+# Shipped score at a9d3999, the number `identity` must reproduce.
 SHIPPED = 0.744094
 DEFAULT_WEIGHTS = [0.0, 0.5, 1.0, 2.0]
 
@@ -44,7 +44,7 @@ def set_point(entropy_weight: float | None) -> str:
 
 
 def live_components(agent) -> dict[str, bool]:
-    """Which optional components actually came up (CLAUDE.md #15: silent degrade)."""
+    """Which optional components actually came up (the offline degrade is silent)."""
     return {
         "dense": getattr(agent, "dense", None) is not None,
         "intent_classifier": getattr(agent, "intent_classifier", None) is not None,
@@ -82,7 +82,7 @@ def main() -> None:
         samples = samples[: args.limit]
     catalog = catalog_index(DEFAULT_CATALOG)
     # Build one agent before any scoring: a missing asset degrades silently
-    # (CLAUDE.md #15) and this is the difference between finding out in two
+    # and this is the difference between finding out in two
     # minutes and finding out after a two-hour leg has already run.
 
     rows: list[dict] = []

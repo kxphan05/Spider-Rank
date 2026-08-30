@@ -1,4 +1,4 @@
-"""A/B the phrase leg's span budget: five legs (CLAUDE.md #25).
+"""A/B the phrase leg's span budget: five legs.
 
 identity, clause+edge, non-answer filter, both, and MAX_PHRASE_QUERIES = 96 as
 the blunt control. The control matched the best fix, so the fixes win on cost
