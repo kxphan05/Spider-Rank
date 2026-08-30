@@ -1,17 +1,5 @@
 # How to reproduce our results
 
-Written for judges. Every command below is copy-pasteable. Nothing is
-implied and nothing is left to guess.
-
-**Target result** (full 200-sample public set):
-
-```
-HitRate@10  0.855    MRR  0.4622    MTTC  4.205    Efficiency  0.6795
-TechnicalScore  0.7020
-```
-
----
-
 ## 0. What you need
 
 | requirement | value |
@@ -22,10 +10,6 @@ TechnicalScore  0.7020
 | GPU | Not used. Everything runs on CPU. |
 | API keys | None. No model is called over the network at any point. |
 
-Our reference timings come from an **Intel i5-8365U (4 cores / 8 threads,
-1.6 GHz laptop CPU)**. A faster machine will be quicker; the numbers are there
-so you know whether a step has hung or is just slow.
-
 ---
 
 ## 1. Get the code and install dependencies
@@ -33,7 +17,7 @@ so you know whether a step has hung or is just slow.
 Either resolver works. Pick one.
 
 ```bash
-# Option A -- uv (what we used; installs exact locked versions)
+# Option A -- uv (installs exact locked versions)
 uv sync
 
 # Option B -- pip
@@ -73,35 +57,32 @@ wc -l data/catalog.jsonl        # expect 50000
 uv run python3 scripts/fetch_assets.py
 ```
 
-It runs four stages and prints its progress:
+It runs four stages:
 
 | stage | what | size |
 |---|---|---:|
-| 1 | `BAAI/bge-small-en-v1.5` — dense search and all three classifiers | 129 MB |
+| 1 | `BAAI/bge-small-en-v1.5` — dense search and all classifiers | 129 MB |
 | 2 | `cross-encoder/ms-marco-MiniLM-L-6-v2` — re-ranking | 88 MB |
 | 3 | masked LM — **skipped by default**, see below | — |
 | 4 | builds `data/dense_index/` by embedding all 50,000 products | 74 MB |
 
-Stage 4 is the slow one. It embeds the whole catalog locally and takes
-**roughly 10-20 minutes** on our reference laptop. It is CPU-bound, so it
-scales with cores.
+Stage 4 embeds the whole catalog locally and is CPU-bound, so its runtime
+scales with cores available.
 
-The masked LM (`distilbert-base-uncased`, 257 MB) is **off by default and you
-do not need it**. It is worth +0.001 TechnicalScore, which is inside this
-benchmark's noise floor. Add `--with-lm` only if you want to reproduce that
-ablation.
+The masked LM (`distilbert-base-uncased`, 257 MB) is off by default. Add
+`--with-lm` if you need it.
 
-You also do not need `Qwen/Qwen3-Reranker-0.6B` (1.2 GB). It appears in our
-report but is used for the demo only — it needs ~27 seconds per pair, which is
-about 75 hours for one evaluation run, so it is not in the scored pipeline.
+`Qwen/Qwen3-Reranker-0.6B` (1.2 GB) is not fetched by default either — it is
+used for the demo only, not the scored pipeline (`RERANK_BACKEND` ships as
+`"minilm"`).
 
 ---
 
 ## 4. Verify the agent came up whole
 
-**Do not skip this.** Our agent degrades *silently* if an asset is missing: it
+**Do not skip this.** The agent degrades *silently* if an asset is missing: it
 still starts, and it still returns 10 products per turn, but dense retrieval
-and all three classifiers are dead and the score quietly drops.
+and the classifiers are dead and the score quietly drops.
 
 ```bash
 uv run python3 scripts/preflight.py --strict
@@ -119,34 +100,17 @@ missing. A clean pass means every component is live.
 uv run python3 -m evaluator.local_evaluator
 ```
 
-This takes about **15 minutes** on our reference laptop. It prints the
-aggregate metrics and writes per-session results to `results.json`.
-
-The evaluator is organizer-provided and **we have never modified it**. You can
-confirm that against the upstream copy.
-
-It prints JSON to the terminal and writes the full per-session detail to
-`results.json`. The fields that matter:
-
-```json
-{
-  "sample_count": 200,
-  "hit_rate_at_10": 0.855,
-  "mrr": 0.4622,
-  "mttc": 4.205,
-  "efficiency": 0.6795,
-  "recommended_technical_score": 0.702
-}
-```
-
-The same JSON also carries a `scenario_metrics` block broken down by
+It prints the aggregate metrics and writes per-session results to
+`results.json`, including a `scenario_metrics` block broken down by
 `browsing` / `buying` / `intent_override` / `boundary`, and a
 `reported_token_usage` block.
 
-### If your numbers differ slightly
+The evaluator is organizer-provided and has never been modified — confirm
+that against the upstream copy if needed.
 
-The agent is deterministic, so a mismatch means a component is dark rather
-than a random seed. Re-run step 4 first — that is almost always the cause.
+If your numbers differ from `results.json`'s committed values, re-run step 4
+first: the agent is deterministic, so a mismatch means a component is dark
+rather than a random seed.
 
 ---
 
@@ -158,8 +122,7 @@ uv run python3 scripts/build_submission.py --verify
 
 This assembles a self-contained bundle in `dist/submission/`, then imports
 `Agent` **from that bundle, in a neutral working directory**, asserts the
-models came up live, and scores it on the full public set. It is how we check
-that the submitted artifact behaves the same as the source tree.
+models came up live, and scores it on the full public set.
 
 ---
 
@@ -191,7 +154,7 @@ extracted each turn), `/topk N`, `/quit`.
 ## Optional: the Streamlit demo UI
 
 Not part of the submission and not scored — `TODO.md` § 4.3 puts UI out of
-scope. It exists to *show* the pipeline instead of describing it.
+scope.
 
 ```bash
 uv run --with streamlit streamlit run demo/streamlit_app.py
