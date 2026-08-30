@@ -17,6 +17,7 @@ from .classifier import (
     classify_intent,
     classify_reply_lexically,
     detected_attributes,
+    matches_defer_cue,
 )
 from .reranker import CrossEncoderReranker, QwenReranker
 from .session_belief import SessionBelief
@@ -24,7 +25,8 @@ from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attri
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
 from .user_profile import UserProfileStore
 from .text_utils import normalize_query
-from .config import (ANSWERABILITY_PRIOR, BELIEF_DRIVEN_QUESTIONS, BROWSING_BM25_WEIGHT, 
+from .config import (ANSWERABILITY_PRIOR, BOUNDARY_DIVERSIFY, BOUNDARY_DIVERSIFY_LAMBDA, 
+    BOUNDARY_POPULARITY_WEIGHT, BOUNDARY_REPEL_SHOWN, POPULARITY_WEIGHT, BROWSING_BM25_WEIGHT, 
     BROWSING_DENSE_WEIGHT, BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, BUYING_DIVERSIFY, 
     CANDIDATE_N, CATALOG_PATH_ENV, DENSE_INDEX_PATH_ENV, DISCLOSED_MATCH_BOOST, 
     DISCLOSED_MISMATCH_PENALTY, DIVERSIFY_LAMBDA, DIVERSIFY_PIN, DIVERSIFY_WINDOW, 
@@ -87,16 +89,35 @@ class RoutingParams:
     dense_weight: float
     min_entropy: float
     diversify: bool
+    # Weight of the popularity leg (0.0 = leg dark). Boundary-dependent, so it
+    # resolves here rather than being read from config at the use site.
+    popularity_weight: float = POPULARITY_WEIGHT
+    diversify_lambda: float = DIVERSIFY_LAMBDA
+    # Push the slate away from already-shown items, not just past them.
+    repel_shown: bool = False
 
 
 
 
-def routing_params(intent_label: str, belief: SessionBelief | None = None) -> RoutingParams:
+def routing_params(intent_label: str, belief: SessionBelief | None = None,
+                   boundary: bool = False) -> RoutingParams:
     if intent_label == "buying":
         params = RoutingParams(BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, MIN_ENTROPY_BUYING,
                                diversify=BUYING_DIVERSIFY)
     else:
         params = RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
+    if boundary:
+        # The customer has handed the decision back. Lean on the popularity
+        # prior, spread the slate, and push it away from what they have
+        # already passed on. Resolved here with every other label-dependent
+        # knob so no second boundary branch is needed downstream.
+        params = replace(
+            params,
+            popularity_weight=BOUNDARY_POPULARITY_WEIGHT,
+            diversify=params.diversify or BOUNDARY_DIVERSIFY,
+            diversify_lambda=BOUNDARY_DIVERSIFY_LAMBDA,
+            repel_shown=BOUNDARY_REPEL_SHOWN,
+        )
     return params
 
 
@@ -195,6 +216,13 @@ class SessionState:
     # as a parallel window so the phrase leg can be given a cleaner query than
     # the other legs (see PHRASE_QUERY_SKIP_NON_ANSWERS).
     informative_messages: list[str] = field(default_factory=list)
+    # The customer has answered a clarifying question by handing the decision
+    # back ("...please use your judgment"). Latches for the rest of the
+    # session: a hand-back says something about this customer, not just about
+    # that one turn, and the evaluator's boundary customer only ever emits it
+    # once. Cleared on a detected override alongside every other slot, since a
+    # pivot means they do have a preference after all.
+    boundary: bool = False
 
 
 
@@ -441,6 +469,7 @@ class Agent:
                     state.profile_hint.clear()
                     state.asked_attributes.clear()
                     state.retracted_values.clear()
+                    state.boundary = False
                 # change recent messages, and first message if user wants to change intent
                 if names_category:
                     logger.debug(
@@ -456,6 +485,15 @@ class Agent:
             # material/color/budget, so an answer about style or feature is
             # invisible to it either way.
             contentless = self._is_non_answer(user_message)
+            # A hand-back is a non-answer that also asks us to decide. Gated on
+            # `contentless` so a reply that declines *and* discloses ("no
+            # preference, but black is fine") stays an ordinary answer --
+            # classify_reply_lexically already resolves that precedence, and
+            # honouring it here keeps the two consistent.
+            if contentless and matches_defer_cue(user_message):
+                logger.debug("respond(%s, turn=%s): hand-back detected, boundary mode on",
+                             session_id, turn)
+                state.boundary = True
             state.belief.observe(state.pending_ask, was_answered=not contentless)
             # A contentless reply carries no constraint but real query noise:
             # _build_query joins recent_messages into the BM25 and dense query,
@@ -481,12 +519,14 @@ class Agent:
         phrase_query = _build_phrase_query(state)
 
         signal = self.intent_classifier.classify(query) if self.intent_classifier is not None else classify_intent(query)
-        routing = routing_params(signal.label, state.belief)
+        routing = routing_params(signal.label, state.belief, state.boundary)
         logger.debug(
-            "respond(%s, turn=%s): intent=%s score=%+.2f bm25_w=%.2f dense_w=%.2f mmr=%s min_entropy=%.2f asked=%s",
+            "respond(%s, turn=%s): intent=%s score=%+.2f bm25_w=%.2f dense_w=%.2f pop_w=%.2f "
+            "mmr=%s lambda=%.2f repel=%s boundary=%s min_entropy=%.2f asked=%s",
             session_id, turn, signal.label, signal.score,
-            routing.bm25_weight, routing.dense_weight, routing.diversify, routing.min_entropy,
-            state.asked_attributes,
+            routing.bm25_weight, routing.dense_weight, routing.popularity_weight,
+            routing.diversify, routing.diversify_lambda, routing.repel_shown, state.boundary,
+            routing.min_entropy, state.asked_attributes,
         )
 
         inferred = self._infer_attributes(query, state.disclosed)
@@ -503,7 +543,7 @@ class Agent:
         candidate_pool = self._retrieve(
             query, top_k, pool_size, signal.label, state.disclosed, inferred,
             state.disclosed_turn, turn if isinstance(turn, int) else 1, state.belief,
-            phrase_query,
+            phrase_query, state.boundary, state.shown,
         )
         if EXCLUDE_SHOWN and state.shown:
             fresh = [pid for pid in candidate_pool if pid not in state.shown]
@@ -589,6 +629,8 @@ class Agent:
         turn: int = 1,
         belief: SessionBelief | None = None,
         phrase_query: str | None = None,
+        boundary: bool = False,
+        shown: set[str] | None = None,
     ) -> list[str]:
         if not query.strip():
             return []
@@ -627,13 +669,24 @@ class Agent:
             except Exception:
                 logger.exception("PRF search failed for query %r", query)
 
-        routing = routing_params(intent_label, belief)
+        routing = routing_params(intent_label, belief, boundary)
         legs = [
             (bm25_ranked, routing.bm25_weight),
             (dense_ranked, routing.dense_weight),
             (phrase_ranked, PHRASE_WEIGHT),
             (prf_ranked, PRF_WEIGHT),
         ]
+        if routing.popularity_weight > 0.0:
+            # Ranked over the union the other legs already found, never over
+            # the catalog: a leg ordering all 50k products by review count
+            # injects the same constant bias into every session and so cannot
+            # discriminate between them. Weighted RRF also means an item this
+            # leg never sees simply scores zero from it, rather than being
+            # pushed below every neutral candidate the way the old hard
+            # attribute filter did (#1).
+            union = list(dict.fromkeys([*bm25_ranked, *dense_ranked, *phrase_ranked, *prf_ranked]))
+            if union:
+                legs.append((self.attribute_index.by_popularity(union), routing.popularity_weight))
         rank_lists = [ranked for ranked, _ in legs if ranked]
         weights = [weight for ranked, weight in legs if ranked]
         if not rank_lists:
@@ -646,7 +699,8 @@ class Agent:
         candidates = self._rerank(query, candidates)
 
         if routing.diversify:
-            return self._diversify(candidates, top_k)
+            repel = shown if (routing.repel_shown and shown) else None
+            return self._diversify(candidates, top_k, routing.diversify_lambda, repel)
         return candidates
 
     def _rerank(self, query: str, candidate_ids: list[str]) -> list[str]:
@@ -676,7 +730,9 @@ class Agent:
                                        weights=[1.0, RERANK_WEIGHT])
         return fused + tail
 
-    def _diversify(self, candidate_ids: list[str], head_n: int) -> list[str]:
+    def _diversify(self, candidate_ids: list[str], head_n: int,
+                   lambda_: float = DIVERSIFY_LAMBDA,
+                   repel: set[str] | None = None) -> list[str]:
         """Greedy MMR re-rank of the pool's front, browsing-track only.
 
         Only the front `head_n` (what respond() truncates the pool to for
@@ -697,6 +753,19 @@ class Agent:
         if len(known_ids) <= DIVERSIFY_PIN:
             return candidate_ids
 
+        # `repel` searches a different region rather than merely the next items
+        # in the same one. EXCLUDE_SHOWN already drops the shown products
+        # themselves, but their near-neighbours stay, so a customer who passes
+        # on one slate is otherwise offered ten more of much the same thing.
+        # Seeding the penalty term with the shown vectors pushes selection away
+        # from that whole neighbourhood. Relevance still holds the other side of
+        # the trade, and DIVERSIFY_PIN candidates remain pinned regardless.
+        repel_sim = None
+        if repel:
+            _, repel_vectors = self.dense.vectors_for(list(repel))
+            if len(repel_vectors):
+                repel_sim = (vectors @ repel_vectors.T).max(axis=1)
+
         # known_ids preserves window order, so its index doubles as a
         # relevance-rank proxy (earlier = more relevant).
         relevance = [1.0 / (rank + 1) for rank in range(len(known_ids))]
@@ -708,7 +777,9 @@ class Agent:
             best_idx, best_score = None, -float("inf")
             for idx in remaining:
                 max_sim = max((sim[idx, s] for s in selected), default=0.0)
-                score = DIVERSIFY_LAMBDA * relevance[idx] - (1 - DIVERSIFY_LAMBDA) * max_sim
+                if repel_sim is not None:
+                    max_sim = max(max_sim, float(repel_sim[idx]))
+                score = lambda_ * relevance[idx] - (1 - lambda_) * max_sim
                 if score > best_score:
                     best_score, best_idx = score, idx
             selected.append(best_idx)

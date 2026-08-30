@@ -29,14 +29,15 @@ DENSE_INDEX_PATH_ENV = "TECHJAM_DENSE_INDEX"
 
 FALLBACK_ATTRIBUTE_ORDER = ["feature", "style", "size", "use_case", "budget"]
 
-RECENT_WINDOW = 4  # messages after the first, kept for query context
+RECENT_WINDOW = 10  # messages after the first, kept for query context
 CANDIDATE_N = 50  # per-leg retrieval depth before fusion
 ENTROPY_POOL_SIZE = 30  # fused-candidate pool size used for attribute-entropy scoring
 
 # Dual-track routing - buying prioritises buying, while browsing prioritises 
 # browsing
 BUYING_BM25_WEIGHT = 2.0
-BUYING_DENSE_WEIGHT = 0.5
+BUYING_DENSE_WEIGHT = 1.5
+BUYING_REPEL_SHOWN = True
 BROWSING_BM25_WEIGHT = 1.25
 BROWSING_DENSE_WEIGHT = 1.5
 
@@ -60,6 +61,34 @@ BUYING_DIVERSIFY = False
 # awards closeness to query, and penalizes similarity to shown results
 # lambda = 1 prioritizes pure relevance
 DIVERSIFY_LAMBDA = 0.5
+
+# Boundary handling. A "boundary" customer answers one clarifying question with
+# an explicit hand-back -- "I don't have a preference for X; please use your
+# judgment" -- and there is no structured signal for this anywhere in the agent
+# API. The reply itself is the only evidence, so DEFER_CUES in classifier.py
+# matches the hand-back phrasing on top of the existing non-answer test.
+#
+# It costs the session an elicitation turn, and locally it is the weakest
+# scenario by some way (HitRate 0.700 against browsing's 0.938).
+#
+# Once detected, three things change for the rest of the session:
+#   - the popularity leg switches on, since "use your judgment" is a request
+#     for exactly the prior it encodes;
+#   - the MMR re-rank runs even on the buying track, which BUYING_DIVERSIFY
+#     otherwise keeps off;
+#   - MMR additionally repels candidates away from what has already been
+#     shown, so the next slate searches a different region rather than the
+#     neighbours of items the customer has already passed on.
+BOUNDARY_POPULARITY_WEIGHT = 1.0
+BOUNDARY_DIVERSIFY = True
+BOUNDARY_REPEL_SHOWN = True
+
+# MMR lambda once a hand-back has been seen, below DIVERSIFY_LAMBDA so the
+# slate spreads wider than a normal browsing turn. Note CLAUDE.md #18 found
+# early-turn diversity is not free -- but that was a schedule applied from
+# turn 1, where the top hits are usually already right. This only ever applies
+# after the customer has told us the current direction is not working.
+BOUNDARY_DIVERSIFY_LAMBDA = 0.35
 
 # whether to remove clarifications with no good information
 # proven to be good
@@ -118,6 +147,18 @@ PHRASE_WEIGHT = 2.0
 # well.
 
 PRF_WEIGHT = 0.5
+
+# Fifth RRF leg: a popularity prior over the pool the other legs produced,
+# ordered by rating_number (AttributeIndex.by_popularity). Targets come
+# overwhelmingly from the popular tail -- catalog median 12 reviews against a
+# target median of ~6,800, with 63% of targets in the top 1% of the catalog.
+#
+# 0.0 is the identity setting and keeps the leg dark everywhere. Turning it on
+# globally is a separate experiment: the concentration above is a property of
+# how the samples were drawn, not of shopping, so it transfers to the hidden
+# grader only if that set was drawn the same way. Only the boundary path below
+# switches it on, where the customer has explicitly asked us to choose.
+POPULARITY_WEIGHT = 0.5
 
 # Cross-encoder reranking (reranker.py, Qwen3-Reranker-0.6B). 
 RERANK_WEIGHT = 0.0

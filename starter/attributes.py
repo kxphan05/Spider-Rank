@@ -116,14 +116,17 @@ class AttributeIndex:
     """Precomputed per-product structural attribute values, keyed by parent_asin."""
 
     def __init__(self, values: dict[str, dict[str, str | None]],
-                 prices: dict[str, float] | None = None) -> None:
+                 prices: dict[str, float] | None = None,
+                 popularity: dict[str, float] | None = None) -> None:
         self._values = values
         self._prices = prices
+        self._popularity = popularity or {}
 
     @classmethod
     def build(cls, catalog_path: Path) -> AttributeIndex:
         values: dict[str, dict[str, str | None]] = {}
         prices: dict[str, float] = {}
+        popularity: dict[str, float] = {}
         with catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
@@ -138,12 +141,14 @@ class AttributeIndex:
                 price = product.get("price")
                 if isinstance(price, (int, float)):
                     prices[parent_asin] = float(price)
+                reviews = product.get("rating_number")
+                popularity[parent_asin] = float(reviews) if isinstance(reviews, (int, float)) else 0.0
 
         logger.info(
             "AttributeIndex: extracted structural attributes for %d products (%d priced)",
             len(values), len(prices),
         )
-        return cls(values, prices)
+        return cls(values, prices, popularity)
 
     def values_for(self, attribute: str, candidate_ids: list[str]) -> list[str | None]:
         return [self._values.get(pid, {}).get(attribute) for pid in candidate_ids]
@@ -162,6 +167,24 @@ class AttributeIndex:
         disclosure penalize every unpriced product.
         """
         return self._prices.get(parent_asin)
+
+    def popularity_for(self, parent_asin: str) -> float:
+        """Review count, the only 100%-covered catalog field.
+
+        0.0 for an id absent from the catalog rather than None: this feeds a
+        sort key, and a missing product should rank last, not raise.
+        """
+        return self._popularity.get(parent_asin, 0.0)
+
+    def by_popularity(self, candidate_ids: list[str]) -> list[str]:
+        """`candidate_ids` reordered most-reviewed first.
+
+        Deliberately a re-ranking of a pool the other legs produced, never a
+        ranking of the catalog: a leg that orders all 50k products by review
+        count injects the same constant bias into every session and cannot
+        discriminate between them.
+        """
+        return sorted(candidate_ids, key=self.popularity_for, reverse=True)
 
 
 # Budget parsing. Three separate defects motivated this (all measured, none

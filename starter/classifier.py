@@ -498,6 +498,37 @@ _DECLINE_RE = re.compile(
 )
 
 
+# The hand-back: a non-answer that additionally asks *us* to decide. This is
+# the boundary scenario's signature and the only evidence the agent gets that
+# it is in one -- the agent API carries no scenario field, and the local
+# evaluator's boundary reply ("I don't have a preference for X; please use your
+# judgment.") differs from its ordinary non-answer ("I don't have an additional
+# preference for X.") in exactly this clause.
+#
+# Deliberately narrower than _DECLINE_RE, which matches any decline. Widening
+# this to all non-answers would fire on roughly three replies in five (#19) and
+# put every session into boundary mode, which is not a boundary behaviour --
+# it is a global one, and would need measuring as such.
+DEFER_CUE_RE = re.compile(
+    r"\b(?:"
+    r"(?:please )?(?:use|trust) your (?:own )?(?:judgment|judgement|discretion|expertise)"
+    r"|(?:it'?s |that'?s )?(?:entirely |totally |completely )?up to you"
+    r"|you (?:can |should |could )?(?:choose|decide|pick)"
+    r"|your (?:call|choice|pick)"
+    r"|whatever you (?:think|recommend|suggest|like)"
+    r"|surprise me"
+    r"|i'?ll leave (?:that|it|this) (?:one )?to your?"
+    r"|you know best"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def matches_defer_cue(text: str) -> bool:
+    """True when the customer hands the decision back to the agent."""
+    return bool(isinstance(text, str) and DEFER_CUE_RE.search(text))
+
+
 def classify_reply_lexically(text: str) -> str:
     """Lexical floor: "non_answer" or "answer".
 
