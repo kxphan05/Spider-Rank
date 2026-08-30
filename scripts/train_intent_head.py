@@ -72,7 +72,7 @@ PROBE_BROWSING = (
 
 
 def harvest(dataset: str, catalog: str) -> tuple[list[str], list[int], list[int], list[str]]:
-    """Reconstruct labelled turn text the same way scripts/eval_classifier.py does.
+    """Reconstruct labelled turn text from the evaluator's own reply templates.
 
     Returns (texts, labels, groups, stages). `groups` is the sample index, so
     cross-validation can split by sample and never put two turns from one

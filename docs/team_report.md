@@ -13,35 +13,39 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.850    MRR  0.4567    MTTC  4.210   Efficiency  0.6790
-TechnicalScore  0.6978
+HitRate@10  0.945    MRR  0.5534    MTTC  3.250   Efficiency  0.7750
+TechnicalScore  0.7935
 ```
 
 Measured on the full 200-sample public set at the submitted configuration
-(commit `5889828`, 2026-08-29), with `preflight.py --strict` confirming
-beforehand that dense retrieval and all three embedding classifiers come up
-live with the network disabled — so this is the whole pipeline, not a silently
-degraded one.
+(commit `1fb1913`, 2026-08-30), with `preflight.py --strict` confirming
+beforehand that dense retrieval, both embedding classifiers, and the
+cross-encoder reranker all come up live with the network disabled — so this is
+the whole pipeline, not a silently degraded one.
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
-HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **6.8x improvement in hit
-rate** and a halving of turns-to-conversion.
+HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **7.6x improvement in hit
+rate** and turns-to-conversion cut to a third.
 
 By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 0.9250 | 0.5235 | 3.61 |
-| intent_override | 30 | 0.8333 | 0.4084 | 5.27 |
-| buying | 80 | 0.8125 | 0.4204 | 4.21 |
-| boundary | 10 | 0.6000 | 0.3569 | 5.80 |
+| browsing | 80 | 1.0000 | 0.6230 | 2.88 |
+| intent_override | 30 | 0.9333 | 0.7136 | 4.63 |
+| buying | 80 | 0.9125 | 0.4534 | 2.94 |
+| boundary | 10 | 0.8000 | 0.3169 | 4.60 |
 
 Re-measured at the current configuration, not carried forward from the
 previous one. The ordering is stable and matches the miss census: `boundary`
 is hardest and `browsing` easiest, and the two scenarios where the customer
 states a hard constraint up front — `buying` and `intent_override` — sit in
 between. `boundary` is n=10, so a single session moves it 0.1; read it as
-directional only.
+directional only. CLAUDE.md #31 records that the three commits behind this
+number (gated attribute asking, a boundary/popularity leg, and query
+stripping plus a newly-enabled cross-encoder reranker) were bundled and
+measured only as a whole — the individual contribution of each has not been
+isolated.
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
@@ -159,6 +163,13 @@ variant, and **rejected** — see §6.
 
 Measured with `scripts/measure_latency.py --limit 20` on an AMD Ryzen 5 PRO
 4650U (12 threads, CPU-only, no GPU), Python 3.12.3, torch 2.13.0+cpu.
+
+**Stale as of `1fb1913`: the numbers below predate the cross-encoder reranker
+being turned on (`RERANK_WEIGHT` 0.0 → 3).** A `respond()` call now runs an
+extra scoring pass over `RERANK_TOP_N = 20` candidates through the minilm
+cross-encoder, which this table does not account for. Re-run
+`scripts/measure_latency.py --limit 20` before citing this table in a final
+submission — do not run it alongside another full eval on this box.
 
 **Token usage: zero.** `prompt_tokens = completion_tokens = 0`, reported
 honestly by the agent because no hosted model is called on any turn.

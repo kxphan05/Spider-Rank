@@ -42,7 +42,7 @@ def main() -> None:
 
     print(f"{'leg':22s} {'HitRate':>8} {'hits':>9}  {'MRR':>7}  {'MTTC':>7}  {'Technical':>9}  {'delta':>8}")
     baseline = None
-    for label, skip, clause, budget in LEGS:
+    for label, skip, _clause, budget in LEGS:
         agent_module.PHRASE_QUERY_SKIP_NON_ANSWERS = skip
         retrieval.MAX_PHRASE_QUERIES = budget
         report, agent = score_once(samples, catalog)

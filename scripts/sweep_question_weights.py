@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from datetime import datetime
 from pathlib import Path
 
 from _common import (DEFAULT_CATALOG, DEFAULT_DATASET, isolate_profile_store,  # noqa: F401
@@ -85,37 +84,50 @@ def main() -> None:
     # Build one agent before any scoring: a missing asset degrades silently
     # (CLAUDE.md #15) and this is the difference between finding out in two
     # minutes and finding out after a two-hour leg has already run.
-    from starter.agent import Agent
 
     rows: list[dict] = []
     baseline: float | None = None
-    for entropy_weight in points:
-        label = set_point(entropy_weight)
-        start = time.perf_counter()
-        report, _agent = score_once(samples, catalog)
-        elapsed = (time.perf_counter() - start) / 60
-        score = report["recommended_technical_score"]
+    with log_path.open("a") as log_file:
+        for entropy_weight in points:
+            label = set_point(entropy_weight)
+            start = time.perf_counter()
+            report, agent = score_once(samples, catalog)
+            elapsed = (time.perf_counter() - start) / 60
+            score = report["recommended_technical_score"]
 
+            components = live_components(agent)
+            if not all(components.values()) and not args.allow_degraded:
+                raise SystemExit(
+                    f"degraded components on leg {label!r}: {components} "
+                    "-- pass --allow-degraded to continue anyway")
 
-        hits = round(report["hit_rate_at_10"] * len(samples))
-        delta = "--" if baseline is None or score == baseline else f"{score - baseline:+.4f}"
+            hits = round(report["hit_rate_at_10"] * len(samples))
+            is_identity_leg = baseline is None
+            delta = "--" if is_identity_leg else f"{score - baseline:+.4f}"
+            if is_identity_leg:
+                baseline = score
 
-        rows.append({
-            "point": label,
-            "entropy_weight": entropy_weight,
-            "answerability_weight": None if entropy_weight is None else 1.0,
-            "hit_rate_at_10": report["hit_rate_at_10"],
-            "hits": hits,
-            "mrr": report["mrr"],
-            "mttc": report["mttc"],
-            "technical_score": score,
-            "delta_vs_identity": None if baseline is None else score - baseline,
-            "scenario_metrics": report.get("scenario_metrics"),
-            "minutes": elapsed,
-        })
-        # Rewritten after every leg so a killed run keeps what it finished.
-        json_path.write_text(json.dumps(
-            {"shipped": SHIPPED, "sample_count": len(samples), "rows": rows}, indent=2))
+            rows.append({
+                "point": label,
+                "entropy_weight": entropy_weight,
+                "answerability_weight": None if entropy_weight is None else 1.0,
+                "hit_rate_at_10": report["hit_rate_at_10"],
+                "hits": hits,
+                "mrr": report["mrr"],
+                "mttc": report["mttc"],
+                "technical_score": score,
+                "delta_vs_identity": None if is_identity_leg else score - baseline,
+                "scenario_metrics": report.get("scenario_metrics"),
+                "minutes": elapsed,
+            })
+            log_file.write(
+                f"{label:12s} hits={hits:3d} mrr={report['mrr']:.4f} "
+                f"mttc={report['mttc']:.3f} score={score:.6f} delta={delta} "
+                f"({elapsed:.1f} min)\n")
+            log_file.flush()
+            # Rewritten after every leg so a killed run keeps what it finished.
+            json_path.write_text(json.dumps(
+                {"shipped": SHIPPED, "sample_count": len(samples), "rows": rows}, indent=2))
 
 
 if __name__ == "__main__":

@@ -922,7 +922,7 @@ class Agent:
                                    else -DISCLOSED_MISMATCH_PENALTY)
             for attribute, value in (inferred or {}).items():
                 # boost only if attribute is not disclosed
-                if attribute not in disclosed.keys() and self.attribute_index.value_for(attribute, pid) == value:
+                if attribute not in disclosed and self.attribute_index.value_for(attribute, pid) == value:
                     score += LM_INFERENCE_WEIGHT
             return score
 

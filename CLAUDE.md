@@ -103,9 +103,12 @@ eval_ceiling.py          is the target reachable at all (#27) — one turn per s
 eval_failures.py         miss taxonomy, probes every leg to depth 2000 (#24) — ~1 hour
 cooccurrence.py          P(color|category) etc. over the catalog (#11)
 sweep_fusion_weights.py  TechnicalScore vs dense:bm25 ratio (#16)
-sweep_prior_leg.py       a third RRF leg from catalog priors or profile — never run
+sweep_prior_leg.py       a third RRF leg from catalog priors or profile — never run;
+                         #31 shipped POPULARITY_WEIGHT by hand instead, unswept
 ab_phrase_query.py       the five legs of #25 — five full evals, run alone
 ab_buying_diversify.py   MMR on the buying track
+sweep_question_weights.py  entropy:answerability ratio in the weighted question
+                         picker (#31's gated attribute-asking change) — overnight-safe
 ```
 
 Design docs: `docs/question_policy_plan.md` (written, not built),
@@ -114,19 +117,20 @@ Design docs: `docs/question_policy_plan.md` (written, not built),
 
 ## Score history
 
-Full public set, 200 samples. **HEAD is `a9d3999`, measured 2026-08-30.**
+Full public set, 200 samples. **HEAD is `1fb1913`, measured 2026-08-30.**
 
 ```
-HitRate@10 0.910 (182/200)   MRR 0.4906   MTTC 3.905   Efficiency 0.7095
-TechnicalScore 0.7441
+HitRate@10 0.945 (189/200)   MRR 0.5534   MTTC 3.250   Efficiency 0.7750
+TechnicalScore 0.7935
 ```
 
-Per-scenario: browsing 0.950 / 0.5534 / 3.413 (n=80), buying 0.8875 / 0.4143 /
-3.763 (80), intent_override 0.9333 / 0.5995 / 5.067 (30), boundary 0.700 /
-0.2725 / 5.500 (10). `results.json` is this run.
+Per-scenario: browsing 1.000 / 0.6230 / 2.875 (n=80), buying 0.9125 / 0.4534 /
+2.938 (80), intent_override 0.9333 / 0.7136 / 4.633 (30), boundary 0.800 /
+0.3169 / 4.600 (10). `results.json` is this run.
 
 ```
 score    what changed                                          entry
+0.7935   #31 three-commit bundle (below)          +0.0494   #31  (unattributed)
 0.7441   #30 eight-knob bundle, PRF leg on       +0.0463   #30  (unattributed)
 0.6978   #26 category IDF + request stopwords    -0.0042 = 1 session, flat
 0.7020   EXCLUDE_SHOWN                           +0.0837   #23
@@ -138,6 +142,34 @@ score    what changed                                          entry
 0.600    boost-not-filter replaces hard filter   +0.017    #1
 0.583    (starter BM25-only baseline: 0.125 hit / 0.068 MRR / 9.81 MTTC)
 ```
+
+**#31 — Three-commit run since `a9d3999`, +0.0494 to 0.7935. Same shape as #30:
+real, unattributed.** `648f941` ("gated logic for attribute asking"),
+`9702d62` ("different pipeline for boundary, popularity leg") and `1fb1913`
+("query stripping for more precise retrieval") landed as three separate
+commits but were each measured only informally during development, not
+A/B'd against `a9d3999` one at a time — `results.json` on disk is the first
+full-set run against the combined result. All three score terms move the
+same way (HitRate +7 sessions, MRR +0.0628, MTTC down 0.655), which per #23 is
+the shape of a real mechanism rather than a reshuffle, and every scenario's
+HitRate is flat or up (boundary +2 sessions, the scenario #24/#28 identified
+as hardest). Notable individual changes, unattributed among themselves:
+
+- `starter/attributes.py` / `starter/classifier.py` gained a gate on when the
+  agent asks a clarifying question at all (`648f941`).
+- `starter/agent.py` / `starter/config.py` added a boundary-scenario path and
+  a `POPULARITY_WEIGHT = 0.5` leg (`9702d62`) — this is the popularity-prior
+  idea NEXT_STEPS.md flagged as unmeasured and highest expected value; it
+  appears to now be wired in, but was not isolated with `--weights 0` per
+  that note's own instructions.
+- `RERANK_WEIGHT` went from `0.0` to `3` (`1fb1913`), turning on the
+  cross-encoder reranking stage that #6 recorded as dark since the project's
+  start. `preflight.py --strict` confirms it loads live offline.
+- `text_utils.py` added ~16 more evaluator-template wrapper words to
+  `_REQUEST_STOPWORDS` (`1fb1913`), continuing #26's pattern.
+
+**Do not bundle again — same lesson as #30.** Before trusting any one of
+these individually, vary it alone against `a9d3999` or `0.7441`.
 
 **The benchmark's resolution is one session ≈ 0.004 TechnicalScore.** Convert
 every rate to an absolute session count before believing a delta. 0.8550 vs
@@ -819,13 +851,15 @@ check, not a win condition. One judgment call: a bare or approximate amount
 ("my budget is $80") reads as a *ceiling*, the dominant sense of a stated
 shopping budget.
 
-**#6 — No cross-encoder or LLM reranking stage.** `RERANK_WEIGHT = 0.0`, so the
-stage is still dark at `a9d3999`; spec 4.2.I mentions "LLM Semantic Ranking".
-Current ranking is hybrid retrieval + attribute boost + MMR. `RERANK_BACKEND` is
-`"minilm"` with `RERANK_TOP_N = 20`; `RERANK_MODEL_NAME` names
-`Qwen/Qwen3-Reranker-0.6B`. **Lloyd is sweeping this weight and `PRF_WEIGHT` as of
-2026-08-30** — check with him before starting a third sweep, and remember the box
-takes at most two full evals at once.
+**#6 — Cross-encoder reranking stage, was dark through `a9d3999`, now on.**
+`RERANK_WEIGHT` was `0.0` (stage dark; spec 4.2.I mentions "LLM Semantic
+Ranking") through the #30 bundle. `1fb1913` set it to `3`, folded into #31 with
+two other unrelated changes — **its individual contribution has not been
+isolated.** `RERANK_BACKEND` is `"minilm"` with `RERANK_TOP_N = 20`;
+`RERANK_MODEL_NAME` names `Qwen/Qwen3-Reranker-0.6B`. `preflight.py --strict`
+confirms the minilm cross-encoder loads live offline. Whoever swept this
+weight and `PRF_WEIGHT` should record the sweep result here — the shipped
+value `3` does not yet have a table behind it in this file.
 
 ## Blockers / mistakes already made
 

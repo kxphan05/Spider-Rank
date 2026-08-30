@@ -281,8 +281,8 @@ def slide_title(prs):
         run.text = text
         _set(run, size=size, color=MUTED)
 
-    metrics = (("0.756", "TechnicalScore"), ("0.915", "HitRate@10"),
-               ("0.504", "MRR"), ("3.64", "turns to find"))
+    metrics = (("0.794", "TechnicalScore"), ("0.945", "HitRate@10"),
+               ("0.553", "MRR"), ("3.25", "turns to find"))
     for index, (value, label) in enumerate(metrics):
         left = Inches(0.9) + Inches(2.7) * index
         box(slide, left, Inches(5.05), Inches(2.4), Inches(1.0), value, label,

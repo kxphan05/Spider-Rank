@@ -6,19 +6,26 @@ carries the full write-ups for closed investigations. **Read both before
 re-attempting anything here.** This file holds only work that has not been done,
 plus the design notes that would otherwise have to be re-derived.
 
-Current score: **TechnicalScore 0.6978** on the 200-sample public set
-(HitRate 0.8500, 170/200 / MRR 0.4567 / MTTC 4.210). Deltas quoted below were
-measured against whichever baseline the note names and have not been re-measured
-on top of 0.6978.
+Current score: **TechnicalScore 0.7935** on the 200-sample public set
+(HitRate 0.9450, 189/200 / MRR 0.5534 / MTTC 3.250), HEAD `1fb1913`. Deltas
+quoted below were measured against whichever baseline the note names and have
+not been re-measured on top of 0.7935.
+
+**Two items below shipped without going through the harness this file
+describes for them — see CLAUDE.md #31.** The popularity prior leg (item 1)
+landed in `9702d62` as `POPULARITY_WEIGHT = 0.5`, and cross-encoder reranking
+(the "downloaded, not wired" section below) landed in `1fb1913` as
+`RERANK_WEIGHT = 3`. Both are in the 0.7935 number; neither was isolated with
+`sweep_prior_leg.py --weights 0` / `sweep_rerank.py` as this file recommends,
+so their individual contribution is still unmeasured. That sweep is now the
+highest-value remaining item, not a fresh design.
 
 ## Ranked by expected value
 
-1. **The popularity prior leg** — `scripts/sweep_prior_leg.py --variant
-   popularity`, written and never run. `rating_number` is the only 100%-covered
-   catalog field and the top 1% of the catalog holds 63% of all 200 targets.
-   Largest effect size sitting unmeasured. Caveats in CLAUDE.md #5: it is a
-   re-ranker inside an existing pool, so it cannot touch the elicitation gap, and
-   the concentration is a property of how the samples were drawn.
+1. **Isolate the popularity leg and the reranker, one at a time, against
+   `a9d3999` (0.7441).** Both shipped inside #31's unattributed bundle.
+   `scripts/sweep_prior_leg.py --weights 0` and `scripts/sweep_rerank.py` were
+   built for exactly this and neither has been run against current HEAD.
 2. **Elicitation** — CLAUDE.md #27's conclusion. 12 of the 27 oracle misses have
    the target in some leg's top 10, so the information is reachable once it
    arrives; what is missing is the constraints themselves.
@@ -115,22 +122,28 @@ Read #19 before touching the first row, and the blockers list before adding a
 switch: the re-orchestration branch originally disabled the browsing MMR re-rank
 even at its zero setting, so its control leg was wrong by an unknown amount.
 
-## Cross-encoder reranking — downloaded, not wired
+## Cross-encoder reranking — now wired, weight unswept
 
-`Qwen/Qwen3-Reranker-0.6B` (1.2 GB, in `model/`) and `starter/reranker.py` exist;
-nothing calls them. Last named spec gap (CLAUDE.md #6, Pillar I's "LLM Semantic
-Ranking"). `scripts/sweep_rerank.py` is written.
+`starter/reranker.py`'s minilm backend is live as of `1fb1913`
+(`RERANK_WEIGHT = 3`, `RERANK_TOP_N = 20`), folded into #31's unattributed
+bundle. `Qwen/Qwen3-Reranker-0.6B` (1.2 GB, in `model/`) is still downloaded
+but unused — `RERANK_BACKEND` is `"minilm"`. `scripts/sweep_rerank.py` is
+written and has not been run against the weight actually shipped.
 
-0.6B was chosen for a measured reason. On the target machine (i5-8365U, no CUDA,
-~4.6 GB free) a 2B *generative* model needs ~8.4 s per 41-token scoring call, so
-an 8B model implies ~180 hours for one 200-sample eval. A cross-encoder is one
-forward pass per pair with no generation, which is the only reason it is
-tractable: decode here runs under 2 tok/s against ~60 tok/s prefill.
+0.6B was chosen for a measured reason, in case the Qwen backend is revisited.
+On the target machine (i5-8365U, no CUDA, ~4.6 GB free) a 2B *generative*
+model needs ~8.4 s per 41-token scoring call, so an 8B model implies ~180
+hours for one 200-sample eval. A cross-encoder is one forward pass per pair
+with no generation, which is the only reason it is tractable: decode here
+runs under 2 tok/s against ~60 tok/s prefill.
 
-**Expect it to measure flat or negative** — it is the same class of component as
-the dense leg, on a benchmark where the dense leg is net-negative for a
-documented reason (#14). If it does, the defensible move is #14's: keep it,
-report the local cost, and say why the local set cannot price it.
+**This was expected to measure flat or negative** — it is the same class of
+component as the dense leg, on a benchmark where the dense leg is
+net-negative for a documented reason (#14). #31's bundle scored well, but
+whether the reranker specifically helped, hurt, or was neutral inside it is
+unknown until `sweep_rerank.py` runs. If it turns out flat/negative, the
+defensible move is #14's: keep it, report the local cost, and say why the
+local set cannot price it.
 
 ## Co-occurrence priors — built, unwired
 
