@@ -2,113 +2,138 @@
 
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
 
-## What You Receive
+# How to reproduce our results
 
-- A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
-- 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
-- The Agent API contract and scoring rules.
+## 0. Clone the repo
 
-The organizer keeps 800 additional sessions private for final evaluation.
+```bash
+git clone git@github.com:kxphan05/tiktok-jam-hackathon-track-4.git
+cd tiktok-jam-hackathon-track-4
+```
 
-## Task
+## 1. What you need
 
-For each session, your agent receives an anonymized preference profile and a short customer message. Raw user IDs, review text, timestamps, and purchase history are never disclosed. On every turn the agent may:
+| requirement | value |
+|---|---|
+| Python | 3.12+ |
+| Disk | ~420 MB assets + 58 MB catalog |
+| Network | Once, in step 3 |
+| GPU | None needed, CPU only |
+| API keys | None |
 
-- ask a natural clarification question in `message` and identify one requested field in `ask_attribute`;
-- return a ranked list of up to 10 catalog `parent_asin` values;
-- do both in the same response.
+---
 
-The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
+## 2. Install dependencies
 
-## Download the Catalog
+```bash
+# Option A -- uv
+uv sync
 
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+# Option B -- pip
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+CPU-only PyTorch, no CUDA. Using pip? Drop the `uv run` prefix below.
+
+---
+
+## 3. Download the catalog
+
+Not included in the repo.
 
 ```bash
 gzip -dk catalog.jsonl.gz
 mv catalog.jsonl data/catalog.jsonl
+wc -l data/catalog.jsonl   # expect 50000
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+---
 
-## Run the Starter
+## 4. Fetch model weights and build the index
 
-See `REPRODUCE.md` for full setup and reproduction steps.
-
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+Only step that touches the network.
 
 ```bash
-python3 -m evaluator.local_evaluator
+uv run python3 scripts/fetch_assets.py
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+| stage | what | size |
+|---|---|---:|
+| 1 | `BAAI/bge-small-en-v1.5` — dense search + classifiers | 129 MB |
+| 2 | `cross-encoder/ms-marco-MiniLM-L-6-v2` — reranking | 88 MB |
+| 3 | masked LM (skipped by default, `--with-lm` to include) | 257 MB |
+| 4 | builds `data/dense_index/` from the catalog | 74 MB |
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+`Qwen/Qwen3-Reranker-0.6B` isn't fetched by default — demo-only, not in the scored pipeline.
 
-## Agent Interface
+---
 
-```python
-class Agent:
-    def reset(self, session_id: str, user_profile: dict) -> None:
-        ...
+## 5. Run the evaluator
 
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
-        return {
-            "message": "Do you have a material preference?",
-            "ask_attribute": "material",
-            "recommendations": [
-                {"parent_asin": "B000..."},
-                {"parent_asin": "B001..."}
-            ],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
-        }
+```bash
+uv run python3 -m evaluator.local_evaluator
 ```
 
-`ask_attribute` is one of `category`, `material`, `color`, `size`, `style`, `brand`, `budget`, `feature`, `use_case`, `other`, or `null`. See `docs/agent_api_contract.json`.
+Writes results to `results.json`, including per-scenario metrics and token usage. The evaluator is organizer-provided and unmodified.
 
-## Technical Metrics
+---
 
-- **Hit Rate@10:** fraction of sessions that find the target within 10 turns.
-- **MRR:** mean reciprocal rank of the target; a miss contributes zero.
-- **MTTC:** mean first-hit turn; a miss is assigned turn 11.
-- **Reported token usage:** prompt and completion tokens returned by the team's model client.
+## 6. Optional: check the submission bundle
 
-```text
-TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
-Efficiency = clip((11 - MTTC) / 10, 0, 1)
+```bash
+uv run python3 scripts/build_submission.py --verify
 ```
 
-Only exact `parent_asin` equality produces a hit. Core metrics are also reported by scenario.
+Assembles `dist/submission/`, imports `Agent` from it in a neutral directory, and scores it.
 
-## Model Choice and Cost
+---
 
-Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer may reimburse model costs through prizes instead of issuing API keys.
+## Quick reference
 
-## Files
-
-```text
-data/public_set.jsonl             200 labeled development sessions
-docs/competition_specification.md participant rules and evaluation protocol
-docs/agent_api_contract.json      machine-readable Agent contract
-docs/evaluation_config.json       scoring configuration
-docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
-evaluator/local_evaluator.py      public-set simulator and scorer
+```bash
+git clone git@github.com:kxphan05/tiktok-jam-hackathon-track-4.git
+cd tiktok-jam-hackathon-track-4
+uv sync
+#    ... download catalog.jsonl to data/
+uv run python3 scripts/fetch_assets.py
+uv run python3 -m evaluator.local_evaluator
 ```
 
-## Judging and Submission Policy
+---
 
-- Reproduction instructions: `REPRODUCE.md`
-- Participant submission requirements: `docs/submission_rules.md`
-- Participant release checklist: `docs/participant_release_checklist.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
+## Try it interactively
 
-## Data Source
+```bash
+uv run python3 scripts/repl.py
+```
 
-The catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See `DATA_ATTRIBUTION.md` before using or redistributing the data.
-Sessions are sampled deterministically from the official Clothing 5-core leave-last-out split and joined to the frozen catalog.
+`/reset`, `/debug`, `/topk N`, `/quit`.
+
+---
+
+## Optional: Streamlit demo
+
+Not scored (`TODO.md` § 4.3 puts UI out of scope).
+
+```bash
+uv run --with streamlit streamlit run demo/streamlit_app.py
+```
+
+Shows the slate plus a live panel of what the agent extracted, questions asked, routing, and override state — read straight from the running agent.
+
+> Binds all interfaces by default. Add `--server.address 127.0.0.1` to keep it local.
+
+---
+
+## Environment variables
+
+All optional, all have working defaults.
+
+| variable | purpose |
+|---|---|
+| `TECHJAM_CATALOG` | catalog path |
+| `TECHJAM_DENSE_INDEX` | dense index directory |
+| `TECHJAM_MODEL_DIR` | model weights directory |
+| `TECHJAM_PROFILE_STORE` | long-term user-profile store path |
+| `TECHJAM_THREADS` | cap CPU threads, for running evals side by side |
