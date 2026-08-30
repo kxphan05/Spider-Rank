@@ -44,7 +44,6 @@ def main() -> None:
     baseline = None
     for label, skip, clause, budget in LEGS:
         agent_module.PHRASE_QUERY_SKIP_NON_ANSWERS = skip
-        retrieval.PHRASE_CLAUSE_SPANS = clause
         retrieval.MAX_PHRASE_QUERIES = budget
         report, agent = score_once(samples, catalog)
         if agent.dense is None or agent.non_answer_detector is None:

@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .attributes import (AttributeIndex, COLORS, FILTERABLE_ATTRIBUTES, MATERIALS,
                          STRUCTURAL_ATTRIBUTES, budget_constraint_satisfied,
-                         extract_disclosed_value, select_dynamic_attribute)
+                         extract_disclosed_value, select_dynamic_attribute,
+                         select_weighted_attribute)
 from .classifier import (
     EmbeddingIntentClassifier,
     EmbeddingNonAnswerDetector,
@@ -23,15 +24,16 @@ from .lm_confidence import ATTRIBUTE_TEMPLATES, MaskedLMScorer, belief_for_attri
 from .retrieval import BM25Index, DenseIndex, load_embedding_model, reciprocal_rank_fusion
 from .user_profile import UserProfileStore
 from .text_utils import normalize_query
-from .config import (BELIEF_DRIVEN_QUESTIONS, BELIEF_REORCHESTRATION, BROWSING_BM25_WEIGHT, 
+from .config import (ANSWERABILITY_PRIOR, BELIEF_DRIVEN_QUESTIONS, BROWSING_BM25_WEIGHT, 
     BROWSING_DENSE_WEIGHT, BUYING_BM25_WEIGHT, BUYING_DENSE_WEIGHT, BUYING_DIVERSIFY, 
     CANDIDATE_N, CATALOG_PATH_ENV, DENSE_INDEX_PATH_ENV, DISCLOSED_MATCH_BOOST, 
     DISCLOSED_MISMATCH_PENALTY, DIVERSIFY_LAMBDA, DIVERSIFY_PIN, DIVERSIFY_WINDOW, 
-    ENTROPY_POOL_SIZE, EXCLUDE_SHOWN, EXHAUSTED_BM25_BONUS, EXPLAIN_RECOMMENDATIONS, 
+    ENTROPY_POOL_SIZE, EXCLUDE_SHOWN, EXPLAIN_RECOMMENDATIONS, 
     FALLBACK_ATTRIBUTE_ORDER, LM_INFERENCE_WEIGHT, MAX_QUERY_CHARS, MIN_ENTROPY_BROWSING, 
     MIN_ENTROPY_BUYING, PHRASE_QUERY_SKIP_NON_ANSWERS, PHRASE_WEIGHT, PRF_WEIGHT, 
-    RECENT_WINDOW, RERANK_BACKEND, RERANK_TOP_N, RERANK_WEIGHT, SCOPED_OVERRIDE_CLEAR, 
-    SKIP_NON_ANSWERS_IN_QUERY, SLOT_DECAY)
+    QUESTION_ANSWERABILITY_WEIGHT, QUESTION_ENTROPY_WEIGHT, RECENT_WINDOW, 
+    RERANK_BACKEND, RERANK_TOP_N, RERANK_WEIGHT, SCOPED_OVERRIDE_CLEAR, 
+    SKIP_NON_ANSWERS_IN_QUERY, SLOT_DECAY, WEIGHTED_QUESTION_SCORE)
 
 logger = logging.getLogger(__name__)
 
@@ -95,21 +97,6 @@ def routing_params(intent_label: str, belief: SessionBelief | None = None) -> Ro
                                diversify=BUYING_DIVERSIFY)
     else:
         params = RoutingParams(BROWSING_BM25_WEIGHT, BROWSING_DENSE_WEIGHT, MIN_ENTROPY_BROWSING, diversify=True)
-    # Runtime re-orchestration (spec Pillar III, "Adaptive Orchestration"):
-    # once the customer has stopped producing new constraints, no further
-    # information is coming, so there is nothing left for the exploratory
-    # (dense/diverse) track to earn -- commit to precision on what was
-    # actually stated.
-    #
-    # Gated by an explicit flag, NOT by EXHAUSTED_BM25_BONUS == 0.0. An
-    # earlier revision keyed only off `belief.exhausted` and set diversify
-    # False unconditionally inside this branch, which meant the "all switches
-    # at identity" baseline silently lost the browsing MMR re-rank and scored
-    # 0.6154 instead of the shipped 0.6182. A knob whose zero value is not
-    # actually the identity is a measurement trap, not just a bug.
-    if BELIEF_REORCHESTRATION and belief is not None and belief.exhausted:
-        params = replace(params, bm25_weight=params.bm25_weight + EXHAUSTED_BM25_BONUS,
-                         diversify=False)
     return params
 
 
@@ -265,6 +252,22 @@ def _next_attribute(
     # skips attributes that are already asked, or are already extracted in query
     excluded = set(state.asked_attributes) | detected_attributes(query)
 
+    # One score over every attribute, informativeness and answerability
+    # traded off against each other rather than owning separate branches.
+    # The belief supplies answerability so it decays as this customer's
+    # non-answers land; with no belief the population marginals stand in.
+    if WEIGHTED_QUESTION_SCORE:
+        answerability = dict(belief.answerable) if belief is not None else dict(ANSWERABILITY_PRIOR)
+        return select_weighted_attribute(
+            candidate_pool,
+            attribute_index,
+            excluded,
+            answerability,
+            entropy_weight=QUESTION_ENTROPY_WEIGHT,
+            answerability_weight=QUESTION_ANSWERABILITY_WEIGHT,
+            min_entropy=routing_params(intent_label).min_entropy,
+        )
+
     # select attribute with highest diveristy
     # return None if max entropy is below threshold
     dynamic_pick = select_dynamic_attribute(
@@ -273,16 +276,6 @@ def _next_attribute(
     if dynamic_pick is not None:
         return dynamic_pick
 
-    # Nothing structural is worth asking about (either excluded, or the
-    # current pool already agrees on material/color/budget) -- fall back to
-    # attributes we can't score entropy for, most-answerable first.
-    #
-    # The belief is initialized to exactly FALLBACK_ATTRIBUTE_ORDER's measured
-    # marginals (session_belief.ANSWERABILITY_PRIOR), so on turn 1 the two
-    # branches below agree by construction -- this generalizes the #9 reorder
-    # to react to what this customer actually does, it does not replace it.
-    if BELIEF_DRIVEN_QUESTIONS and belief is not None:
-        return belief.best(excluded)
     for attribute in FALLBACK_ATTRIBUTE_ORDER:
         if attribute not in excluded:
             return attribute

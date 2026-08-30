@@ -8,6 +8,7 @@ import statistics
 import uuid
 from collections import defaultdict
 from pathlib import Path
+from tqdm import tqdm
 
 from starter.agent import Agent
 
@@ -223,7 +224,7 @@ def evaluate(
     sessions: list[dict] = []
     total_prompt_tokens = 0
     total_completion_tokens = 0
-    for sample in samples:
+    for sample in tqdm(samples):
         session_id = f"public_{uuid.uuid4().hex}"
         agent.reset(session_id, sample["user_profile"])
         target = str(sample["ground_truth"]["parent_asin"])

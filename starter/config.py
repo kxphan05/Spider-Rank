@@ -87,16 +87,23 @@ PHRASE_QUERY_SKIP_NON_ANSWERS = False
 # tried before, but does not work. kept at 1.0
 SLOT_DECAY = 1.0
 
-# Pick the next question by the session's own answerability belief rather than
-# the static FALLBACK_ATTRIBUTE_ORDER. The belief is *initialized* to that
-# order's marginals, so turn 1 behaviour is identical either way -- this
-# strictly generalizes the #9 reorder rather than replacing it.
-BELIEF_DRIVEN_QUESTIONS = False
+# Score every attribute on one scale instead of running entropy as a gate with
+# answerability as its fallback. See attributes.select_weighted_attribute.
+#
+# Under the gate, entropy decided alone for material/color and answerability
+# decided alone for the rest, so the two could never be traded off: colour
+# (answerability 0.255) beat feature (0.960) whenever it cleared min_entropy,
+# spending a turn on a question three customers in four cannot answer.
+#
+# False is the identity setting and must reproduce the shipped score exactly.
+WEIGHTED_QUESTION_SCORE = True
 
-# Added to the BM25 leg's weight once the belief reports the card exhausted.
-# 0.0 disables the re-orchestration and is the identity setting.
-EXHAUSTED_BM25_BONUS = 0.0
-BELIEF_REORCHESTRATION = False
+# Relative pull of the two terms. Only their ratio matters -- the combined
+# score is a weighted *mean*, so it stays on [0, 1] and stays comparable with
+# the single-term score used when one component is missing. Equal weights are
+# a starting point, not a measured optimum; sweep the ratio.
+QUESTION_ENTROPY_WEIGHT = 1.0
+QUESTION_ANSWERABILITY_WEIGHT = 1.0
 
 # Third RRF leg: verbatim-span matching (BM25Index.phrase_search). 0.0 is the
 # identity setting and disables the leg entirely, including its lookup cost.
@@ -149,7 +156,7 @@ MAX_QUERY_CHARS = 2000
 # ==========================================================================
 
 DENSE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-DENSE_QUERY_PREFIX = "Represent this sentence for searching relevant shopping items: "
+DENSE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 # Verbatim-span matching parameters (BM25Index.phrase_search).
 PHRASE_MIN_N = 2
@@ -163,23 +170,6 @@ MAX_PHRASE_QUERIES = 24
 # information, so it is dropped rather than scored.
 PHRASE_MAX_MATCHES = 150
 
-# Build spans within a clause instead of across the whole query, and require
-# both edge tokens to carry content.
-#
-# The budget above is spent longest-first, on the assumption that a longer span
-# is a more specific one. That holds for catalog copy and fails for
-# conversation: the longest spans of a 10-turn query are sentences of filler
-# that match nothing. Measured on public_0008's final query -- 135 spans built,
-# and all 24 that fit the budget matched zero products, while "bras everyday
-# bras" (verbatim in the target) sat unqueried at 3-gram depth.
-#
-# Two rules, both properties of language rather than of this simulator's
-# wording -- a template blacklist would score well locally and transfer nothing
-# (CLAUDE.md #12/#13):
-#   1. no span crosses a clause boundary, since catalog text never does
-#   2. no span begins or ends on a stopword, which is the standard
-#      phrase-extraction heuristic for a span that is a fragment of one
-PHRASE_CLAUSE_SPANS = False
 
 # BM25F field weights, in the FTS5 column order declared above:
 #
@@ -194,6 +184,8 @@ PHRASE_CLAUSE_SPANS = False
 # shipped score exactly before any swept point is believed.
 DEFAULT_FIELD_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 0, 1.0)
 
+
+# THIS IS STRICTLY FOR BUILDING THE INDEX ONLY
 # Every product in this catalog hangs off one root category
 # ("Clothing, Shoes & Jewelry", 49,990 of 50,000), so the three words in it
 # are present on essentially every document.

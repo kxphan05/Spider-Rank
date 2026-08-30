@@ -322,6 +322,90 @@ def normalized_entropy(values: list[str | None]) -> float:
     return raw / max_possible if max_possible > 0 else 0.0
 
 
+def _entropy_component(
+    attribute: str,
+    candidate_ids: list[str],
+    attribute_index: AttributeIndex,
+    min_entropy: float,
+) -> float | None:
+    """Normalized pool entropy for `attribute`, or None when there isn't one.
+
+    None means "entropy has nothing to say here", and there are three ways to
+    get it. The attribute has no catalog labels at all (everything outside
+    STRUCTURAL_ATTRIBUTES -- feature, style, size, use_case, budget), the pool
+    is empty, or the pool already agrees closely enough that the split would
+    be uninformative. That last case is the old `min_entropy` gate, kept so
+    the intent-conditioned thresholds in routing_params still mean something:
+    below it, entropy stops being a reason to ask rather than becoming a small
+    negative one.
+    """
+    if attribute not in STRUCTURAL_ATTRIBUTES or not candidate_ids:
+        return None
+    score = normalized_entropy(attribute_index.values_for(attribute, candidate_ids))
+    return score if score > min_entropy else None
+
+
+def select_weighted_attribute(
+    candidate_ids: list[str],
+    attribute_index: AttributeIndex,
+    excluded: set[str],
+    answerability: dict[str, float],
+    entropy_weight: float,
+    answerability_weight: float,
+    min_entropy: float = 0.15,
+) -> str | None:
+    """Pick the next question by a weighted mean of informativeness and answerability.
+
+    Replaces the entropy-gate-then-fallback-list structure, where entropy
+    decided alone for material/color and answerability decided alone for
+    everything else. Two attributes could be compared only if they happened to
+    land in the same branch. Here every attribute gets one score on [0, 1] and
+    they compete directly:
+
+        score = (we * H + wa * A) / (we + wa)
+
+    H is normalized pool entropy and A is this session's answerability belief.
+    **When either component is None the score is the other one on its own**,
+    already normalized to [0, 1] and therefore comparable with the two-term
+    case -- which is why this is a weighted mean rather than a weighted sum.
+    Inventing a stand-in value for a missing component would be the thing this
+    is built to avoid: `feature` has no entropy because the catalog carries no
+    feature labels, not because its entropy is low.
+
+    An attribute missing both components is not askable and is skipped.
+    Returns None when nothing is left to ask.
+
+    Iteration order is `answerability`'s (ANSWERABILITY_PRIOR is written
+    answerability-descending), so exact ties resolve toward the attribute the
+    customer is likelier to answer.
+    """
+    denominator = entropy_weight + answerability_weight
+    if denominator <= 0.0:
+        return None
+    ordered = list(dict.fromkeys(tuple(answerability) + STRUCTURAL_ATTRIBUTES))
+    best_attribute: str | None = None
+    best_score = float("-inf")
+    for attribute in ordered:
+        if attribute in excluded:
+            continue
+        entropy = _entropy_component(
+            attribute, candidate_ids, attribute_index, min_entropy
+        )
+        answerable = answerability.get(attribute)
+        if entropy is None and answerable is None:
+            continue
+        if entropy is None:
+            score = answerable
+        elif answerable is None:
+            score = entropy
+        else:
+            score = (entropy_weight * entropy + answerability_weight * answerable) / denominator
+        if score > best_score:
+            best_score = score
+            best_attribute = attribute
+    return best_attribute
+
+
 def select_dynamic_attribute(
     candidate_ids: list[str],
     attribute_index: AttributeIndex,

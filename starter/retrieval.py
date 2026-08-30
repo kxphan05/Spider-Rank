@@ -19,11 +19,11 @@ import numpy as np
 from .paths import catalog_fingerprint, model_cache_dir
 from . import prf
 from .attributes import COLORS, MATERIALS
-from .text_utils import (STOPWORDS, field_text, normalize_query, phrase_clauses,
+from .text_utils import (STOPWORDS, field_text, normalize_query,
                          phrase_tokens, terms)
 from .config import (CATALOG_ROOT_MIN_SHARE, CATALOG_ROOT_SAMPLE, CATEGORY_TERM_MIN_DF, 
     DEFAULT_FIELD_WEIGHTS, DENSE_MODEL_NAME, DENSE_QUERY_PREFIX, MAX_PHRASE_QUERIES, 
-    PHRASE_CLAUSE_SPANS, PHRASE_MAX_MATCHES, PHRASE_MAX_N, PHRASE_MIN_N)
+    PHRASE_MAX_MATCHES, PHRASE_MAX_N, PHRASE_MIN_N)
 
 logger = logging.getLogger(__name__)
 
@@ -243,8 +243,7 @@ class BM25Index:
         "for the") from drowning the rare spans that actually identify a
         product.
         """
-        clauses = (phrase_clauses(query) if PHRASE_CLAUSE_SPANS
-                   else [phrase_tokens(query)])
+        clauses = ([phrase_tokens(query)])
         grams: list[tuple[str, ...]] = []
         seen: set[tuple[str, ...]] = set()
         # Longest first, so the per-query budget is spent on the most
@@ -255,10 +254,7 @@ class BM25Index:
                     gram = tuple(tokens[start:start + size])
                     if gram in seen or all(token in STOPWORDS for token in gram):
                         continue
-                    if PHRASE_CLAUSE_SPANS and (gram[0] in STOPWORDS or gram[-1] in STOPWORDS):
-                        # A span hanging off a stopword is a fragment of a
-                        # phrase, not a phrase.
-                        continue
+
                     seen.add(gram)
                     grams.append(gram)
         if not grams:

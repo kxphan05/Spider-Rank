@@ -20,11 +20,14 @@ authority. Full rules in `README.md`.
 
 ## Architecture
 
-1. **Retrieval — three legs, fused by weighted RRF.** BM25 (SQLite FTS5,
+1. **Retrieval — four legs, fused by weighted RRF.** BM25 (SQLite FTS5,
    bag-of-words OR), **phrase-match** (FTS5 exact multi-word spans,
-   `PHRASE_WEIGHT = 2.0`) and dense (bge-small cosine), each over the full
-   catalog. The phrase leg's weight is intent-unconditioned; BM25 and dense
-   weights are intent-conditioned (buying 2.0/0.5, browsing 1.25/1.5).
+   `PHRASE_WEIGHT = 2.0`), dense (bge-small cosine), and **pseudo-relevance
+   feedback** (`PRF_WEIGHT = 0.5`, a second BM25 pass seeded from the first
+   ranking's top documents, not from the fused pool) — each over the full
+   catalog. The phrase and PRF weights are intent-unconditioned; BM25 and dense
+   weights are intent-conditioned (buying 2.0/0.5, browsing 1.25/1.5). PRF
+   arrived inside #30's unattributed bundle and has never been measured alone.
 2. **Shown-item exclusion** (`EXCLUDE_SHOWN = True`). Products already
    recommended are dropped from later slates. Largest win in the project,
    +0.0837 — see Results.
@@ -49,7 +52,7 @@ authority. Full rules in `README.md`.
    and `asked_attributes` are cleared. The query text is cleared **only** when
    the pivot names a product category — see #17/#26.
 7. **Browsing-only MMR diversity re-rank** (`Agent._diversify`), pinning the top
-   `DIVERSIFY_PIN = 2` and reordering within `DIVERSIFY_WINDOW = 20`.
+   `DIVERSIFY_PIN = 3` and reordering within `DIVERSIFY_WINDOW = 40`.
 8. **Long-term user-profile store** (`starter/user_profile.py`). Write-through
    JSON keyed by a hash of the anonymized profile dict. Fully exercised and
    correctly populated; **`SessionState.profile_hint` is deliberately read by
@@ -111,19 +114,20 @@ Design docs: `docs/question_policy_plan.md` (written, not built),
 
 ## Score history
 
-Full public set, 200 samples. **HEAD is `5889828`, measured 2026-08-29.**
+Full public set, 200 samples. **HEAD is `a9d3999`, measured 2026-08-30.**
 
 ```
-HitRate@10 0.850 (170/200)   MRR 0.4567   MTTC 4.210   Efficiency 0.6790
-TechnicalScore 0.6978
+HitRate@10 0.910 (182/200)   MRR 0.4906   MTTC 3.905   Efficiency 0.7095
+TechnicalScore 0.7441
 ```
 
-Per-scenario: browsing 0.925 / 0.5235 / 3.613 (n=80), buying 0.8125 / 0.4204 /
-4.213 (80), intent_override 0.8333 / 0.4084 / 5.267 (30), boundary 0.600 /
-0.3569 / 5.800 (10). `results.json` is this run.
+Per-scenario: browsing 0.950 / 0.5534 / 3.413 (n=80), buying 0.8875 / 0.4143 /
+3.763 (80), intent_override 0.9333 / 0.5995 / 5.067 (30), boundary 0.700 /
+0.2725 / 5.500 (10). `results.json` is this run.
 
 ```
 score    what changed                                          entry
+0.7441   #30 eight-knob bundle, PRF leg on       +0.0463   #30  (unattributed)
 0.6978   #26 category IDF + request stopwords    -0.0042 = 1 session, flat
 0.7020   EXCLUDE_SHOWN                           +0.0837   #23
 0.6454   phrase leg at PHRASE_WEIGHT 2.0         +0.0272   #20
@@ -177,6 +181,49 @@ Numbered entries are historical and referenced across the repo; keep the
 numbering stable.
 
 ### Shipped and established
+
+**#30 — Eight-knob bundle, +0.0463 to 0.7441. The largest jump since #23, and
+none of it is attributed.** Commit `a9d3999` changed eight knobs at once and was
+measured once. Every diff against `5889828`:
+
+```
+knob                          before                       after
+PRF_WEIGHT                    0.0                          0.5
+SKIP_NON_ANSWERS_IN_QUERY     False                        True     <- reverses #19
+DIVERSIFY_WINDOW              20                           40
+DIVERSIFY_PIN                 2                            3
+DEFAULT_FIELD_WEIGHTS[5]      1.5                          0
+NEGATION_WINDOW_CHARS         20                           10
+NON_ANSWER_SPILLOVER          0.6                          0.8
+DENSE_QUERY_PREFIX            "...relevant passages: "     "...relevant shopping items: "
+SCOPED_OVERRIDE_CLEAR         (new)                        False
+```
+
+The gain is real and far above the noise floor: +12 sessions of HitRate
+(170 → 182), MTTC down 0.305, and MRR up 0.0339 — **all three score terms move
+the same way**, which per #23 is the signature of a mechanism rather than a
+reshuffle. HitRate rises in every scenario. So the bundle stays.
+
+**What is not known is which knob did it, and that is a real cost.** Eight
+changes, one measurement, zero attribution. Two of them are individually
+suspicious: `PRF_WEIGHT = 0.5` turns on a leg that had never been run at all,
+and `SKIP_NON_ANSWERS_IN_QUERY = True` re-enables the exact change #19 measured
+at −0.0410. Those cannot both be neutral. The plausible reading is that PRF is
+carrying the bundle and paying for a knob that still costs, in which case there
+is more than +0.0463 available by reverting the losers — but that is a guess
+until someone varies them one at a time.
+
+The dense-prefix edit deserves separate suspicion. bge-small's published
+retrieval prefix is the literal string `"Represent this sentence for searching
+relevant passages: "`; the index was built under that prefix, so querying under
+a different one puts query and document embeddings in mismatched conditioning.
+Per #14 the dense leg contributes no HitRate locally, so this could measure flat
+here and still be wrong on a grader that paraphrases.
+
+**Do not bundle again.** This is the second time the repo has learned that eight
+knobs measured once produce a number and no knowledge — and unlike #28's null,
+this one is a win nobody can defend or build on.
+
 
 **#23 — Shown-item exclusion, +0.0837.** The largest win by a factor of three,
 and the only change that moves all three score terms the same way at once
@@ -447,7 +494,9 @@ idea, and the control is the leg with the effect size. Two caveats: it is a
 re-ranker inside an existing pool, so it cannot touch the elicitation gap #27
 identifies as the real limit; and the concentration is a property of how the
 samples were drawn, not of shopping, so it transfers only if the hidden set was
-drawn the same way. Run `--weights 0` first and confirm it reproduces 0.6978.
+drawn the same way. Run `--weights 0` first and confirm it reproduces the
+current HEAD score — that is **0.7441** as of `a9d3999`, not the 0.6978 this
+note was written against.
 
 **#19 — Query hygiene on non-answers, −0.0410.** The gap was real: roughly three
 asks in five come back empty (mean 2.09 answerable buckets left after turn 1
@@ -464,6 +513,13 @@ measured the wrong thing. The A/B says the opposite: per the confound above,
 classifier cannot fix it — the text is contentless in meaning and load-bearing in
 retrieval. The non-answer *observation* is kept and feeds `SessionBelief`; only
 the query surgery was reverted.
+
+**Status changed 2026-08-30: `SKIP_NON_ANSWERS_IN_QUERY` is `True` again**, inside
+#30's bundle, and the bundle scores +0.0463. That does not overturn the −0.0410
+above — the flag was never varied on its own in that run, so its individual sign
+is unknown. Either #19 was wrong, or #19 still holds and the other seven knobs are
+worth more than +0.0463 between them. **Both readings are live; do not cite #19 as
+settled in either direction until the flag is A/B'd alone on `a9d3999`.**
 
 **#17 — Query rewriting on intent override, −0.0580.** The gap was real
 (`respond()` cleared slots but never touched `first_message`, so `_build_query`
@@ -763,9 +819,13 @@ check, not a win condition. One judgment call: a bare or approximate amount
 ("my budget is $80") reads as a *ceiling*, the dominant sense of a stated
 shopping budget.
 
-**#6 — No cross-encoder or LLM reranking stage.** `RERANK_WEIGHT = 0.0` and the
-sweep never ran; spec 4.2.I mentions "LLM Semantic Ranking". Current ranking is
-hybrid retrieval + attribute boost + MMR.
+**#6 — No cross-encoder or LLM reranking stage.** `RERANK_WEIGHT = 0.0`, so the
+stage is still dark at `a9d3999`; spec 4.2.I mentions "LLM Semantic Ranking".
+Current ranking is hybrid retrieval + attribute boost + MMR. `RERANK_BACKEND` is
+`"minilm"` with `RERANK_TOP_N = 20`; `RERANK_MODEL_NAME` names
+`Qwen/Qwen3-Reranker-0.6B`. **Lloyd is sweeping this weight and `PRF_WEIGHT` as of
+2026-08-30** — check with him before starting a third sweep, and remember the box
+takes at most two full evals at once.
 
 ## Blockers / mistakes already made
 
