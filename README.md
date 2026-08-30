@@ -99,6 +99,7 @@ evaluator/local_evaluator.py      public-set simulator and scorer
 
 ## Judging and Submission Policy
 
+- Reproduction instructions (copy-pasteable, judge-facing): `REPRODUCE.md`
 - Participant submission requirements: `docs/submission_rules.md`
 - Participant release checklist: `docs/participant_release_checklist.md`
 - Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
