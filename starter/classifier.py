@@ -45,7 +45,7 @@ BUYING_PHRASES = (
 
 # Hedging / exploratory framing.
 BROWSING_PHRASES = (
-    r"\bnot\s+sure\b", r"\bjust\s+(?:browsing|looking)\b",
+    r"\bnot\s+sure\b", r"\b(?:browsing|looking)\b",
     r"\bstill\s+(?:exploring|deciding|looking|browsing)\b",
     r"\bwhatever\b", r"\bsomething\s+like\b", r"\bnot\s+(?:picky|particular)\b",
     r"\bopen\s+to\b", r"\bno\s+preference\b", r"\bhaven'?t\s+decided\b",
