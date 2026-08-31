@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TechJam Shopping Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb; --plane: #f9f9f7; --raised: #ffffff;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7;
+    --accent: #2a78d6; --warm: #eb6834; --good: #0ca30c;
+    --border: rgba(11, 11, 11, 0.10);
+    --wash: rgba(42, 120, 214, 0.07);
+    --warm-wash: rgba(235, 104, 52, 0.09);
+    --good-wash: rgba(12, 163, 12, 0.10);
+    --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 6px 20px rgba(0,0,0,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #1a1a19; --plane: #0d0d0d; --raised: #232322;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835;
+      --accent: #3987e5; --warm: #d95926; --good: #0ca30c;
+      --border: rgba(255,255,255,0.11);
+      --wash: rgba(57,135,229,0.14);
+      --warm-wash: rgba(217,89,38,0.16);
+      --good-wash: rgba(12,163,12,0.16);
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #232322;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835;
+    --accent: #3987e5; --warm: #d95926; --good: #0ca30c;
+    --border: rgba(255,255,255,0.11);
+    --wash: rgba(57,135,229,0.14);
+    --warm-wash: rgba(217,89,38,0.16);
+    --good-wash: rgba(12,163,12,0.16);
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--plane); color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 1280px; margin: 0 auto; padding: 32px 24px 48px;
+           display: flex; flex-direction: column; gap: 18px; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-start;
+            gap: 24px; flex-wrap: wrap; }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 11px;
+             letter-spacing: 0.13em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 4px 0 6px; font-size: clamp(22px, 3vw, 30px); font-weight: 600;
+       letter-spacing: -0.02em; }
+  .sub { margin: 0; max-width: 62ch; font-size: 14.5px; color: var(--ink-2); }
+
+  .status-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); display: flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
+  .pill.live { color: var(--good); border-color: var(--good); background: var(--good-wash); }
+  .pill.live .dot { background: var(--good); }
+  .pill.mode { color: var(--accent); border-color: var(--accent); background: var(--wash); }
+  button.reset {
+    font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+    background: var(--raised); color: var(--ink); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 14px; transition: border-color 120ms ease, transform 80ms ease;
+  }
+  button.reset:hover { border-color: var(--accent); }
+  button.reset:active { transform: scale(0.97); }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 980px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    min-width: 0;
+  }
+  .panel-title {
+    font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    padding-bottom: 8px; border-bottom: 1px solid var(--grid);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* ---- chat panel ---- */
+  .chat-panel { height: 640px; }
+  .convo { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+           padding-right: 4px; scroll-behavior: smooth; }
+  .msg { display: flex; flex-direction: column; gap: 5px; max-width: 88%;
+         animation: rise 260ms ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.bot { align-self: flex-start; }
+  .who { font-family: "IBM Plex Mono", monospace; font-size: 10px;
+         letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .bubble { padding: 10px 14px; border-radius: 14px; font-size: 14.5px;
+            border: 1px solid var(--border); background: var(--raised); }
+  .msg.user .bubble { background: var(--accent); color: #fff; border-color: var(--accent);
+                       border-bottom-right-radius: 4px; }
+  .msg.bot .bubble { background: var(--wash); border-color: transparent; border-bottom-left-radius: 4px; }
+  .msg.override .bubble { background: var(--warm-wash); border: 1px solid var(--warm); color: var(--ink); }
+  .override-flag {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.05em; color: var(--warm); display: flex; align-items: center; gap: 5px;
+  }
+  .ask-flag { font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--accent); }
+
+  .typing { display: flex; gap: 4px; align-items: center; padding: 12px 14px; }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
+    animation: bounce 1.1s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.15s; }
+  .typing span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+                       30% { transform: translateY(-4px); opacity: 1; } }
+
+  .suggestions { display: flex; flex-wrap: wrap; gap: 7px; padding: 4px 0 2px; }
+  .suggestion {
+    font: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+    background: var(--raised); color: var(--ink-2); border: 1px dashed var(--border);
+    border-radius: 8px; padding: 7px 11px; transition: border-color 120ms ease, color 120ms ease;
+  }
+  .suggestion:hover { border-color: var(--accent); color: var(--ink); border-style: solid; }
+
+  .composer { display: flex; gap: 8px; border-top: 1px solid var(--grid); padding-top: 12px; }
+  .composer input {
+    flex: 1; font: inherit; font-size: 14.5px; padding: 11px 14px;
+    border-radius: 10px; border: 1px solid var(--border); background: var(--raised); color: var(--ink);
+  }
+  .composer input:focus { outline: none; border-color: var(--accent); }
+  .composer button {
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 0 18px; transition: opacity 120ms ease, transform 80ms ease;
+  }
+  .composer button:disabled { opacity: 0.45; cursor: default; }
+  .composer button:active:not(:disabled) { transform: scale(0.97); }
+
+  /* ---- state / sidebar ---- */
+  .progress-track { height: 6px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 4px;
+                    transition: width 320ms ease; width: 0%; }
+  .progress-label { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", monospace;
+                     font-size: 11px; color: var(--muted); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px;
+    background: var(--raised); color: var(--ink-2); opacity: 0; transform: scale(0.85);
+    animation: pop 340ms cubic-bezier(.2,1.4,.4,1) forwards;
+  }
+  @keyframes pop { to { opacity: 1; transform: scale(1); } }
+  .chip.fresh { border-color: var(--good); color: var(--good); background: var(--good-wash); font-weight: 600; }
+  .chip.empty { color: var(--muted); border-style: dashed; opacity: 1; animation: none; transform: none; }
+
+  .badge {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+    border-radius: 5px; padding: 2px 8px; border: 1px solid currentColor;
+  }
+  .badge.buying { color: var(--accent); }
+  .badge.browsing { color: var(--warm); }
+
+  .routing-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+  .routing-key { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+                 min-width: 78px; flex: none; }
+  .weights { display: flex; gap: 10px; font-family: "IBM Plex Mono", monospace; font-size: 12px;
+             color: var(--ink-2); flex-wrap: wrap; }
+
+  .override-banner {
+    background: var(--warm-wash); border: 1px solid var(--warm); border-radius: 8px;
+    padding: 8px 12px; font-size: 12.5px; color: var(--ink);
+    display: flex; align-items: center; gap: 6px; animation: rise 260ms ease both;
+  }
+
+  /* ---- product grid ---- */
+  .rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .rec-card {
+    background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+    box-shadow: var(--shadow); transition: transform 140ms ease, border-color 140ms ease;
+    opacity: 0; animation: cardIn 320ms ease forwards;
+  }
+  .rec-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .rec-tag { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; letter-spacing: 0.06em;
+             text-transform: uppercase; color: var(--muted); }
+  .rec-title { font-size: 12.5px; line-height: 1.35; min-height: 2.7em;
+               display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .rec-meta { display: flex; justify-content: space-between; align-items: baseline;
+              font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2); }
+  .rec-price { font-weight: 600; color: var(--ink); }
+  .rec-rating { color: var(--muted); }
+
+  .empty-hint { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+  footer { font-size: 12px; color: var(--muted); text-align: center; padding-top: 8px; }
+  footer code { font-family: "IBM Plex Mono", monospace; background: var(--surface);
+                border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--axis); border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div>
+      <div class="eyebrow">TechJam Conversational Search &middot; live demo</div>
+      <h1>Chat with the shopping agent</h1>
+      <p class="sub">Say what you're after. The agent narrows a 50,000-product catalog and asks
+        one question per turn &mdash; watch its state update on the right as it goes.</p>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
+      <div class="status-bar" id="statusBar"></div>
+      <button class="reset" id="resetBtn" type="button">&#8635; New session</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="panel chat-panel">
+      <div class="panel-title">Conversation</div>
+      <div class="convo" id="convo"></div>
+      <div class="suggestions" id="suggestions"></div>
+      <div class="composer">
+        <input id="input" type="text" placeholder="e.g. I need a leather belt for work" autocomplete="off">
+        <button id="send" type="button">Send</button>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+      <div class="panel">
+        <div class="panel-title">Agent state</div>
+        <div class="progress-label"><span>Turn</span><span id="turnLabel">0 / 10</span></div>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+
+        <div class="routing-row"><span class="routing-key">intent</span>
+          <span class="badge" id="intentBadge" style="color:var(--muted); border-color:var(--border);">&mdash;</span></div>
+        <div class="routing-row"><span class="routing-key">fusion</span>
+          <span class="weights" id="weights">&mdash;</span></div>
+        <div id="overrideSlot"></div>
+
+        <div class="routing-row" style="align-items:flex-start">
+          <span class="routing-key">disclosed</span>
+          <span class="chips" id="chips"><span class="chip empty">nothing yet</span></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Latest recommendations <span id="recCount" style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);"></span></div>
+        <div class="rec-grid" id="recs"></div>
+        <div class="empty-hint" id="recsEmpty">Send a message to see the slate.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Byte-identical agent to the scored submission &mdash; this page only adds a face.
+    <code>starter/agent.py</code> is untouched. Session state resets on reload of the server process.
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let sessionId = null;
+let busy = false;
+
+const SUGGESTIONS = [
+  "I need a leather belt for work",
+  "waterproof hiking boots under $80",
+  "actually forget that, show me jewellery",
+  "I don't have a preference",
+];
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function boot() {
+  renderSuggestions();
+  const status = await fetch("/api/status").then(r => r.json());
+  renderStatus(status);
+  if (!status.ready) {
+    $("convo").innerHTML = `<div class="empty-hint">${esc(status.error)}</div>`;
+    $("input").disabled = true; $("send").disabled = true;
+    return;
+  }
+  await startSession();
+}
+
+function renderStatus(status) {
+  const bar = $("statusBar");
+  if (!status.ready) { bar.innerHTML = `<span class="pill">catalog unavailable</span>`; return; }
+  bar.innerHTML = `<span class="pill mode">${status.lite ? "lite" : "full"} agent</span>` +
+    Object.entries(status.components).map(([label, live]) =>
+      `<span class="pill ${live ? "live" : ""}"><span class="dot"></span>${esc(label)}</span>`).join("");
+}
+
+function renderSuggestions() {
+  $("suggestions").innerHTML = SUGGESTIONS.map(s =>
+    `<button class="suggestion" type="button">${esc(s)}</button>`).join("");
+  [...document.querySelectorAll(".suggestion")].forEach((btn, i) => {
+    btn.addEventListener("click", () => { $("input").value = SUGGESTIONS[i]; send(); });
+  });
+}
+
+async function startSession() {
+  const data = await fetch("/api/session", { method: "POST" }).then(r => r.json());
+  sessionId = data.session_id;
+  $("convo").innerHTML = "";
+  $("recs").innerHTML = "";
+  $("recsEmpty").style.display = "block";
+  $("recCount").textContent = "";
+  $("chips").innerHTML = `<span class="chip empty">nothing yet</span>`;
+  $("overrideSlot").innerHTML = "";
+  $("intentBadge").className = "badge";
+  $("intentBadge").style = "color:var(--muted); border-color:var(--border);";
+  $("intentBadge").textContent = "—";
+  $("weights").textContent = "—";
+  setTurn(0, 10);
+  $("input").disabled = false; $("send").disabled = false;
+  $("input").focus();
+}
+
+function setTurn(turn, max) {
+  $("turnLabel").textContent = `${turn} / ${max}`;
+  $("progressFill").style.width = `${Math.min(100, (turn / max) * 100)}%`;
+}
+
+function addMessage(role, text, extra) {
+  const box = $("convo");
+  const div = document.createElement("div");
+  div.className = `msg ${role}` + (extra && extra.override ? " override" : "");
+  const who = role === "user" ? "You" : "Agent" + (extra && extra.ask ? ` · asks ${esc(extra.ask)}` : "");
+  div.innerHTML = `<span class="who">${who}</span><div class="bubble">${esc(text)}</div>` +
+    (extra && extra.override ? `<span class="override-flag">&#9888; pivot detected &mdash; prior constraints cleared</span>` : "");
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+function showTyping() {
+  const box = $("convo");
+  const div = document.createElement("div");
+  div.className = "msg bot"; div.id = "typingRow";
+  div.innerHTML = `<span class="who">Agent</span><div class="bubble typing"><span></span><span></span><span></span></div>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function hideTyping() { $("typingRow")?.remove(); }
+
+function renderChips(disclosed, fresh) {
+  const keys = Object.keys(disclosed);
+  $("chips").innerHTML = keys.length
+    ? keys.map(k => `<span class="chip ${fresh.includes(k) ? "fresh" : ""}">${esc(k)}: ${esc(disclosed[k])}</span>`).join("")
+    : `<span class="chip empty">nothing yet</span>`;
+}
+
+function renderRecs(recs) {
+  $("recsEmpty").style.display = recs.length ? "none" : "block";
+  $("recCount").textContent = recs.length ? `${recs.length} shown` : "";
+  $("recs").innerHTML = recs.map((r, i) => `
+    <div class="rec-card" style="animation-delay:${i * 35}ms">
+      <span class="rec-tag">${esc(r.category)}</span>
+      <span class="rec-title">${esc(r.title)}</span>
+      <div class="rec-meta">
+        <span class="rec-price">${r.price != null ? "$" + r.price.toFixed(2) : "—"}</span>
+        <span class="rec-rating">${r.rating != null ? "★ " + r.rating : ""}</span>
+      </div>
+    </div>`).join("");
+}
+
+async function send() {
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text || busy || !sessionId) return;
+  busy = true;
+  $("send").disabled = true;
+  input.value = "";
+  addMessage("user", text);
+  showTyping();
+
+  try {
+    const res = await fetch("/api/message", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, message: text }),
+    });
+    hideTyping();
+    if (!res.ok) {
+      addMessage("bot", "Something went wrong on that turn. Try a new session.");
+      return;
+    }
+    const data = await res.json();
+    addMessage("bot", data.message, { ask: data.ask_attribute, override: data.override });
+    setTurn(data.turn, data.max_turns);
+    $("intentBadge").className = `badge ${data.intent}`;
+    $("intentBadge").removeAttribute("style");
+    $("intentBadge").textContent = data.intent;
+    $("weights").textContent =
+      `bm25 ${data.routing.bm25.toFixed(2)} · dense ${data.routing.dense.toFixed(2)} · phrase ${data.routing.phrase.toFixed(2)}` +
+      (data.routing.diversify ? " · diversity on" : "");
+    $("overrideSlot").innerHTML = data.override
+      ? `<div class="override-banner">&#9888; Intent override fired this turn &mdash; prior constraints cleared</div>` : "";
+    renderChips(data.disclosed, data.new_attributes);
+    renderRecs(data.recommendations);
+  } catch (err) {
+    hideTyping();
+    addMessage("bot", "Lost the connection to the server. Try again.");
+  } finally {
+    busy = false;
+    $("send").disabled = false;
+    input.focus();
+  }
+}
+
+$("send").addEventListener("click", send);
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+$("resetBtn").addEventListener("click", startSession);
+
+boot();
+</script>
+</body>
+</html>

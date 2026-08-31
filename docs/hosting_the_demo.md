@@ -1,5 +1,32 @@
 # Hosting the demo so other people can try it
 
+Two front ends exist for the identical `starter.agent.Agent`:
+
+- `demo/streamlit_app.py` — the original, quickest to deploy on Streamlit
+  Community Cloud.
+- `demo/web_app.py` — a FastAPI backend plus a hand-built chat UI at
+  `demo/web/index.html` (chat bubbles, animated attribute chips, a live
+  product grid, an override banner). Same agent underneath, nicer to look at
+  and to share for a People's Choice vote. Run it with:
+
+  ```bash
+  uv run --with fastapi --with "uvicorn[standard]" uvicorn demo.web_app:app --port 8000
+  ```
+
+  Then open <http://localhost:8000>. It reads the catalog the same way the
+  Streamlit app does (`TECHJAM_CATALOG`, `data/catalog.jsonl`, or
+  `TECHJAM_CATALOG_URL`), and reports which components (BM25, dense, phrase,
+  classifiers) are actually live rather than hiding a degrade. Deploy it
+  anywhere that runs a Python ASGI app (Render, Fly.io, a VM behind a
+  tunnel) — it needs `demo/requirements-web.txt` plus the root
+  `requirements.txt` for the full agent.
+
+The hosting options below were written for the Streamlit app; the FastAPI one
+follows the same catalog and memory constraints, just with `uvicorn` instead
+of `streamlit run`.
+
+---
+
 Three options, cheapest first. Pick based on whether you want the **full**
 agent or the **lite** one.
 

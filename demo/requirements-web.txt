@@ -1,0 +1,10 @@
+# Dependencies for the live FastAPI demo (demo/web_app.py) ONLY.
+#
+# This does not include torch/sentence-transformers: like the Streamlit demo,
+# the live page runs "lite" (keyword + phrase retrieval) unless the root
+# requirements.txt and model weights are also installed. See
+# docs/hosting_the_demo.md.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+numpy>=2.0
