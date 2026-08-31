@@ -136,16 +136,17 @@ def test_classify_intent_negation_adjacent_to_buy_verb_falls_through():
     assert result.label == "browsing"
 
 
-@pytest.mark.xfail(
-    reason="BUYING_PHRASES's own comment claims this reads browsing "
-           "('Negation is handled by _is_negated, so \"not looking to buy "
-           "yet\" still reads browsing'), but NEGATION_WINDOW_CHARS=10 is "
-           "too short to bridge 'not ... to buy' once words sit between "
-           "them -- classify_intent currently returns 'buying' here.",
-    strict=True,
-)
-def test_classify_intent_negated_buy_verb_falls_through_per_module_docstring():
+def test_classify_intent_negated_buy_verb_with_words_between_falls_through():
+    # Matches BUYING_PHRASES's own worked example. Was failing at
+    # NEGATION_WINDOW_CHARS=10 (too short to bridge "not ... to buy" once
+    # words sit between the negation and the verb) until config.py raised
+    # it to 20, measured score-neutral via scripts/sweep_negation_window.py.
     result = classify_intent("I'm not looking to buy yet")
+    assert result.label == "browsing"
+
+
+def test_classify_intent_negated_want_to_buy_falls_through():
+    result = classify_intent("i don't want to buy this")
     assert result.label == "browsing"
 
 

@@ -249,7 +249,17 @@ CATEGORY_TERM_MIN_DF = 20
 # ==========================================================================
 
 # determines if attribute is negated. eg 'not blue'
-NEGATION_WINDOW_CHARS = 10
+#
+# 10 was too short to bridge "not ... to buy" once words sit between the
+# negation and the verb -- "I'm not looking to buy yet" needs 15, "i don't
+# want to buy this" needs 14. classify_intent read both as buying despite
+# BUYING_PHRASES's own comment claiming the opposite (see
+# tests/test_classifier.py::test_classify_intent_negated_buy_verb_falls_through).
+# 20 fixes both phrasings and measured bit-identical TechnicalScore (0.7827
+# both arms) on a 40-sample subset via scripts/sweep_negation_window.py, so
+# it's neutral for every other negation check this window also gates
+# (extract_disclosed_value, _vocab_hits_positive) while fixing this one.
+NEGATION_WINDOW_CHARS = 20
 
 # For the classifer. pick the centroid of the closest
 # TOP_PROTOTYPES examples
