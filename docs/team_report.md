@@ -14,39 +14,43 @@ says so.
 ## 1. Headline result
 
 ```
-HitRate@10  0.945    MRR  0.5534    MTTC  3.250   Efficiency  0.7750
-TechnicalScore  0.7935
+HitRate@10  0.965    MRR  0.5995    MTTC  2.980   Efficiency  0.8020
+TechnicalScore  0.8228
 ```
 
-Measured on the full 200-sample public set at the submitted configuration
-(commit `1fb1913`, 2026-08-30), with `preflight.py --strict` confirming
-beforehand that dense retrieval, both embedding classifiers, and the
-cross-encoder reranker all come up live with the network disabled — so this is
-the whole pipeline, not a silently degraded one.
+Measured on the full 200-sample public set at the current configuration
+(2026-09-01), with `preflight.py --strict` confirming beforehand that dense
+retrieval, both embedding classifiers, and the cross-encoder reranker all
+come up live with the network disabled — so this is the whole pipeline, not a
+silently degraded one.
 
 Against the shipped weak-BM25 starter (`docs/baseline_results.json`:
-HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **7.6x improvement in hit
-rate** and turns-to-conversion cut to a third.
+HitRate 0.125 / MRR 0.068 / MTTC 9.81), that is a **7.7x improvement in hit
+rate** and turns-to-conversion cut to less than a third.
 
 By scenario:
 
 | scenario | n | HitRate@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| browsing | 80 | 1.0000 | 0.6230 | 2.88 |
-| intent_override | 30 | 0.9333 | 0.7136 | 4.63 |
-| buying | 80 | 0.9125 | 0.4534 | 2.94 |
-| boundary | 10 | 0.8000 | 0.3169 | 4.60 |
+| browsing | 80 | 1.0000 | 0.6370 | 2.5625 |
+| intent_override | 30 | 0.9667 | 0.7104 | 4.30 |
+| buying | 80 | 0.9500 | 0.5488 | 2.6625 |
+| boundary | 10 | 0.8000 | 0.3732 | 4.90 |
 
-Re-measured at the current configuration, not carried forward from the
-previous one. The ordering is stable and matches the miss census: `boundary`
-is hardest and `browsing` easiest, and the two scenarios where the customer
-states a hard constraint up front — `buying` and `intent_override` — sit in
-between. `boundary` is n=10, so a single session moves it 0.1; read it as
-directional only. The three commits behind this number (gated attribute
-asking, a boundary/popularity leg, and query stripping plus a newly-enabled
-cross-encoder reranker) were bundled and measured only as a whole — the
-individual contribution of each has not been isolated. See `dist/techjam_track4.pptx`
-("What we would do with more time") for the open work this leaves.
+The ordering is stable and matches the miss census: `boundary` is hardest and
+`browsing` easiest, and the two scenarios where the customer states a hard
+constraint up front — `buying` and `intent_override` — sit in between.
+`boundary` is n=10, so a single session moves it 0.1; read it as directional
+only. This headline supersedes the previous one recorded here
+(`TechnicalScore 0.7935`), which predates the cross-encoder reranker going
+live (`RERANK_WEIGHT` 0.0 → 3, see §2); that delta was not isolated at the
+time and is not reconstructed here. What *is* isolated: on top of that,
+redesigning the non-answer detector from a two-class nearest-prototype
+contest to a one-class threshold (§6) measured +0.0006 TechnicalScore
+(0.8222 → 0.8228) with the miss set unchanged (7/200, identical sample IDs)
+— a wash on this benchmark, kept for the generalization argument in §6, not
+for the number. See `dist/techjam_track4.pptx` ("What we would do with more
+time") for the open work this leaves.
 
 Reproduce with `uv run python3 -m evaluator.local_evaluator` (the evaluator is
 used strictly read-only; it has never been modified).
@@ -91,6 +95,16 @@ agrees, −1 where it is known and disagrees, 0 where unextractable. This
 non-eliminating design is deliberate and was measured — an earlier hard filter
 eliminated the true target 16.3% of the time on material and 37.0% on color.
 
+**Non-answer detection.** Contentless clarifying replies ("no preference",
+"up to you") are stripped from the retrieval query before it's built
+(`Agent._is_non_answer` / `EmbeddingNonAnswerDetector`), or they would dilute
+it with boilerplate the customer explicitly declined to state. Detection is a
+one-class threshold: similarity to a small, closed set of decline-phrasing
+prototypes must clear `NON_ANSWER_THRESHOLD = 0.68`, calibrated in
+`scripts/sweep_nonanswer_threshold.py` against ~2,000 diverse catalog-derived
+answer strings plus held-out decline paraphrases. See §6 for why this
+replaced an earlier two-class design.
+
 **Proactive question selection.** Each turn the agent picks the attribute with
 the highest value-diversity in the *current* candidate pool, recomputed fresh
 so it stops asking once the pool converges. When nothing structural clears the
@@ -112,17 +126,16 @@ same pool. The dependency to state plainly: it assumes the hidden grader also
 stops on first hit, which the rules state and `evaluate()` implements, but it
 is a stronger reliance on scorer semantics than anything else we ship.
 
-**Cross-encoder re-ranking: built, not enabled.** A `ms-marco-MiniLM-L-6-v2`
-stage is implemented (`starter/reranker.py`) behind `RERANK_WEIGHT`, which
-ships at **0.0** — the identity, which skips the model entirely. Its sweep
-(`scripts/sweep_rerank.py`, four points at ~15 minutes each) did not fit the
-remaining evaluation budget, and this project's rule is that an unmeasured
-switch ships at identity. So the scored pipeline contains **no** learned
-re-ranker; see §7.4. The design intent is recorded because the depth choice is
-the non-obvious part: at a scored depth equal to `top_k` the re-ranker can only
-permute the ten items already destined for the slate, so it cannot convert a
-miss into a hit under any ordering. `RERANK_TOP_N = 20` is what would open the
-recall channel, if it were switched on.
+**Cross-encoder re-ranking.** A `ms-marco-MiniLM-L-6-v2` stage
+(`starter/reranker.py`) ships live at `RERANK_WEIGHT = 3`, fused back into the
+retrieval ordering by reciprocal rank fusion rather than replacing it
+outright (`Agent._rerank`). It runs after the disclosed-attribute boost and
+before diversity — reranking is a relevance judgement, diversity is
+presentation on top of it. The depth choice is the non-obvious part: it scores
+`RERANK_TOP_N = 20`, deeper than `top_k`, deliberately — at a scored depth
+equal to `top_k` the re-ranker could only permute the ten items already
+destined for the slate, so it could never convert a miss into a hit under any
+ordering; scoring 20 opens that recall channel.
 
 **Intent-override handling.** The agent API exposes no signal for a
 mid-session pivot, so it is detected from text: a trimmed nearest-prototype
@@ -163,14 +176,9 @@ variant, and **rejected** — see §6.
 ## 4. Disclosure: latency, tokens, cost
 
 Measured with `scripts/measure_latency.py --limit 20` on an AMD Ryzen 5 PRO
-4650U (12 threads, CPU-only, no GPU), Python 3.12.3, torch 2.13.0+cpu.
-
-**Stale as of `1fb1913`: the numbers below predate the cross-encoder reranker
-being turned on (`RERANK_WEIGHT` 0.0 → 3).** A `respond()` call now runs an
-extra scoring pass over `RERANK_TOP_N = 20` candidates through the minilm
-cross-encoder, which this table does not account for. Re-run
-`scripts/measure_latency.py --limit 20` before citing this table in a final
-submission — do not run it alongside another full eval on this box.
+4650U (12 threads, CPU-only, no GPU), Python 3.12.3, torch 2.13.0+cpu,
+2026-09-01 — current configuration, cross-encoder reranker and masked LM
+both live (the shipped default).
 
 **Token usage: zero.** `prompt_tokens = completion_tokens = 0`, reported
 honestly by the agent because no hosted model is called on any turn.
@@ -180,25 +188,27 @@ The one-time dense index build is local compute only.
 
 **Latency**
 
-| phase | with masked LM | without masked LM |
-|---|---:|---:|
-| cold start (`Agent()`) | 16.3 s | 17.1 s |
-| `reset()` per session | 0.6 ms | 0.4 ms |
-| `respond()` mean | 408 ms | 361 ms |
-| `respond()` p50 | 335 ms | 309 ms |
-| `respond()` p95 | 716 ms | 623 ms |
-| `respond()` max | 1389 ms | 1392 ms |
-| per session (5.8 turns mean) | 2.36 s | 2.09 s |
+| phase | value |
+|---|---:|
+| cold start (`Agent()`) | ~16-17 s |
+| `reset()` per session | 0.5 ms |
+| `respond()` mean | 1006.9 ms |
+| `respond()` p50 | 987.3 ms |
+| `respond()` p95 | 1312.2 ms |
+| `respond()` max | 1676.9 ms |
+| per session (3.35 turns mean, this 20-sample slice) | 3.37 s |
 
-Cold start is one-time per process, not per session. The masked LM costs
-~47 ms per turn.
+Cold start is one-time per process, not per session. The reranker's extra
+scoring pass over `RERANK_TOP_N = 20` candidates accounts for most of the
+increase over the pre-reranker figures this table previously reported
+(~360-410 ms mean).
 
 **Memory**
 
-| | with masked LM | without |
-|---|---:|---:|
-| peak RSS after init | 794 MB | 794 MB |
-| peak RSS overall | 1286 MB | 934 MB |
+| | value |
+|---|---:|
+| peak RSS after init | 768.7 MB |
+| peak RSS overall | 1459.3 MB |
 
 Runs comfortably in 2 GB. The catalog and dense index are held in memory as
 required by the "must run entirely in-memory" constraint; no external vector
@@ -323,6 +333,70 @@ highest-scoring one we measured locally.** We took the part of the dense-leg
 finding that is robust to the confound (the weight was too high) and declined
 the part that is not (removing the leg entirely).
 
+### From a two-class contest to a one-class threshold: `EmbeddingNonAnswerDetector`
+
+The non-answer detector originally classified a reply by nearest class: closer
+to a hand-written `PROTOTYPE_NON_ANSWER` set (declines: "no preference", "up
+to you") than to a `PROTOTYPE_INFORMATIVE` contrast set. That contrast set had
+already needed a reactive patch once — terse catalog fragments ("Imported.",
+"Pull On closure.") were reading as declines until ~12 catalog-specific terms
+were added to it — and the underlying problem doesn't go away with more
+patching: "informative" covers any attribute value a customer might state,
+which is not an enumerable class, so every new phrasing the catalog produces
+is a fresh chance to need another patch. Code that hard-codes a growing list
+of dataset vocabulary also reads, correctly, as overfit to the public set to
+anyone auditing it.
+
+The redesign drops the "informative" class from the decision entirely.
+`PROTOTYPE_NON_ANSWER` alone — a small, closed, genuinely generic set of
+decline phrasing — anchors a one-class threshold
+(`NON_ANSWER_THRESHOLD = 0.68`); everything else defaults to "answer".
+Calibrated in `scripts/sweep_nonanswer_threshold.py` against three
+independent, non-circular sources: ~2,000 diverse "answer" strings harvested
+from a broad random sample of the catalog (not the 200 graded targets, to
+avoid touching the graded set and to proxy the hidden 800 fairly) via the same
+`intent_card()`/`classify_constraint()` logic the evaluator itself uses; a
+dozen held-out decline paraphrases never seen by the prototype set, to check
+generalization rather than memorization; and the exact terse-fragment strings
+from the earlier catalog-jargon bug, as a permanent regression check.
+
+| threshold | precision (2k catalog answers) | template recall | OOD decline recall | regression probes |
+|---:|---:|---:|---:|---:|
+| 0.60 | 0.745 | 1.000 | 1.000 | 0/5 |
+| 0.64 | 0.970 | 1.000 | 1.000 | 5/5 |
+| **0.68 (shipped)** | **0.9995** | **1.000** | **1.000** | **5/5** |
+| 0.70 | 1.000 | 0.867 | 0.583 | 5/5 |
+
+0.68 is the lowest threshold that clears every must-catch case (1 false
+positive out of 1,964 diverse answer strings). One gap surfaced only by
+running the full 200-sample set, not by this synthetic calibration: the
+simulator's own filler line for "no attribute left to ask" ("Those options are
+not quite right yet. Ask me about one specific attribute.") is contentless but
+isn't a *decline* — it's a vagueness complaint, a different register — so it
+sat below the threshold and got read as an answer, quietly polluting the
+query for the rest of two sessions (`public_0031`, `public_0083`, both flipped
+hit→miss). The old two-class design had accidentally covered this case without
+meaning to, simply by both classes scoring it low and non-answer edging it.
+Fixed by adding four generic paraphrases of that register to
+`PROTOTYPE_NON_ANSWER` (not the literal template) and re-calibrating, which is
+what raised the shipped threshold from an initial 0.66 to 0.68.
+
+Full 200-sample set, old two-class design vs. shipped one-class threshold,
+both otherwise identical (measured via an isolated `git worktree` at the
+pre-change commit, so this is a true controlled A/B on the same catalog,
+index, and profile-store isolation as every other number in this document):
+
+| | HitRate | MRR | MTTC | TechnicalScore |
+|---|---:|---:|---:|---:|
+| two-class (previous) | 0.9650 | 0.5980 | 2.985 | 0.8222 |
+| one-class threshold (shipped) | 0.9650 | 0.5995 | 2.980 | 0.8228 |
+
+Identical miss set (7/200, same sample IDs), +0.0006 TechnicalScore — a wash
+on this benchmark. Kept anyway: the generalization argument doesn't show up in
+a same-distribution A/B by construction, since both designs were tuned against
+the same public set. What it buys is not measurable here — fewer catalog-vocab
+assumptions baked into the classifier for the hidden 800 sessions to violate.
+
 ---
 
 ## 7. Limitations
@@ -343,13 +417,11 @@ the part that is not (removing the leg entirely).
    public set**: the evaluator's `classify_constraint()` never buckets any
    sampled constraint as `budget`, so the correct regression check was that
    the fix leaves the score bit-identical, not that it raises it.
-4. **No cross-encoder or LLM reranking stage is enabled.** Spec § 4.2.I names
-   "LLM Semantic Ranking" as a pillar; the scored pipeline is hybrid retrieval
-   + attribute boost + MMR + shown-item exclusion, with no learned reranker.
-   A MiniLM cross-encoder stage is implemented and wired, but ships at
-   `RERANK_WEIGHT = 0.0` because its sweep did not fit the evaluation budget
-   and we do not enable unmeasured switches. Reported as a gap, not as a
-   feature.
+4. **No LLM reranking stage is used.** Spec § 4.2.I names "LLM Semantic
+   Ranking" as a pillar; the scored pipeline's learned reranker is a MiniLM
+   cross-encoder (`RERANK_WEIGHT = 3`, live), not an LLM. `Qwen3-Reranker-0.6B`
+   was evaluated and rejected for the scored pipeline on measurement
+   throughput grounds (§3), not quality.
 5. **Long-term personalization ships inert.** The user-profile store is built
    and correct, but nothing reads its output: three ways of using it each
    regressed the full set, and a signal check showed same-key sessions' targets
@@ -360,7 +432,7 @@ the part that is not (removing the leg entirely).
    bucket; and `budget` is demoted because the local evaluator never buckets
    anything as budget. Both were kept as options rather than hardcoded, but
    both could behave differently on the hidden set.
-7. **Boundary scenarios are weakest** (HitRate 0.500, MRR 0.138) — though on
+7. **Boundary scenarios are weakest** (HitRate 0.800, MRR 0.373) — though on
    only 10 samples, so the estimate is coarse.
 
 ---
@@ -480,6 +552,7 @@ a background download.
 | `scripts/fetch_assets.py` | one-command asset setup |
 | `scripts/eval_override.py` | override-detector rule sweeps |
 | `scripts/eval_intent.py` | intent-classifier rule sweeps |
+| `scripts/sweep_nonanswer_threshold.py` | non-answer detector threshold calibration (§6) |
 | `scripts/eval_profile_signal.py` | whether `user_profile` carries signal |
 | `scripts/eval_lm_confidence.py` | masked-LM entropy-gate calibration |
 | `scripts/train_intent_head.py` | trained-head diagnostic (rejected; `--save` opt-in) |

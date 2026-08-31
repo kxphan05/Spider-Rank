@@ -21,8 +21,8 @@ time; **never re-shows a ruled-out product** (our single largest gain,
 off pool-splitting entropy against a per-shopper, Bayes-updated
 answerability belief.
 
-Measured on the released 200-sample public set: **HitRate@10 0.945, MRR
-0.553, mean turns-to-hit 3.25, TechnicalScore 0.7935** — a 7.6x hit-rate
+Measured on the released 200-sample public set: **HitRate@10 0.965, MRR
+0.600, mean turns-to-hit 2.98, TechnicalScore 0.8228** — a 7.7x hit-rate
 improvement over the organizer's baseline. Every number is measured against
 the organizer's unmodified evaluator. The whole
 pipeline runs **CPU-only and fully offline at inference**, with zero LLM API

@@ -347,3 +347,81 @@ anything external.
    Imported" still isn't enough to outrank hundreds of similar products.
    That is a genuine information ceiling, not a further instance of this
    bug — do not re-chase it by further editing `PROTOTYPE_INFORMATIVE`.
+
+---
+
+9. ~~**`PROTOTYPE_INFORMATIVE`'s catalog-jargon list reads as overfit to the
+   public set.**~~ **Fixed: two-class contest replaced with a one-class
+   threshold.** Entry 8's fix added ~12 catalog-specific terms
+   (`"Imported."`, `"Pull On closure."`, ...) to `PROTOTYPE_INFORMATIVE` to
+   patch one failure mode. The structural problem behind that patch doesn't
+   go away: `EmbeddingNonAnswerDetector` classified by nearest class
+   (non-answer if closer to `PROTOTYPE_NON_ANSWER` than to
+   `PROTOTYPE_INFORMATIVE`), and "informative" is not an enumerable class —
+   it's any attribute value a customer might ever state — so the list would
+   need another patch the next time the catalog produces unfamiliar
+   vocabulary, and a reviewer reading the list has no way to tell "generic
+   term" from "term mined from this specific eval set."
+
+   Redesigned as a one-class threshold: drop `PROTOTYPE_INFORMATIVE` from the
+   decision entirely, classify non-answer only when similarity to
+   `PROTOTYPE_NON_ANSWER` alone (a small, closed set of decline phrasing)
+   clears `NON_ANSWER_THRESHOLD`, default everything else to answer.
+   Calibrated in `scripts/sweep_nonanswer_threshold.py` (kept, read-only)
+   against three non-circular sources: ~2,000 diverse "answer" strings
+   harvested from a broad random sample of the *catalog itself* (not the 200
+   graded targets — the point is to proxy the hidden 800 without touching the
+   graded set) via the same `intent_card()`/`classify_constraint()` logic the
+   evaluator uses to build customer replies; a dozen hand-written held-out
+   decline paraphrases never seen by `PROTOTYPE_NON_ANSWER`, to check
+   generalization past the training set (same role as `train_intent_head.py`'s
+   `PROBE_BUYING`/`PROBE_BROWSING`); and the exact terse-fragment strings from
+   entry 8, reconstructed in the real `customer_reply()` template shape, as a
+   permanent regression check.
+
+   First pass at 4,000 sampled products (seed 7) harvested only 14 unique
+   *non-answer* strings — the "I don't have an additional preference for
+   {attribute}" template is attribute-keyed, not product-keyed, so it's
+   byte-identical across every product asked about the same attribute, and
+   naive dedup collapsed it. Not enough to calibrate against, so scored
+   separately as a must-catch check rather than folded into the precision
+   sweep.
+
+   Threshold 0.66 (initial pick) cleared every must-catch case on the
+   synthetic sweep, but running the full 200-sample set caught a gap the
+   synthetic set didn't: the simulator's own filler line for "no attribute
+   left to ask" (`"Those options are not quite right yet. Ask me about one
+   specific attribute."`) is contentless but isn't a *decline* — it's a
+   vagueness complaint, a different register than "no preference" — so it
+   read as an answer and polluted the query for the rest of the session in
+   two sessions (`public_0031`, `public_0083`, both turn-8, both flipped
+   hit→miss). Confirmed by tracing both sessions turn-by-turn under the old
+   two-class code (via an isolated `git worktree` at the pre-change commit)
+   and the new code side by side: the old design read that exact line as
+   non-answer too, but only by accident — neither class scored it highly,
+   and non-answer edged it. Fixed by adding four generic paraphrases of that
+   register to `PROTOTYPE_NON_ANSWER` (not the literal template string) and
+   re-sweeping, which raised the shipped threshold to 0.68:
+
+       threshold  precision(2k catalog answers)  template_recall  OOD_recall  regression(5 probes)
+       0.60              0.745                        1.000          1.000        0/5
+       0.64              0.970                        1.000          1.000        5/5
+       0.68 (shipped)    0.9995                        1.000          1.000        5/5
+       0.70              1.000                         0.867          0.583       5/5
+
+   Full 200-sample set, true controlled A/B (isolated `git worktree` at the
+   pre-change commit against the current working tree, same catalog/index/
+   profile-store isolation):
+
+       design                          HitRate   MRR      MTTC    TechnicalScore
+       two-class (previous)            0.9650    0.5980   2.985   0.8222
+       one-class threshold (shipped)   0.9650    0.5995   2.980   0.8228
+
+   Identical 7/200 miss set, same sample IDs, both before and after —
+   +0.0006 TechnicalScore, a wash on this benchmark by construction (both
+   designs were tuned against the same public set, so a same-distribution
+   A/B can't see a generalization difference). Kept anyway: the number this
+   buys isn't measurable from the public set — it's one fewer catalog-vocab
+   assumption for the hidden 800 sessions to violate, and a design that
+   doesn't need a new patch every time unfamiliar catalog phrasing shows up.
+   `PROTOTYPE_INFORMATIVE` is now fully removed from `starter/classifier.py`.
