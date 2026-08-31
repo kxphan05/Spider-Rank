@@ -1,7 +1,7 @@
 [project]
-name = "techjam-agent"
+name = "spiderrank"
 version = "0.1.0"
-description = "TechJam conversational shopping agent"
+description = "SpiderRank: a conversational shopping agent, built for the TechJam Track 4 challenge"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.5.2",

@@ -1,4 +1,4 @@
-"""Streamlit demo UI for the TechJam Track 4 shopping agent.
+"""Streamlit demo UI for SpiderRank, the TechJam Track 4 shopping agent.
 
 Not part of the scored submission. `TODO.md` § 4.3 puts UI out of scope, and
 nothing here touches `starter/`, so the agent this renders is byte-identical to
@@ -67,7 +67,7 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / "techjam_demo_profiles.json"),
 )
 
-st.set_page_config(page_title="TechJam Shopping Agent", page_icon="🛍️", layout="wide")
+st.set_page_config(page_title="SpiderRank", page_icon="🕷️", layout="wide")
 
 
 def resolve_catalog() -> Path | None:
@@ -127,7 +127,7 @@ def download_catalog(url: str) -> Path | None:
 CATALOG = resolve_catalog()
 
 if CATALOG is None:
-    st.title("🛍️ TechJam shopping agent")
+    st.title("🕷️ SpiderRank")
     st.error("**The product catalog is missing, so the agent cannot start.**")
     st.markdown(
         """
@@ -203,7 +203,7 @@ catalog = load_catalog()
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.title("🛍️ Agent state")
+    st.title("🕷️ Agent state")
     st.caption("Everything here is read from the live agent, not replayed.")
 
     # Which components actually came up. This is shown rather than hidden on
@@ -270,7 +270,7 @@ with st.sidebar:
         st.rerun()
 
 # ------------------------------------------------------------------- main
-st.title("Conversational product search")
+st.title("🕷️ SpiderRank")
 st.caption("Say what you're after. The agent narrows a 50,000-product catalog "
            "and asks one question per turn.")
 

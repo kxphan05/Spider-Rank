@@ -1,5 +1,6 @@
-# Team Report — TechJam Conversational Search
+# Team Report — SpiderRank
 
+Submitted to the TechJam Conversational E-Commerce Search Challenge, Track 4.
 Submission report required by `docs/submission_rules.md` § What Teams Must
 Submit: method, model choice, limitations, and a disclosure of latency, token
 usage, and estimated model cost.

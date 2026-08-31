@@ -2,6 +2,8 @@
 
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
 
+Our submission is **SpiderRank** — named for its five independent retrieval legs (BM25, phrase, dense, popularity, and pseudo-relevance feedback) fusing votes into one ranking, the way a spider's legs work independently but move it as one.
+
 See [`TEAM_REPORT.md`](TEAM_REPORT.md) for method, model choice, the
 latency/token/cost disclosure, and limitations (full version with ablations
 in `docs/team_report.md`).

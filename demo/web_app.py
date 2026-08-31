@@ -1,4 +1,4 @@
-"""FastAPI + hand-built HTML/CSS/JS live demo UI for the shopping agent.
+"""FastAPI + hand-built HTML/CSS/JS live demo UI for SpiderRank.
 
 Not part of the scored submission -- same rule as `streamlit_app.py`. This is
 a second front end for the identical `starter.agent.Agent`; nothing here
@@ -129,7 +129,7 @@ class _State:
 
 
 _STATE = _State()
-app = FastAPI(title="TechJam shopping agent demo")
+app = FastAPI(title="SpiderRank demo")
 
 
 class MessageIn(BaseModel):

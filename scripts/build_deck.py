@@ -266,6 +266,12 @@ def table(slide, headers, rows, *, left=None, top=None, width=None,
 # --------------------------------------------------------------------------
 def slide_title(prs):
     slide = _blank(prs)
+    frame = _textbox(slide, Inches(0.9), Inches(1.35), Inches(11.5), Inches(0.4))
+    run = frame.paragraphs[0].add_run()
+    run.text = "SPIDERRANK"
+    _set(run, size=15, bold=True, color=ACCENT, font=BODY_FONT)
+    frame.paragraphs[0].space_after = Pt(0)
+
     frame = _textbox(slide, Inches(0.9), Inches(1.75), Inches(11.5), Inches(1.8))
     run = frame.paragraphs[0].add_run()
     run.text = "A shopping agent that asks better questions"
@@ -274,6 +280,7 @@ def slide_title(prs):
     frame = _textbox(slide, Inches(0.9), Inches(3.55), Inches(11.5), Inches(1.1))
     for text, size in (("TechJam Conversational Search — Track 4", 18),
                        ("Phan Kang Xun · Lloyd Wang", 14),
+                       ("Five independent retrieval legs, fused into one ranking — the name is the metaphor.", 14),
                        ("Find a hidden product in a 50,000-item catalog, in 10 turns or fewer.", 14)):
         para = frame.paragraphs[0] if text.startswith("TechJam") else frame.add_paragraph()
         para.space_after = Pt(5)
@@ -285,10 +292,10 @@ def slide_title(prs):
                ("0.553", "MRR"), ("3.25", "turns to find"))
     for index, (value, label) in enumerate(metrics):
         left = Inches(0.9) + Inches(2.7) * index
-        box(slide, left, Inches(5.05), Inches(2.4), Inches(1.0), value, label,
+        box(slide, left, Inches(5.2), Inches(2.4), Inches(1.0), value, label,
             fill=TINT, border=TINT, color=ACCENT, size=26, sub_size=12)
     note(slide, "Full 200-sample public set. Every number in this deck is measured, not estimated.",
-         top=Inches(6.35))
+         top=Inches(6.45))
     return slide
 
 
@@ -1065,7 +1072,7 @@ def slide_next(prs):
 
 def slide_team(prs):
     slide = _blank(prs)
-    heading(slide, "Team and process", "credits")
+    heading(slide, "Team and process", "credits — SpiderRank")
     table(slide, ["", "Contribution"], [
         ("Phan Kang Xun",
          "Architecture, retrieval, every experiment, evaluation tooling, demo, report and this deck."),

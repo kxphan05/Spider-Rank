@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TechJam Shopping Agent</title>
+<title>🕷️ SpiderRank</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
@@ -200,6 +200,10 @@
   }
   .rec-card:hover { transform: translateY(-3px); border-color: var(--accent); }
   @keyframes cardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .rec-thumb {
+    height: 52px; border-radius: 8px; background: var(--wash);
+    display: flex; align-items: center; justify-content: center; font-size: 26px;
+  }
   .rec-tag { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; letter-spacing: 0.06em;
              text-transform: uppercase; color: var(--muted); }
   .rec-title { font-size: 12.5px; line-height: 1.35; min-height: 2.7em;
@@ -225,20 +229,20 @@
 <div class="shell">
   <header>
     <div>
-      <div class="eyebrow">TechJam Conversational Search &middot; live demo</div>
-      <h1>Chat with the shopping agent</h1>
-      <p class="sub">Say what you're after. The agent narrows a 50,000-product catalog and asks
-        one question per turn &mdash; watch its state update on the right as it goes.</p>
+      <div class="eyebrow">SpiderRank &middot; TechJam Conversational Search, Track 4 &middot; live demo</div>
+      <h1>🕷️ SpiderRank</h1>
+      <p class="sub">Say what you're after. Five retrieval legs narrow a 50,000-product catalog and
+        the agent asks one question per turn &mdash; watch its state update on the right as it goes.</p>
     </div>
     <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
       <div class="status-bar" id="statusBar"></div>
-      <button class="reset" id="resetBtn" type="button">&#8635; New session</button>
+      <button class="reset" id="resetBtn" type="button">🔄 New session</button>
     </div>
   </header>
 
   <div class="grid">
     <div class="panel chat-panel">
-      <div class="panel-title">Conversation</div>
+      <div class="panel-title">💬 Conversation</div>
       <div class="convo" id="convo"></div>
       <div class="suggestions" id="suggestions"></div>
       <div class="composer">
@@ -249,8 +253,8 @@
 
     <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
       <div class="panel">
-        <div class="panel-title">Agent state</div>
-        <div class="progress-label"><span>Turn</span><span id="turnLabel">0 / 10</span></div>
+        <div class="panel-title">🧠 Agent state</div>
+        <div class="progress-label"><span>🎯 Turn</span><span id="turnLabel">0 / 10</span></div>
         <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
 
         <div class="routing-row"><span class="routing-key">intent</span>
@@ -261,20 +265,20 @@
 
         <div class="routing-row" style="align-items:flex-start">
           <span class="routing-key">disclosed</span>
-          <span class="chips" id="chips"><span class="chip empty">nothing yet</span></span>
+          <span class="chips" id="chips"><span class="chip empty">📭 nothing yet</span></span>
         </div>
       </div>
 
       <div class="panel">
-        <div class="panel-title">Latest recommendations <span id="recCount" style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);"></span></div>
+        <div class="panel-title">🛒 Latest recommendations <span id="recCount" style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted);"></span></div>
         <div class="rec-grid" id="recs"></div>
-        <div class="empty-hint" id="recsEmpty">Send a message to see the slate.</div>
+        <div class="empty-hint" id="recsEmpty">👋 Send a message to see the slate.</div>
       </div>
     </div>
   </div>
 
   <footer>
-    Byte-identical agent to the scored submission &mdash; this page only adds a face.
+    🤖 Byte-identical agent to the scored submission &mdash; this page only adds a face.
     <code>starter/agent.py</code> is untouched. Session state resets on reload of the server process.
   </footer>
 </div>
@@ -285,11 +289,51 @@ let sessionId = null;
 let busy = false;
 
 const SUGGESTIONS = [
-  "I need a leather belt for work",
-  "waterproof hiking boots under $80",
-  "actually forget that, show me jewellery",
-  "I don't have a preference",
+  { emoji: "👖", text: "I need a leather belt for work" },
+  { emoji: "🥾", text: "waterproof hiking boots under $80" },
+  { emoji: "💍", text: "actually forget that, show me jewellery" },
+  { emoji: "🤷", text: "I don't have a preference" },
 ];
+
+// Component pills get a small emoji so the "what's actually live" row reads
+// at a glance instead of as a wall of mono text.
+const COMPONENT_EMOJI = {
+  "keyword search (BM25)": "🔑",
+  "phrase search": "🔤",
+  "dense search": "🧠",
+  "intent classifier": "🎯",
+  "override detector": "🔀",
+  "non-answer detector": "🤐",
+};
+
+// A picture stand-in: the catalog ships no product images, so each card gets
+// a category-matched emoji tile instead of a blank rectangle.
+const CATEGORY_EMOJI = [
+  [["shoe", "boot", "sneaker", "sandal"], "👟"],
+  [["jewel", "necklace", "ring", "earring", "pendant"], "💍"],
+  [["watch"], "⌚"],
+  [["bag", "backpack", "purse", "handbag", "tote"], "👜"],
+  [["belt"], "🧷"],
+  [["dress", "gown"], "👗"],
+  [["shirt", "tee", "top", "blouse", "polo"], "👕"],
+  [["pant", "jean", "short", "trouser", "legging"], "👖"],
+  [["jacket", "coat", "hoodie", "sweater", "cardigan"], "🧥"],
+  [["hat", "cap", "beanie"], "🧢"],
+  [["sock"], "🧦"],
+  [["swim", "bikini"], "🩱"],
+  [["underwear", "bra", "lingerie", "brief"], "🩲"],
+  [["glove", "mitten"], "🧤"],
+  [["scarf"], "🧣"],
+  [["sunglass", "eyewear", "goggle"], "🕶️"],
+];
+
+function emojiFor(category, title) {
+  const text = `${category} ${title}`.toLowerCase();
+  for (const [keywords, emoji] of CATEGORY_EMOJI) {
+    if (keywords.some((word) => text.includes(word))) return emoji;
+  }
+  return "🛍️";
+}
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -307,17 +351,17 @@ async function boot() {
 
 function renderStatus(status) {
   const bar = $("statusBar");
-  if (!status.ready) { bar.innerHTML = `<span class="pill">catalog unavailable</span>`; return; }
-  bar.innerHTML = `<span class="pill mode">${status.lite ? "lite" : "full"} agent</span>` +
+  if (!status.ready) { bar.innerHTML = `<span class="pill">😴 catalog unavailable</span>`; return; }
+  bar.innerHTML = `<span class="pill mode">${status.lite ? "🪶 lite" : "⚡ full"} agent</span>` +
     Object.entries(status.components).map(([label, live]) =>
-      `<span class="pill ${live ? "live" : ""}"><span class="dot"></span>${esc(label)}</span>`).join("");
+      `<span class="pill ${live ? "live" : ""}">${live ? "" : '<span class="dot"></span>'}${COMPONENT_EMOJI[label] || "▫️"} ${esc(label)}</span>`).join("");
 }
 
 function renderSuggestions() {
   $("suggestions").innerHTML = SUGGESTIONS.map(s =>
-    `<button class="suggestion" type="button">${esc(s)}</button>`).join("");
+    `<button class="suggestion" type="button">${s.emoji} ${esc(s.text)}</button>`).join("");
   [...document.querySelectorAll(".suggestion")].forEach((btn, i) => {
-    btn.addEventListener("click", () => { $("input").value = SUGGESTIONS[i]; send(); });
+    btn.addEventListener("click", () => { $("input").value = SUGGESTIONS[i].text; send(); });
   });
 }
 
@@ -348,9 +392,9 @@ function addMessage(role, text, extra) {
   const box = $("convo");
   const div = document.createElement("div");
   div.className = `msg ${role}` + (extra && extra.override ? " override" : "");
-  const who = role === "user" ? "You" : "Agent" + (extra && extra.ask ? ` · asks ${esc(extra.ask)}` : "");
+  const who = role === "user" ? "🧑 You" : "🛍️ Agent" + (extra && extra.ask ? ` · asks ${esc(extra.ask)}` : "");
   div.innerHTML = `<span class="who">${who}</span><div class="bubble">${esc(text)}</div>` +
-    (extra && extra.override ? `<span class="override-flag">&#9888; pivot detected &mdash; prior constraints cleared</span>` : "");
+    (extra && extra.override ? `<span class="override-flag">🔀 pivot detected &mdash; prior constraints cleared</span>` : "");
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
   return div;
@@ -360,7 +404,7 @@ function showTyping() {
   const box = $("convo");
   const div = document.createElement("div");
   div.className = "msg bot"; div.id = "typingRow";
-  div.innerHTML = `<span class="who">Agent</span><div class="bubble typing"><span></span><span></span><span></span></div>`;
+  div.innerHTML = `<span class="who">🛍️ Agent</span><div class="bubble typing"><span></span><span></span><span></span></div>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
@@ -378,11 +422,12 @@ function renderRecs(recs) {
   $("recCount").textContent = recs.length ? `${recs.length} shown` : "";
   $("recs").innerHTML = recs.map((r, i) => `
     <div class="rec-card" style="animation-delay:${i * 35}ms">
+      <div class="rec-thumb">${emojiFor(r.category, r.title)}</div>
       <span class="rec-tag">${esc(r.category)}</span>
       <span class="rec-title">${esc(r.title)}</span>
       <div class="rec-meta">
-        <span class="rec-price">${r.price != null ? "$" + r.price.toFixed(2) : "—"}</span>
-        <span class="rec-rating">${r.rating != null ? "★ " + r.rating : ""}</span>
+        <span class="rec-price">${r.price != null ? "🏷️ $" + r.price.toFixed(2) : "—"}</span>
+        <span class="rec-rating">${r.rating != null ? "⭐ " + r.rating : ""}</span>
       </div>
     </div>`).join("");
 }
@@ -404,7 +449,7 @@ async function send() {
     });
     hideTyping();
     if (!res.ok) {
-      addMessage("bot", "Something went wrong on that turn. Try a new session.");
+      addMessage("bot", "⚠️ Something went wrong on that turn. Try a new session.");
       return;
     }
     const data = await res.json();
@@ -417,12 +462,12 @@ async function send() {
       `bm25 ${data.routing.bm25.toFixed(2)} · dense ${data.routing.dense.toFixed(2)} · phrase ${data.routing.phrase.toFixed(2)}` +
       (data.routing.diversify ? " · diversity on" : "");
     $("overrideSlot").innerHTML = data.override
-      ? `<div class="override-banner">&#9888; Intent override fired this turn &mdash; prior constraints cleared</div>` : "";
+      ? `<div class="override-banner">🔀 Intent override fired this turn &mdash; prior constraints cleared</div>` : "";
     renderChips(data.disclosed, data.new_attributes);
     renderRecs(data.recommendations);
   } catch (err) {
     hideTyping();
-    addMessage("bot", "Lost the connection to the server. Try again.");
+    addMessage("bot", "📡 Lost the connection to the server. Try again.");
   } finally {
     busy = false;
     $("send").disabled = false;
