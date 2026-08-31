@@ -720,6 +720,66 @@ def slide_belief_bayes(prs):
     return slide
 
 
+def slide_lm_eager(prs):
+    """How LM eager prediction fills an attribute the shopper never stated.
+
+    Deliberately honest rather than promotional: the mechanism is real and
+    calibrated, but §6 of the team report measured it net-neutral, so it is
+    optional and off by default. The slide says both things.
+    """
+    slide = _blank(prs)
+    heading(slide, "How LM eager prediction works", "mechanism")
+
+    frame = _textbox(slide, Inches(0.7), Inches(1.62), Inches(11.9), Inches(0.4))
+    run = frame.paragraphs[0].add_run()
+    run.text = "Guess an attribute the shopper never stated, from what they already said — so we skip asking about it."
+    _set(run, size=14, bold=True)
+
+    step_w, step_h, gap, top = Inches(2.7), Inches(1.05), Inches(0.32), Inches(2.2)
+    left = Inches(0.7)
+    box(slide, left, top, step_w, step_h,
+        "1. Mask each candidate",
+        "\"...wants it made of [MASK].\"\none forward pass per token length,\nnot per candidate value",
+        fill=SURFACE, size=12.5, sub_size=10.5)
+    arrow(slide, left + step_w + Inches(0.04), top + step_h / 2 - Inches(0.11), gap)
+    left += step_w + gap + Inches(0.04)
+    box(slide, left, top, step_w, step_h,
+        "2. Score, length-normalize",
+        "sum log p(token) over the mask(s),\ndivided by token count —\npseudo-log-likelihood",
+        fill=SURFACE, size=12.5, sub_size=10.5)
+    arrow(slide, left + step_w + Inches(0.04), top + step_h / 2 - Inches(0.11), gap)
+    left += step_w + gap + Inches(0.04)
+    box(slide, left, top, step_w, step_h,
+        "3. Softmax, take entropy",
+        "distribution over the closed\nvocabulary; normalized Shannon\nentropy of that distribution",
+        fill=SURFACE, size=12.5, sub_size=10.5)
+    arrow(slide, left + step_w + Inches(0.04), top + step_h / 2 - Inches(0.11), gap)
+    left += step_w + gap + Inches(0.04)
+    box(slide, left, top, Inches(2.55), step_h,
+        "4. Gate at H < 0.60",
+        "calibrated in\neval_lm_confidence.py,\nnot guessed",
+        fill=TINT, border=ACCENT, color=ACCENT, size=12.5, sub_size=10.5)
+
+    box(slide, Inches(0.7), Inches(3.65), Inches(11.93), Inches(0.95),
+        "Only fills gaps",
+        "Runs once per turn, per attribute NOT already in `disclosed` — a real answer is never "
+        "second-guessed by a guess. If nothing clears the entropy gate, the turn proceeds exactly "
+        "as if the mechanism did not exist. (starter/agent.py:_infer_attributes)",
+        fill=SURFACE, size=13, sub_size=12)
+
+    box(slide, Inches(0.7), Inches(4.75), Inches(11.93), Inches(1.85),
+        "Measured, and shipped optional because of what was measured",
+        "Calibration held for material — accuracy rises with the gate, so 0.60 is a real cutoff, "
+        "not decoration. Colour was excluded: it loses to an always-\"black\" baseline and its gate "
+        "runs backwards, so scoring it would launder noise as confidence.\n"
+        "Ablating the whole mechanism moves TechnicalScore by +0.0010 — inside the noise floor, and "
+        "the sign flips to -0.0007 under the no-dense configuration. For 257 MB of weights and "
+        "~47 ms/turn, that is not a trade worth making by default: it ships off, opt in with "
+        "`fetch_assets.py --with-lm`, and the agent degrades to zero inferred attributes without it.",
+        fill=TINT, border=ACCENT, color=ACCENT, size=12.5, sub_size=11.5)
+    return slide
+
+
 def slide_models(prs):
     slide = _blank(prs)
     heading(slide, "Which models, and one we could not afford", "pros and cons")
@@ -742,6 +802,59 @@ def slide_models(prs):
                 "labelled data that was not the simulator's own two templates.", top=Inches(6.1))
     note(slide, "Everything runs on CPU with the network off. Loaded assets: 460 MB "
                 "(encoder 129 + masked LM 257 + dense index 74).", top=Inches(6.75))
+    return slide
+
+
+def slide_workflow(prs):
+    """The loop every change on this project went through.
+
+    Not aspirational -- it is what the commit log actually shows: a
+    hypothesis, a measured A/B against the identity-checked baseline, then
+    either a scored commit or a ledger entry, which itself becomes the next
+    idea. `slide_discipline` and `slide_rejected` are what "test" and the
+    losing half of "commit" look like up close.
+    """
+    slide = _blank(prs)
+    heading(slide, "How every change on this project got made", "workflow")
+
+    stages = [
+        ("1. GENERATE IDEA", "A hypothesis from reading the scorer,\na miss census, or a prior rejection"),
+        ("2. TEST", "Identity check against the shipped score,\nthen a 200-sample A/B — never trust the delta alone"),
+        ("3. COMMIT", "Ships if it wins the A/B;\notherwise recorded on the ledger, not silently dropped"),
+    ]
+    width, gap = Inches(3.55), Inches(0.55)
+    left = Inches(0.75)
+    for index, (title, sub) in enumerate(stages):
+        box(slide, left, Inches(2.0), width, Inches(1.55), title, sub,
+            fill=TINT if index == 1 else SURFACE,
+            border=ACCENT if index == 1 else RULE,
+            color=ACCENT if index == 1 else INK, size=14, sub_size=12)
+        if index < 2:
+            arrow(slide, left + width + Inches(0.05), Inches(2.64), gap - Inches(0.1))
+        left += width + gap
+
+    back_arrow(slide, Inches(0.75), Inches(3.85), Inches(11.45),
+               "a losing idea still becomes the next one — every ledger entry fed a later hypothesis")
+
+    table(slide, ["Stage", "In practice on this repo", "Tooling"], [
+        ("Generate idea",
+         "Read where the scorer disagrees with the target, or where a rejection "
+         "pointed. Every idea started from a specific miss, not a general intuition.",
+         "docs/team_report.md miss census"),
+        ("Test",
+         "A sweep script prints the identity row first and is checked against the "
+         "shipped score before any other row is read; deltas under ±0.0025 on 200 "
+         "samples are noise, not a result.",
+         "scripts/sweep_*.py, scripts/eval_*.py"),
+        ("Commit",
+         "A win ships as one commit naming the measured number. A loss still gets "
+         "committed — as a ledger entry recording what was expected and what "
+         "happened, so the same idea is never re-tried blind.",
+         "git log, the NEGATIVE RESULTS slide"),
+    ], top=Inches(4.55), col_widths=(1.4, 6.9, 3.4), row_height=Inches(0.62), size=11)
+
+    note(slide, "This is also why the deck has a NEGATIVE RESULTS slide: on this project, "
+                "a rejected idea is still a shipped result.", top=Inches(6.9), color=ACCENT, bold=True)
     return slide
 
 
@@ -1138,15 +1251,15 @@ def slide_tracks(prs):
     return slide
 
 def slide_provenance(prs):
-    """Which parts are off the shelf, and which are ours.
+    """Which parts are off the shelf, and which are adapted.
 
     Citations are to the originating paper for each mechanism, so a judge can
-    check the claim rather than take the word for it. The three-way split
-    matters more than the count: most of this deck's score came from the
-    adapted and original rows, and every one of those was measured.
+    check the claim rather than take the word for it. Split from the OURS
+    rows (`slide_provenance_ours`) purely because eight-plus-four no longer
+    fits one table at a readable size.
     """
     slide = _blank(prs)
-    heading(slide, "What is standard, what is adapted, what is ours", "provenance")
+    heading(slide, "What is standard, what is adapted", "provenance, 1 of 2")
 
     table(slide, ["Component", "Where it comes from", "What we did with it", ""], [
         ("BM25 ranking",
@@ -1181,6 +1294,27 @@ def slide_provenance(prs):
          "Kept for intent. Ours: the trimmed top-4 variant for pivots, unioned with a "
          "clause-initial cue list, because that prototype set has a shape pathology.",
          ("ADAPTED", ACCENT)),
+        ("LM eager prediction",
+         "Salazar et al., pseudo-log-likelihood scoring, ACL 2020 · entropy gating is active-learning folklore",
+         "distilbert scores every undisclosed attribute's closed vocabulary against the "
+         "shopper's own turn; fills a gap only below a calibrated entropy gate. Measured "
+         "net-neutral, so it ships optional, off by default — see next slide.",
+         ("ADAPTED", ACCENT)),
+    ], top=Inches(1.68), col_widths=(2.3, 3.4, 4.9, 1.3), row_height=Inches(0.5),
+        size=9.5, header_size=10)
+
+    note(slide, "Every row here is a published mechanism; the adaptations are the gating and "
+                "combination logic layered on top, each one measured before being kept.",
+         top=Inches(6.2), color=ACCENT, bold=True, size=12)
+    return slide
+
+
+def slide_provenance_ours(prs):
+    """The three mechanisms this task needed that the literature does not supply."""
+    slide = _blank(prs)
+    heading(slide, "What is ours", "provenance, 2 of 2")
+
+    table(slide, ["Component", "Where it comes from", "What we did with it", ""], [
         ("Popularity prior",
          "Popularity bias is a known recsys hazard — Abdollahpouri et al., RecSys 2017",
          "Ours: entered as one RRF vote over the pool the other legs found, never as a "
@@ -1196,12 +1330,12 @@ def slide_provenance(prs):
          "Our own attribute labels disagree with the target 16–37% of the time, so a hard "
          "filter deletes the answer. Agreement scores ±1 and deletes nothing.",
          ("OURS", GOOD)),
-    ], top=Inches(1.68), col_widths=(2.3, 3.4, 4.9, 1.3), row_height=Inches(0.46),
-        size=9.5, header_size=10)
+    ], top=Inches(1.85), col_widths=(2.3, 3.4, 4.9, 1.3), row_height=Inches(0.85),
+        size=11, header_size=11)
 
-    note(slide, "Every retrieval primitive here is off the shelf and unmodified. The score came from "
-                "how they are combined, and from three mechanisms this task needed that the literature "
-                "does not supply.", top=Inches(6.9), color=ACCENT, bold=True, size=12)
+    note(slide, "Most of this deck's score came from these three rows and the adapted ones on "
+                "the previous slide — every one of them measured, not assumed.",
+         top=Inches(5.05), color=ACCENT, bold=True, size=13)
     return slide
 
 def build() -> Path:
@@ -1218,6 +1352,8 @@ def build() -> Path:
     slide_popularity(prs)
     slide_tracks(prs)
     slide_provenance(prs)
+    slide_provenance_ours(prs)
+    slide_lm_eager(prs)
     slide_scoreboard(prs)
     slide_insight(prs)
     slide_exclusion(prs)
@@ -1225,6 +1361,7 @@ def build() -> Path:
     slide_questions(prs)
     slide_belief_bayes(prs)
     slide_models(prs)
+    slide_workflow(prs)
     slide_rejected(prs)
     slide_discipline(prs)
     slide_silent(prs)
