@@ -27,7 +27,6 @@ from starter.classifier import (
     PROTOTYPE_BROWSING,
     PROTOTYPE_BUYING,
     PROTOTYPE_CONTINUATION,
-    PROTOTYPE_INFORMATIVE,
     PROTOTYPE_NON_ANSWER,
     PROTOTYPE_OVERRIDE,
     _is_negated,
@@ -278,7 +277,6 @@ class FakeModel:
         PROTOTYPE_OVERRIDE: np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
         PROTOTYPE_CONTINUATION: np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
         PROTOTYPE_NON_ANSWER: np.array([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-        PROTOTYPE_INFORMATIVE: np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
     }
     _NEUTRAL = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
@@ -365,6 +363,14 @@ def test_non_answer_detector_similarity_direction():
     model = FakeModel(query_vectors={"query": np.array([0.0, 0.0, 0.0, 0.0, 1.0, 0.0])})
     detector = EmbeddingNonAnswerDetector(model)
     assert detector.is_non_answer("query") is True
+
+
+def test_non_answer_detector_below_threshold_is_false():
+    # Partial similarity to the decline direction, below NON_ANSWER_THRESHOLD
+    # (0.68) -- the one-class floor, not a nearest-class contest, must reject it.
+    model = FakeModel(query_vectors={"query": np.array([0.0, 0.0, 0.0, 0.0, 0.5, 0.0])})
+    detector = EmbeddingNonAnswerDetector(model)
+    assert detector.is_non_answer("query") is False
 
 
 def test_non_answer_detector_falls_back_to_lexical_on_encode_failure():

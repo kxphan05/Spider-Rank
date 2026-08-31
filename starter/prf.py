@@ -2,15 +2,7 @@
 
 Assume the top few documents an initial query retrieves are relevant,
 harvest the terms that distinguish them from the collection, and search
-again with those added -- the one direction available that adds vocabulary
-rather than just re-weighting existing legs, which matters since a buying
-session's turn-1 signal is often a single material word.
-
-Ships as its own fusion leg (sweepable weight, 0.0 = identity) rather than
-rewriting the BM25 query, since PRF drifts when initial results are already
-wrong and a leg can be turned down continuously where a rewrite can't.
-RM3-flavoured, not textbook RM3: FTS5 has no per-term query weighting, so the
-RRF weight plays lambda's role instead of true interpolation.
+again with those added. This helps to improve the vocabulary of the query.
 """
 from __future__ import annotations
 
@@ -24,10 +16,6 @@ from .text_utils import STOPWORDS, terms
 # on this module. Ruff cannot see that use, hence the noqa.
 from .config import (EXPANSION_TERMS, FEEDBACK_DOCS, MIN_FEEDBACK_DF,  # noqa: F401
                      MIN_TERM_LENGTH)
-
-
-
-
 
 
 def _catalog_df(connection: sqlite3.Connection, term: str, cache: dict[str, int]) -> int:
@@ -70,9 +58,7 @@ def expansion_terms(
         return []
 
     query_terms = set(terms(query))
-    # Document frequency within the feedback set, not raw term frequency: a
-    # term repeated twenty times in one long description should not outrank a
-    # term present once in every document.
+    # track the number of documents where the term appears.
     feedback_df: Counter[str] = Counter()
     for text in documents.values():
         for term in set(terms(text)):

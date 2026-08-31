@@ -161,3 +161,44 @@ All optional, all have working defaults.
 | `TECHJAM_MODEL_DIR` | model weights directory |
 | `TECHJAM_PROFILE_STORE` | long-term user-profile store path |
 | `TECHJAM_THREADS` | cap CPU threads, for running evals side by side |
+
+---
+
+## Limitations & what we'd improve with more time
+
+- Much of the pipeline leans on hand-written regex and closed vocabularies rather than anything learned,
+  so it isn't very dynamic and each new phrasing has to be added by hand.
+  Given more time and this dataset, we'd train a purpose-built classifier
+  instead of layering regex rules around a frozen off-the-shelf encoder.
+- A `ms-marco-MiniLM-L-6-v2` cross-encoder reranker is enabled by default
+  (`RERANK_WEIGHT = 3`) but was never swept in isolation — it shipped
+  bundled with unrelated changes. It's the one stage that could actually
+  convert a miss into a hit rather than just reorder (it scores the top 20
+  candidates and can promote a rank-11 item into the shown ten), so an
+  isolated sweep of its weight is the highest-value follow-up we didn't get
+  to. A larger `Qwen3-Reranker-0.6B` backend is also implemented but stays
+  demo-only — ~27s/pair on this hardware makes it too slow to sweep at all.
+- Long-term (cross-session) personalization is built but unused: every way
+  we tried to consume it regressed the score, and a signal check showed
+  same-key sessions' targets agree *below* chance. Given more time we would have done more data analysis on the
+  user profiles to see if we can extract any signal from it.
+- With more compute, the direction we'd want to explore is replacing the
+  current one-pass retrieve-then-fuse pipeline with executor/planner
+  agents that drive retrieval iteratively — planning what to search for,
+  issuing multiple targeted queries, and deciding when enough evidence has
+  been gathered, rather than fusing a single fixed set of retrieval legs
+  per turn.
+
+Full ablations and reasoning: [`docs/team_report.md`](docs/team_report.md) § 7,
+and the "What we would do with more time" slide in `dist/techjam_track4.pptx`.
+
+## Team
+
+| member | contribution |
+|---|---|
+| **Phan Kang Xun** | Architecture, retrieval design, experiments and measurement, this report. |
+| **Lloyd Wang** | Team Leader, Testing, Quality Assurance, Presentation |
+
+Built with heavy use of Claude Code for implementation and documentation;
+permitted per [`docs/submission_rules.md`](docs/submission_rules.md) §
+Model Policy.

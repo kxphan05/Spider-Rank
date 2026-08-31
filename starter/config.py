@@ -107,7 +107,7 @@ PRF_WEIGHT = 0.5
 # off everywhere except the boundary path, where the customer asked us to choose.
 POPULARITY_WEIGHT = 0.5
 
-# Cross-encoder reranking (reranker.py, Qwen3-Reranker-0.6B). 
+# Cross-encoder reranking
 RERANK_WEIGHT = 3
 
 # Which backend scores the pairs. "minilm" is the shipped, measurable stage;
@@ -187,6 +187,18 @@ NEGATION_WINDOW_CHARS = 20
 # For the classifer. pick the centroid of the closest
 # TOP_PROTOTYPES examples
 TOP_PROTOTYPES = 4
+
+# EmbeddingNonAnswerDetector: one-class threshold on similarity to
+# PROTOTYPE_NON_ANSWER (a decline is a small, closed class; "informative" is
+# not, so it's classified by an absolute floor rather than a nearest-class
+# contest -- see scripts/sweep_nonanswer_threshold.py). Chosen as the lowest
+# threshold with 100% recall on the deterministic simulator templates
+# (including the "ask something more specific" filler line, which needed its
+# own prototype coverage -- see PROTOTYPE_NON_ANSWER), 100% on held-out OOD
+# decline paraphrases, and zero false positives on the terse-catalog-fragment
+# regression case, at 99.95% precision against ~2k diverse catalog-derived
+# answer strings.
+NON_ANSWER_THRESHOLD = 0.68
 
 
 # Removes only attributes the user specifies (vs. clearing all on override).

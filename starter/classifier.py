@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 
 import numpy as np
-from .config import (NEGATION_WINDOW_CHARS, TOP_PROTOTYPES)
+from .config import (NEGATION_WINDOW_CHARS, NON_ANSWER_THRESHOLD, TOP_PROTOTYPES)
 
 logger = logging.getLogger(__name__)
 
@@ -375,39 +375,14 @@ PROTOTYPE_NON_ANSWER = (
     "Nothing specific in mind for that.",
     "Anything is fine on that front.",
     "I really don't mind either way.",
-)
-
-# The contrast class: a reply that *does* carry new constraint content. Kept
-# separate from PROTOTYPE_CONTINUATION since that tuple's composition is
-# load-bearing for EmbeddingOverrideDetector's measured numbers.
-PROTOTYPE_INFORMATIVE = (
-    "I also need it to be machine washable.",
-    "For that, what matters is a waterproof outer shell.",
-    "I'd like it in black, please.",
-    "Size medium works for me.",
-    "It should be under fifty dollars.",
-    "Cotton, ideally something breathable.",
-    "I need it for hiking in cold weather.",
-    "A slim fit would be best.",
-    "Leather, and preferably brown.",
-    "Something with a zip pocket on the inside.",
-    "I want a crew neck rather than a v-neck.",
-    "Stainless steel, nothing that tarnishes.",
-    # Terse catalog-jargon fragments: bare spec terms like these were reading
-    # closer to the non-answer prototypes than to full-sentence disclosures,
-    # so real answers like "Imported." were silently dropped from the query.
-    "Imported.",
-    "Button closure.",
-    "Hand Wash Only.",
-    "Pull On closure.",
-    "Zipper closure.",
-    "Tie closure.",
-    "Machine Wash, Line Dry.",
-    "Elastic waistband.",
-    "Buckle closure.",
-    "Non-slip rubber sole.",
-    "Adjustable strap.",
-    "Imported; Zipper closure.",
+    # A different register of the same thing: no attribute-value content, but
+    # a vagueness complaint rather than a decline ("ask me something more
+    # specific") -- the simulator's own filler line when it has run out of
+    # attributes to volunteer. Generic phrasing, not the literal template.
+    "Those aren't quite right, can you ask me something more specific?",
+    "None of these fit -- try asking about one particular detail instead.",
+    "Not quite what I'm after. Narrow it down with a specific question.",
+    "That's not it. Ask me about one thing in particular.",
 )
 
 # Lexical floor for the non-answer detector, used when the embedding model is
@@ -466,16 +441,23 @@ def classify_reply_lexically(text: str) -> str:
 
 
 class EmbeddingNonAnswerDetector:
-    """Trimmed nearest-prototype detection of a contentless clarifying reply.
+    """One-class threshold detection of a contentless clarifying reply.
 
-    Tuned toward precision, not recall (opposite of EmbeddingOverrideDetector),
-    since a false positive here discards a real disclosure from the query.
+    A decline ("no preference", "up to you") is a small, closed class of
+    generic hedge phrasing, unlike its complement -- "informative" covers any
+    attribute value a customer might ever state, which can't be enumerated as
+    a competing prototype set without reactively chasing every new catalog
+    vocabulary term that shows up in a failure (see NON_ANSWER_THRESHOLD's
+    docstring in config.py). So this classifies non-answer only when
+    similarity to PROTOTYPE_NON_ANSWER alone clears an absolute floor,
+    defaulting everything else to "answer" -- tuned toward precision, not
+    recall (opposite of EmbeddingOverrideDetector), since a false positive
+    here discards a real disclosure from the query.
     """
 
     def __init__(self, model) -> None:
         self.model = model
         self._non_answer_protos = self._encode(PROTOTYPE_NON_ANSWER)
-        self._informative_protos = self._encode(PROTOTYPE_INFORMATIVE)
 
     def _encode(self, sentences: tuple[str, ...]) -> np.ndarray:
         return self.model.encode(
@@ -494,10 +476,7 @@ class EmbeddingNonAnswerDetector:
         except Exception:
             logger.exception("non-answer detector failed on %r; falling back to lexical", text)
             return classify_reply_lexically(text) == "non_answer"
-        return (
-            _top_prototype_similarity(vec, self._non_answer_protos)
-            > _top_prototype_similarity(vec, self._informative_protos)
-        )
+        return _top_prototype_similarity(vec, self._non_answer_protos) > NON_ANSWER_THRESHOLD
 
 
 class EmbeddingIntentClassifier:
