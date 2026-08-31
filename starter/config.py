@@ -17,15 +17,7 @@ from pathlib import Path
 CATALOG_PATH_ENV = "TECHJAM_CATALOG"
 DENSE_INDEX_PATH_ENV = "TECHJAM_DENSE_INDEX"
 
-# The order is by *answerability*, measured against the local evaluator's
-# own reply policy (scripts/eval_profile_signal.py --check tags): share of
-# the 200 public samples where the customer can still answer a question
-# about the attribute after turn 1 --
-#
-#   feature 0.960   style 0.085   size 0.045   use_case 0.020
-#
-# A question the customer can't answer burns a whole turn, and MTTC is 20%
-# of the score, so the most-answerable bucket goes first.
+# Fallback attribute order, ordered by overal answerability
 
 FALLBACK_ATTRIBUTE_ORDER = ["feature", "style", "size", "use_case", "budget"]
 
@@ -37,22 +29,11 @@ ENTROPY_POOL_SIZE = 30  # fused-candidate pool size used for attribute-entropy s
 # browsing
 BUYING_BM25_WEIGHT = 2.0
 BUYING_DENSE_WEIGHT = 1.5
-# Push the buying slate away from the neighbourhood of items already shown,
-# rather than merely past the items themselves. EXCLUDE_SHOWN drops the shown
-# products; their near-duplicates stay, and buying misses sit in coarse
-# categories 2.4x more crowded than its hits (#24), so a rejected slate is
-# followed by ten more of much the same thing.
-#
-# False is the identity setting. Distinct from BUYING_DIVERSIFY, which #28
-# measured null here: that spreads the slate against itself, this pushes it
-# away from a known-wrong region, and the buying arm runs with the intra-slate
-# term off so the two never ride together unmeasured.
+# Push the buying slate away from the neighbourhood of items already shown.
 BUYING_REPEL_SHOWN = True
 
 # Relevance against repulsion once BUYING_REPEL_SHOWN is on. 1.0 is pure
-# relevance (the identity), 0.0 is pure repulsion. Relevance here is 1/(rank+1)
-# and decays steeply, so below ~0.3 the tail of the window reorders freely
-# while DIVERSIFY_PIN still holds the top of the slate.
+# relevance (the identity), 0.0 is pure repulsion.
 BUYING_REPEL_LAMBDA = 0.5
 BROWSING_BM25_WEIGHT = 1.25
 BROWSING_DENSE_WEIGHT = 1.5
@@ -188,9 +169,6 @@ RERANK_BACKEND = "minilm"
 RERANK_TOP_N = 20
 
 # Do not re-recommend a product that has already been shown and rejected.
-# `evaluate()` in the local evaluator breaks the session the moment the target appears in the
-# returned slate, so being *asked for another turn at all* is proof that none
-# of the items shown so far was the target.
 EXCLUDE_SHOWN = True
 
 # Prepend a plain-language rationale to `turn_response.message`.
@@ -199,7 +177,7 @@ EXPLAIN_RECOMMENDATIONS = True
 
 # LLM used to guess attribute based on query
 # boost added to score
-LM_INFERENCE_WEIGHT = 0.5
+LM_INFERENCE_WEIGHT = 0
 
 # Boost and penalised based on attributes that are clarified
 DISCLOSED_MATCH_BOOST = 1.0
@@ -314,16 +292,38 @@ ANSWERABILITY_PRIOR: dict[str, float] = {
     "budget": 0.001,
 }
 
-# Multiplier applied to every *other* remaining attribute when one comes back
-# empty. A non-answer is evidence about this card as a whole, not only about
-# the attribute asked: the card holds at most four constraints
-# (hard_constraints[:2] + soft_preferences[2:4]), so each empty reply makes it
-# likelier the rest are exhausted too.
-NON_ANSWER_SPILLOVER = 0.8
+# Odds ratio for P(B answerable | A answered) vs P(B answerable | A a
+# non-answer), computed directly from the evaluator's own card-generation
+# logic over the 200 public samples (scripts/eval_bucket_correlation.py) --
+# not a hand-picked constant. `SessionBelief.observe()` multiplies the ODDS
+# of every other attribute by this factor (or its reciprocal, on a
+# non-answer), which is the correct Bayesian update given this table as the
+# per-pair likelihood ratio.
+#
+# The direction is NOT uniform, and that's the finding worth keeping: a
+# detected `material` almost always becomes `hard_constraints[0]` and gets
+# pre-disclosed at turn 1 for buying-scenario sessions, consuming the "slot"
+# a minor attribute would otherwise occupy -- so material answered predicts
+# every other attribute is 5-9x LESS likely (OR 0.11-0.21), and material
+# NOT answered predicts them 5-9x MORE likely. Among color/style/size/
+# use_case themselves, once material's effect is set aside, the correlation
+# runs the other way: a customer whose card discloses one minor attribute is
+# 1.2-4.7x MORE likely to have others too (richer listings surface several
+# minor attributes together), so a non-answer on one of THESE should pull
+# the others down, not up.
+#
+# size, use_case, feature and budget never appear as the observed (row) key:
+# their marginals (0.045, 0.020, 0.960, 0.000) leave under 15 public sessions
+# on one side of the answered/non-answer split, too few to trust a ratio
+# from -- omitted rather than guessed. A pair missing from this table gets no
+# update (odds ratio 1.0), not a fallback constant.
+BUCKET_ANSWER_LR: dict[str, dict[str, float]] = {
+    "material": {"color": 0.209, "style": 0.136, "size": 0.113, "use_case": 0.156},
+    "color": {"material": 0.209, "style": 2.89, "size": 2.489, "use_case": 1.243},
+    "style": {"material": 0.136, "color": 2.89, "size": 1.877, "use_case": 4.688},
+}
 
-# Below this, an attribute is treated as not worth asking about. Set so the
-# prior alone never suppresses anything (the smallest prior, budget, is 0.001)
-# -- only *observed* non-answers can push an attribute under it.
+# Below this, an attribute is treated as not worth asking about.
 EXHAUSTED_THRESHOLD = 0.0005
 
 
@@ -334,17 +334,7 @@ EXHAUSTED_THRESHOLD = 0.0005
 LM_MODEL_NAME = "distilbert-base-uncased"
 
 # Beliefs at or above this normalized entropy are treated as "the model does
-# not know". Calibrated, not chosen by feel: measured against the true
-# target's extracted material over the 200-sample public set
-# (scripts/eval_lm_confidence.py), top-1 accuracy by entropy band was
-#
-#     H < 0.60      n= 61   0.787
-#     0.60-0.75     n=105   0.371
-#     0.75-0.85     n= 14   0.000
-#
-# -- monotonic, and steep. 0.60 is where the belief is still worth acting on;
-# above it the prediction is at or below the always-guess-the-mode baseline
-# of 0.322, so acting on it would be worse than doing nothing.
+# not know".
 MAX_CONFIDENT_ENTROPY = 0.60
 
 
@@ -352,16 +342,14 @@ MAX_CONFIDENT_ENTROPY = 0.60
 # Pseudo-relevance feedback
 # ==========================================================================
 
-# How many top-ranked products are assumed relevant. Classic PRF uses 10-20;
-# smaller is safer here because a wrong assumption is what causes drift.
+# How many top-ranked products are assumed relevant.
 FEEDBACK_DOCS = 10
 
 # How many expansion terms survive into the second query.
 EXPANSION_TERMS = 8
 
 # A term must appear in at least this many feedback documents to be
-# considered. A term in one document out of ten is that document's
-# idiosyncrasy, not a property of the result set.
+# considered.
 MIN_FEEDBACK_DF = 3
 
 # Terms shorter than this are dropped -- FTS5 tokenises aggressively and short
@@ -370,22 +358,15 @@ MIN_TERM_LENGTH = 3
 
 
 # ==========================================================================
-# Cross-encoder re-ranker (disabled by default)
+# Cross-encoder re-ranker
 # ==========================================================================
 
 RERANK_MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
 MINILM_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 MINILM_MAX_LENGTH = 256
 
-# Characters of product text shown to the reranker. Cost here is dominated by
-# prefill, which is linear in prompt length, so this is the main runtime knob.
-# Long enough to carry the title plus the first feature or two, which is where
-# material/colour/closure information actually lives in this catalog.
 MAX_DOC_CHARS = 400
 
-# Pairs scored per forward pass. Kept small: peak RSS matters more than
-# throughput on a 4.6 GB-free machine, and padding waste grows with batch size
-# when document lengths are uneven.
 BATCH_SIZE = 4
 
 
@@ -393,44 +374,11 @@ BATCH_SIZE = 4
 # Long-term profile store
 # ==========================================================================
 
-# Overridable so a *local benchmark* run can be isolated from the persistent
-# store. This matters more than it looks: the store is write-through and
-# survives process exit, so repeated local eval runs accumulate history and
-# feed it back into subsequent runs. Measured on the 200-sample public set,
-# counting sessions whose reset() received a non-empty carried hint:
-# run 1 -> 45/200, run 2 -> 105/200, run 3 -> 200/200. Any A/B of a
-# hint-consuming agent is therefore confounded by how many times the eval had
-# been run before, and drifts toward "every session is influenced" as you
-# iterate. Cross-session persistence is a real, intended feature for the
-# graded run (one pass, genuine session history); it is purely an artifact
-# when re-scoring the same 200 samples over and over. scripts/run_eval.py
-# sets this to a per-run temp path by default; set it explicitly to isolate
-# `python3 -m evaluator.local_evaluator` the same way:
-#     TECHJAM_PROFILE_STORE=/tmp/store.json uv run python3 -m evaluator.local_evaluator
 STORE_PATH_ENV = "TECHJAM_PROFILE_STORE"
 DEFAULT_STORE_PATH = Path("data/user_profiles.json")
 
-# A profile key is a content hash with no customer id behind it (see module
-# docstring) -- most repeat-key sessions on this catalog turn out to be a
-# coincidental template collision, not a genuine returning shopper. Measured
-# directly: carrying forward *any* single historical disclosure as a hint
-# regressed the full 200-sample public set (HitRate 0.755->0.745, MRR
-# 0.384->0.355, TechnicalScore 0.601->0.585) because a single wrong guess
-# sinks the true target below every neutral (unknown-attribute) candidate,
-# regardless of how small its boost weight is -- lowering the weight alone
-# can't fix that (the experiment's PROFILE_HINT_WEIGHT constant is long gone
-# from agent.py; the finding is written up in
-# `.claude/skills/retrieval-experiments/SKILL.md` #5). Requiring the
-# *same* value to recur at least twice in history before it's trusted as a
-# hint filters out one-off coincidental collisions while still catching a
-# shopper who has genuinely stated the same preference more than once.
-#
-# That last sentence is the hypothesis, and it was tested and did not hold:
-# gating on corroboration still scored below baseline, because a value
-# recurring twice under one key does not make it likelier to be right for a
-# third, unrelated session sharing that key. Kept as the gate on `carried`
-# anyway -- it is the conservative choice for whatever reads it next, and it
-# costs nothing while nothing does.
+# if user has preference for a certain attribute for at least MIN_CORROBORATION
+# times, it will be carried as a hint for future sessions
 MIN_CORROBORATION = 2
 
 

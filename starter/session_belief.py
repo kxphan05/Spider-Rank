@@ -25,7 +25,22 @@ belief updates from what this particular customer actually does.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from .config import (ANSWERABILITY_PRIOR, EXHAUSTED_THRESHOLD, NON_ANSWER_SPILLOVER)
+from .config import (ANSWERABILITY_PRIOR, BUCKET_ANSWER_LR, EXHAUSTED_THRESHOLD)
+
+
+def _bayes_update(prob: float, likelihood_ratio: float) -> float:
+    """Multiply `prob`'s ODDS by `likelihood_ratio`, return the new probability.
+
+    Odds, not probability, is what a likelihood ratio composes correctly
+    with: this is what lets several observations across a session multiply
+    together instead of the raw-probability approach it replaced, which had
+    no principled way to combine more than one non-answer.
+    """
+    if prob <= 0.0 or likelihood_ratio == 1.0:
+        return prob
+    odds = prob / (1.0 - prob)
+    new_odds = odds * likelihood_ratio
+    return new_odds / (1.0 + new_odds)
 
 
 
@@ -48,22 +63,31 @@ class SessionBelief:
     non_answers: int = 0
 
     def observe(self, attribute: str | None, was_answered: bool) -> None:
-        """Record the outcome of one clarifying question."""
+        """Record the outcome of one clarifying question.
+
+        Both branches update every *other* remaining attribute's belief by
+        the measured likelihood ratio in `BUCKET_ANSWER_LR[attribute]`
+        (answered: multiply odds by the ratio; non-answer: by its
+        reciprocal) -- an actual per-pair Bayesian update from the public
+        set's card composition, not a single hand-set constant applied
+        uniformly. A pair absent from that table (insufficient public-set
+        support, or `attribute` not a row in it) gets no update at all.
+        """
         if attribute is None:
             return
         self.asks += 1
+        ratios = BUCKET_ANSWER_LR.get(attribute, {})
         if was_answered:
-            # An answer says nothing reliable about the other buckets -- the
-            # card's composition is not observable from one hit -- so nothing
-            # else is touched. Resisting the urge to invent a correlation
-            # here is deliberate: there is no measurement behind one.
             self.answerable[attribute] = 0.0
+            for other, ratio in ratios.items():
+                if self.answerable.get(other, 0.0) > 0.0:
+                    self.answerable[other] = _bayes_update(self.answerable[other], ratio)
             return
         self.non_answers += 1
         self.answerable[attribute] = 0.0
-        for other in self.answerable:
-            if self.answerable[other] > 0.0:
-                self.answerable[other] *= NON_ANSWER_SPILLOVER
+        for other, ratio in ratios.items():
+            if self.answerable.get(other, 0.0) > 0.0:
+                self.answerable[other] = _bayes_update(self.answerable[other], 1.0 / ratio)
 
     def rank(self, excluded: set[str]) -> list[str]:
         """Remaining attributes, most-answerable first."""

@@ -2,6 +2,10 @@
 
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
 
+See [`TEAM_REPORT.md`](TEAM_REPORT.md) for method, model choice, the
+latency/token/cost disclosure, and limitations (full version with ablations
+in `docs/team_report.md`).
+
 # How to reproduce our results
 
 ## 0. Clone the repo
