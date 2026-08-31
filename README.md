@@ -138,6 +138,16 @@ Shows the slate plus a live panel of what the agent extracted, questions asked, 
 
 > Binds all interfaces by default. Add `--server.address 127.0.0.1` to keep it local.
 
+## Optional: SpiderRank live demo (FastAPI + custom UI)
+
+Also not scored. Same agent, a hand-built chat page instead of Streamlit's default theme — chat bubbles, animated attribute chips, an emoji product grid, an intent-override banner.
+
+```bash
+uv run --with fastapi --with "uvicorn[standard]" uvicorn demo.web_app:app --port 8000
+```
+
+Then open <http://localhost:8000>. See `docs/hosting_the_demo.md` for deploying it beyond your own machine.
+
 ---
 
 ## Environment variables
