@@ -215,3 +215,135 @@ anything external.
    Cross-session persistence remains a real feature for the graded single
    pass — this only removes the re-scoring artifact. Score-neutral today
    since `profile_hint` is unread.
+
+---
+
+6. ~~**Prototype sentence length in `EmbeddingIntentClassifier`.**~~
+   **Hypothesis rejected: no accuracy gain from shorter prototypes.**
+   Hypothesis was that `PROTOTYPE_BUYING`/`PROTOTYPE_BROWSING`
+   (`starter/classifier.py`) are long, multi-clause sentences that pack
+   several attributes into one embedding (e.g. `"I want a wool sweater,
+   crew neck, for under $50"` carries material + style + price at once),
+   diluting the buying/browsing signal in the resulting vector and hurting
+   nearest-centroid accuracy. Tested with `scripts/ab_prototype_length.py`
+   (kept, read-only): held the eval set fixed (160 harvested turn-1
+   utterances + 16 hand-written OOD probes, same pools `eval_intent.py`
+   uses) and varied only the prototype set feeding the same centroid rule
+   — baseline (current, full sentences, avg 8.8 words) against each of the
+   13/14 originals rewritten as a short fragment carrying the *same*
+   attributes (avg 4.0 words, content held constant, e.g. `"I need a pair
+   of black leather boots in size 9."` → `"black leather boots, size 9"`;
+   not truncation — every rewrite is a complete, natural utterance).
+       variant                 avg words   turn-1   OOD probe
+       baseline (full)               8.8    0.981       1.000
+       short (content-matched)       4.0    0.969       1.000
+   Turn-1 accuracy moved 0.981→0.969, i.e. ~2 of 160 examples — the wrong
+   direction for the hypothesis, and not distinguishable from noise at
+   this n, but zero evidence it helps either.
+   Conclusion: on this eval set, prototype length is not the accuracy
+   lever — full sentences are at least as good as, and by a small margin
+   better than, shorter content-matched ones. This is consistent with the
+   existing top-*k*-trimmed-prototype sweep in `eval_intent.py`'s own
+   docstring (every trimmed variant scored worse than the untrimmed
+   centroid) — two independent ways of "shrinking" the prototype signal
+   both came back flat-to-negative. Do not re-shorten
+   `PROTOTYPE_BUYING`/`PROTOTYPE_BROWSING` on this theory without new
+   evidence.
+   (`ab_prototype_length.py` also has two mechanical-truncation variants,
+   @4 and @6 words, scoring markedly worse — 0.869 and 0.912. That's not a
+   length result: truncation frequently cuts off the purchase-verb/
+   attribute cue itself, e.g. `"I want to buy a pair of shoes"` →
+   `"I want to buy a"`, so the drop is cue-loss, not dilution. Kept in the
+   script as a documented confound, not as a second data point for this
+   entry.)
+
+---
+
+7. ~~**PHRASE_MAX_N (verbatim-span cap in `BM25Index.phrase_search`).**~~
+   **Fixed: 5 → 6.** `phrase_search` (`starter/retrieval.py:226`) walks
+   n-gram size from `PHRASE_MAX_N` down to `PHRASE_MIN_N`, longest first,
+   and only runs the first `MAX_PHRASE_QUERIES=24` distinct grams it
+   builds — so raising `PHRASE_MAX_N` isn't free: it spends more of that
+   fixed budget on long, rare spans before any shorter gram is tried at
+   all. Swept with `scripts/sweep_phrase_max_n.py` (kept, read-only,
+   supports `--track-failures` to dump per-sample hit/rank per value).
+   60-sample seed-7 subset first (values 3–20), then the full 200-sample
+   set at the shortlist it pointed to:
+       PHRASE_MAX_N   HitRate    hits      MRR    MTTC  Technical    delta
+       5 (was shipped)  0.945  189/200  0.5564   3.250     0.7944       --
+       6                0.945  189/200  0.5799   3.290     0.8007  +0.0062
+       8                0.940  188/200  0.5549   3.390     0.7887  -0.0058
+       10               0.940  188/200  0.5575   3.400     0.7893  -0.0052
+   5 and 6 produce the **identical 11-sample miss set** — 6's entire gain
+   is from re-ranking the 189 shared hits (32 samples changed rank, 20
+   improved / 12 worsened, a real net gain not one lucky sample). 8 and 10
+   are identical to each other in outcome and add exactly one new miss on
+   top of those 11 (`public_0159`, a `buying` sample, hit at 5/6, miss at
+   both 8 and 10) — the budget-crowding mechanism costing a real hit, not
+   noise. 10, 15, and 20 scored byte-for-byte identical on the subset
+   sweep too: once `PHRASE_MAX_N` exceeds the longest query actually seen,
+   no new grams get generated, so headroom past ~10 is dead weight, and
+   the 6→8 range is where the crowding cost already exceeds the
+   longer-span benefit. Shipped at **`PHRASE_MAX_N = 6`**
+   (`starter/config.py`). Do not raise it back toward 8–10+ on the "longer
+   verbatim span = more specific = better" intuition without re-running
+   this sweep — it does not hold once the 24-query budget is in the
+   picture.
+
+---
+
+8. ~~**`EmbeddingNonAnswerDetector` misclassifying terse catalog-jargon
+   answers as non-answers.**~~ **Fixed.** Found while root-causing the 11
+   full-set misses left after entry 7 (all `lost-in-fusion`: the target
+   never reaches BM25/dense's own top pages, let alone the fused pool —
+   see `scripts/eval_failures.py --sample-ids`, which now supports a
+   `--sample-ids` filter for exactly this kind of targeted re-probe
+   instead of the full ~hour run). 8 of the 11 shared one shape: the agent
+   asks the `feature` question, the customer *does* answer with real
+   content straight from the catalog (the evaluator's `customer_reply`
+   template is `"For that, what matters is: {value}."`, and `value` is
+   only ever emitted when non-empty — informative by construction), but
+   the value is often a bare spec fragment (`"Imported."`, `"Button
+   closure."`, `"Pull On closure."`) rather than a natural sentence.
+   `PROTOTYPE_INFORMATIVE` (`starter/classifier.py`) was all full
+   sentences, so these fragments embedded closer to
+   `PROTOTYPE_NON_ANSWER` and got scored a non-answer — silently dropped
+   from the query at `agent.py`'s `SKIP_NON_ANSWERS_IN_QUERY` gate, so the
+   session's query never grew past "category + material" for the rest of
+   the session. Confirmed directly, not inferred: measured
+   `EmbeddingNonAnswerDetector.is_non_answer` on the exact transcript
+   strings before touching anything —
+       text                                          sim_na  sim_inf  verdict
+       "For that, what matters is: Imported."          .619    .599  non_answer (wrong)
+       "...Button closure; Hand Wash Only."             .627    .610  non_answer (wrong)
+       "...Pull On closure."                            .599    .582  non_answer (wrong)
+       "...color: grey."                                .651    .648  answer (correct — carries an explicit label the informative prototypes resemble)
+   `classify_reply_lexically` (the non-embedding fallback) got all of
+   these right already — the bug was specific to the embedding path.
+   Fix: added ~12 terse catalog-jargon examples to `PROTOTYPE_INFORMATIVE`
+   (`"Imported."`, `"Button closure."`, `"Hand Wash Only."`, etc.) rather
+   than hard-coding the evaluator's literal template string, so the fix is
+   a real embedding-similarity improvement (should transfer to the hidden
+   grading simulator's own phrasing) and not local-template memorization.
+   Re-verified against the same transcript strings post-fix: every one
+   flips to `answer`, and the two genuine declines tested alongside them
+   (`"I don't have an additional preference for feature."`, the boundary
+   hand-back phrasing) still correctly read `non_answer`.
+   Full 200-sample set, before → after (before = entry 7's shipped state,
+   `PHRASE_MAX_N=6`, no other change):
+       metric             before    after     delta
+       HitRate            0.9450   0.9650   +0.0200  (189/200 -> 193/200)
+       MRR                0.5799   0.5980   +0.0181
+       MTTC                3.290    2.985   -0.305 (faster)
+       TechnicalScore      0.8007   0.8222   +0.0215
+   Exactly 4 samples flipped miss→hit (`public_0052, 0083, 0095, 0174`),
+   **zero regressions** anywhere in the 200-sample set (checked
+   sample-by-sample, not just the aggregate). The other 4 diagnosed
+   samples (`public_0020, 0096, 0111, 0161`) did not flip — probed again
+   post-fix and confirmed the fix still helped (e.g. `public_0111` moved
+   from completely unreachable to a real fused rank of 129), but those
+   customers never disclose anything beyond material + one generic
+   catalog term for the rest of the session, so "category + material +
+   Imported" still isn't enough to outrank hundreds of similar products.
+   That is a genuine information ceiling, not a further instance of this
+   bug — do not re-chase it by further editing `PROTOTYPE_INFORMATIVE`.

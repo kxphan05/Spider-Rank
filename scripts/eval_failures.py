@@ -61,10 +61,22 @@ def main() -> None:
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", default="logs/failures.json")
+    parser.add_argument(
+        "--sample-ids", nargs="+", default=None,
+        help="only replay these sample_id(s) -- skips the rest of the 200-sample loop entirely "
+             "(sessions are independent, so this is safe), for targeted root-causing of known misses "
+             "instead of the full ~hour run",
+    )
     args = parser.parse_args()
 
     isolate_profile_store()
     samples = load_jsonl(args.dataset)
+    if args.sample_ids:
+        wanted = set(args.sample_ids)
+        samples = [s for s in samples if s["sample_id"] in wanted]
+        missing = wanted - {s["sample_id"] for s in samples}
+        if missing:
+            print(f"WARNING: sample_id(s) not found in dataset: {sorted(missing)}")
     if args.limit:
         samples = samples[: args.limit]
     catalog_ids, categories, products = catalog_index(args.catalog)

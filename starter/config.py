@@ -193,9 +193,13 @@ MAX_QUERY_CHARS = 2000
 DENSE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DENSE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
-# Verbatim-span matching parameters (BM25Index.phrase_search).
+# Verbatim-span matching parameters (BM25Index.phrase_search). Swept in
+# scripts/sweep_phrase_max_n.py -- 6 is a measured +0.0062 Technical over the
+# previous default of 5 on the full 200-sample set, all from better ranking
+# of already-hit samples, not new hits. See retrieval-experiments skill entry
+# 7 before changing this again.
 PHRASE_MIN_N = 2
-PHRASE_MAX_N = 5
+PHRASE_MAX_N = 6
 
 # Per-query budget on phrase lookups. Each is an indexed FTS5 phrase scan, so
 # they are cheap, but an accumulated 10-turn query has a long token tail.

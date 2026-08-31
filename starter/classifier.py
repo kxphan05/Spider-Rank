@@ -477,6 +477,28 @@ PROTOTYPE_INFORMATIVE = (
     "Something with a zip pocket on the inside.",
     "I want a crew neck rather than a v-neck.",
     "Stainless steel, nothing that tarnishes.",
+    # Terse catalog-jargon fragments, added after a measured failure: the
+    # evaluator's own "feature" and "style" bucket answers are frequently a
+    # bare spec term lifted straight from the product listing (attribute
+    # bucket data, not customer prose), which read as closer to the
+    # non-answer prototypes above than to any of this tuple's full sentences
+    # -- so a real disclosure like "For that, what matters is: Imported."
+    # was being scored a non-answer and silently dropped from the query
+    # (agent.py's SKIP_NON_ANSWERS_IN_QUERY). Confirmed directly against
+    # scripts/eval_failures.py output: 8 of 11 persistent misses on the
+    # public set had exactly this shape in their transcript.
+    "Imported.",
+    "Button closure.",
+    "Hand Wash Only.",
+    "Pull On closure.",
+    "Zipper closure.",
+    "Tie closure.",
+    "Machine Wash, Line Dry.",
+    "Elastic waistband.",
+    "Buckle closure.",
+    "Non-slip rubber sole.",
+    "Adjustable strap.",
+    "Imported; Zipper closure.",
 )
 
 # Lexical floor for the non-answer detector, used when the embedding model is
