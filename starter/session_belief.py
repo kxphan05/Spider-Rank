@@ -36,7 +36,7 @@ def _bayes_update(prob: float, likelihood_ratio: float) -> float:
     together instead of the raw-probability approach it replaced, which had
     no principled way to combine more than one non-answer.
     """
-    if prob <= 0.0 or likelihood_ratio == 1.0:
+    if prob <= 0.0 or prob >= 1.0 or likelihood_ratio == 1.0:
         return prob
     odds = prob / (1.0 - prob)
     new_odds = odds * likelihood_ratio

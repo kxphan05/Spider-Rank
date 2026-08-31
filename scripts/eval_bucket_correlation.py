@@ -33,8 +33,6 @@ public one -- it would invalidate the table the same way a shifted
 """
 from __future__ import annotations
 
-import math
-
 from _common import DEFAULT_CATALOG, DEFAULT_DATASET  # noqa: F401
 
 from evaluator.local_evaluator import (  # noqa: E402

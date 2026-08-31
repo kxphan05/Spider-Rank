@@ -33,3 +33,8 @@ exclude = ["evaluator"]
 # B  bugbear (real footguns)                    C4 comprehension clarity
 # SIM simplifications                           UP  py312 idioms
 select = ["F", "E9", "B", "C4", "SIM", "UP"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
