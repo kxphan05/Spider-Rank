@@ -164,6 +164,51 @@ All optional, all have working defaults.
 
 ---
 
+## Repository layout
+
+**Top level**
+
+| file | what it is |
+|---|---|
+| `TEAM_REPORT.md` | condensed method/model/cost/limitations report (submission-required) |
+| `docs/team_report.md` | full report, with ablations |
+| `TODO.md` | the competition specification, as given |
+| `DATA_ATTRIBUTION.md` | catalog data source and license |
+| `results.json` | latest local-evaluator output |
+| `pyproject.toml`, `requirements.txt`, `uv.lock` | dependency manifests |
+
+**Directories**
+
+| directory | what's in it |
+|---|---|
+| `starter/` | the submitted agent — see below |
+| `evaluator/` | organizer-provided scoring harness, unmodified |
+| `scripts/` | development/diagnostic tooling — sweeps, A/B tests, setup, deck/demo builders; see `docs/team_report.md` § 9 for the full list |
+| `tests/` | unit tests for `starter/`'s pure-function modules |
+| `demo/` | the two optional, unscored demo UIs (Streamlit + FastAPI) |
+| `docs/` | competition spec, submission rules, design notes, full team report |
+| `data/` | catalog + dense index — not in the repo, built by steps 3-4 above |
+| `model/` | downloaded model weights — not in the repo, built by step 4 above |
+
+### `starter/` — the agent
+
+| file | what it does |
+|---|---|
+| `agent.py` | `Agent`, the entry point. Wires every module below into one `respond()` per turn: builds the query, runs retrieval, boosts by disclosed attributes, reranks, picks the next question. |
+| `retrieval.py` | Hybrid BM25 + dense retrieval, fused by reciprocal rank fusion. |
+| `attributes.py` | Entropy-based choice of which attribute to ask about next, plus catalog-side attribute/price extraction. |
+| `classifier.py` | Buying-vs-browsing intent classification, and the override-/non-answer-detection embeddings and regex. |
+| `prf.py` | Pseudo-relevance feedback — a query-expansion leg fused alongside BM25 and dense. |
+| `reranker.py` | Cross-encoder reranking of the fused candidate pool (MiniLM, shipped; Qwen3, demo-only). |
+| `lm_confidence.py` | Optional masked-LM belief over closed attribute vocabularies, used as a confidence gate. |
+| `session_belief.py` | Within-session Bayesian estimate of which attributes this customer can still answer. |
+| `user_profile.py` | Persistent cross-session profile store — built, but its output goes unread (see limitations below). |
+| `text_utils.py` | Tokenization, stopwords, and spelling normalization shared by every retrieval leg. |
+| `config.py` | Every tunable constant and feature flag, in one place. |
+| `paths.py` | Model-weight and catalog path resolution, plus catalog fingerprinting. |
+
+---
+
 ## Limitations & what we'd improve with more time
 
 - Much of the pipeline leans on hand-written regex and closed vocabularies rather than anything learned,
