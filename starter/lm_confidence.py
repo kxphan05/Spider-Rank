@@ -1,18 +1,10 @@
 """Local masked-LM belief over closed attribute vocabularies, with entropy
 as the confidence gate.
 
-Two approximations, both deliberate and both worth knowing when reading the
-numbers this produces:
-
-1. **Independent masks.** A value tokenizing to k word-pieces is scored with
-   k `[MASK]`s in one forward pass, summing the per-position log-probabilities.
-   That ignores dependence between the masked positions, which is the standard
-   pseudo-log-likelihood approximation; the exact alternative costs k passes
-   per value. Since every value competes under the same approximation and the
-   result is only used to rank and to gate, the bias is largely shared.
-2. **Length normalization.** Summed log-probabilities favour short values, so
-   scores are divided by token count. Without it "tan" beats "polyester"
-   almost regardless of context.
+Two approximations: independent masks (a k-token value gets k [MASK]s in one
+pass, summing log-probs -- the standard pseudo-log-likelihood shortcut) and
+length normalization (dividing by token count, since otherwise "tan" beats
+"polyester" almost regardless of context).
 """
 from __future__ import annotations
 

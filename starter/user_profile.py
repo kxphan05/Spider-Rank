@@ -1,48 +1,17 @@
-"""Persistent, cross-session long-term user-profile store (TODO.md III,
-"Runtime Adaptation: ... continuously updating short-term session states and
-long-term user profiles").
+"""Persistent, cross-session long-term user-profile store.
 
-Identity problem: `docs/agent_api_contract.json`'s `reset_request` gives us
-`session_id` (fresh per session -- `evaluator/local_evaluator.py` mints a new
-`uuid4` per sample) and an anonymized `user_profile` dict (purchase_frequency,
-average_prior_rating, rating_style, preference_tags, summary). There is no
-customer/user id anywhere in the contract, so nothing marks two sessions as
-"the same shopper" except the content of that anonymized profile itself.
-This module keys the persistent store off a stable hash of that content:
-two sessions presenting an identical anonymized profile are treated as the
-same returning shopper profile. This is deliberately coarser than tracking a
-literal individual -- on the public set, 125 of 200 samples' profiles are
-unique, i.e. profile collisions across ostensibly-different sessions do
-happen (a small template set generates the profiles).
+No customer/user id exists anywhere in the API contract, so this module keys
+the store off a stable hash of the anonymized `user_profile` dict itself --
+two sessions with an identical profile are treated as the same returning
+shopper. Measured to carry no usable signal though (shared-key sessions want
+the same category only 0.5% of the time, vs. a 1.2% random baseline -- see
+the retrieval-experiments skill #5), so the `carried` value this returns is
+threaded into `SessionState.profile_hint` but deliberately unread.
 
-That collision rate is not the whole story, and the rest of it is why the
-carried value is currently unused. Measured by
-`scripts/eval_profile_signal.py --check collision`: across the 409 pairs of
-sessions that share a profile key, only 0.5% want a target in the same
-coarse category, against a 1.2% +- 0.5% random-pair baseline -- a shared key
-implies no more shared taste than picking two sessions at random. So
-`start_session()` still returns a `carried` dict and `Agent` still threads it
-into `SessionState.profile_hint`, but nothing reads it: three ways of
-consuming it were each measured to regress the full public set, and the
-collision number above explains why they had to
-(`.claude/skills/retrieval-experiments/SKILL.md` #5 has the full write-up).
-Recording still happens unconditionally -- it is what TODO.md
-III asks for, it is cheap, and re-running the diagnostic is how you would
-find out whether the hidden set behaves differently.
-
-Storage is a single write-through JSON file (no server, no external DB --
-"heavy external industrial vector DB clusters" are explicitly out of scope
-per TODO.md, and at this project's scale a flat file is plenty). Write-through
-because the API contract has no "session ended" hook to flush on -- a session
-can stop at any turn up to MAX_TURNS=10 with no explicit close() call.
-
-Per-attribute disclosure history is stored as an append-only list keyed by a
-store-local `session_index` counter (not wall-clock time -- an offline batch
-eval runs many sessions within milliseconds of each other, so real
-timestamps wouldn't actually separate "old" from "new" the way session count
-does). Recency-weighting that history (slot decay) and bounding its growth
-(dynamic truncation) are later, additive layers on this same schema -- see
-the module docstring update once they land.
+Storage is a single write-through JSON file (no server/DB needed at this
+scale); write-through because the API has no "session ended" hook to flush
+on. Disclosure history is keyed by a store-local session_index counter
+rather than wall-clock time, since batch eval runs sessions milliseconds apart.
 """
 from __future__ import annotations
 
@@ -71,9 +40,7 @@ def profile_key(user_profile: dict) -> str:
     """Stable identity key for an anonymized `user_profile` dict.
 
     Canonicalized via sorted-key JSON so field order never changes the key;
-    truncated to 16 hex chars (64 bits) -- collision risk at this catalog's
-    scale (a few hundred distinct profile shapes) is negligible, and a short
-    key keeps the on-disk file and debug logs readable.
+    truncated to 16 hex chars, plenty at this scale and easier to read in logs.
     """
     if not isinstance(user_profile, dict):
         user_profile = {}
@@ -107,12 +74,9 @@ class UserProfileStore:
     def start_session(self, user_profile: dict) -> tuple[str, int, dict[str, str]]:
         """Register a new session under this profile's key.
 
-        Returns `(key, session_index, carried)`: `session_index` is this
-        profile's 1-based session counter (used later to timestamp
-        disclosures from this session), and `carried` is the most-recent
-        historical value seen per attribute, for the caller to seed as a
-        *boost-only* prior -- never treated as if the customer said it this
-        session.
+        Returns `(key, session_index, carried)`: `carried` is the most-recent
+        historical value per attribute, for the caller to seed as a
+        boost-only prior -- never as if this customer said it this session.
         """
         if not isinstance(user_profile, dict):
             user_profile = {}

@@ -1,20 +1,8 @@
 """Buying-vs-browsing intent classification for routing.
 
-Two implementations, same IntentSignal interface:
-
-- EmbeddingIntentClassifier (primary): zero-shot nearest-centroid cosine
-  similarity in bge-small embedding space against a small hand-written set
-  of prototype utterances per class. No training data required, and
-  semantic similarity should generalize to the hidden grading simulator's
-  actual phrasing better than exact keyword matches would.
-- classify_intent (fallback): lexical/regex cues -- necessity/hedge phrases
-  plus concrete attribute vocabulary (material/color/size/price). Used if
-  the embedding model can't be loaded.
-
-Meant to be called every turn on the agent's accumulated query text (not
-just the first message): a session that starts vague should read as more
-"buying-like" once a couple of clarifying answers land concrete attribute
-values, and routing should react to that, not stay pinned to a turn-1 label.
+Two implementations sharing the IntentSignal interface: EmbeddingIntentClassifier
+(zero-shot nearest-centroid over prototype utterances, primary) and
+classify_intent (lexical/regex fallback if the embedding model can't load).
 """
 from __future__ import annotations
 
@@ -34,12 +22,9 @@ BUYING_PHRASES = (
     r"\bhas\s+to\s+be\b", r"\bspecifically\b", r"\bexactly\b",
     r"\bkey\s+requirement\b", r"\bshould\s+be\b", r"\bwith\s+an?\b",
     r"\bmade\s+of\b", r"\bin\s+size\b",
-    # Purchase verbs. This list had no way at all to say "I am here to buy
-    # something" -- "i want to buy shoes" scored zero buying evidence and fell
-    # through to the browsing tie-break below, which is the wrong answer to
-    # the most explicit purchase sentence a customer can write. Negation is
-    # handled by _is_negated, so "not looking to buy yet" still reads
-    # browsing.
+    # Purchase verbs, so "i want to buy shoes" scores as buying rather than
+    # falling through to the browsing tie-break. _is_negated still catches
+    # "not looking to buy yet".
     r"\bbuy(?:ing)?\b", r"\bpurchase\b", r"\bplace\s+an?\s+order\b",
 )
 
@@ -70,34 +55,21 @@ SIZE_RE = re.compile(
 PRICE_RE = re.compile(r"(\$\s?\d+|\bunder\s+\$?\d+|\bbudget\s+(?:of\s+)?\$?\d+|\d+\s*dollars)", re.I)
 
 
-# "n't" deliberately has no leading \b: in a contraction like "don't" or
-# "isn't", the "n" is preceded by a word character (o, s, ...) with no
-# boundary there -- only a trailing boundary (before the space/punctuation
-# after "t") actually exists.
+# "n't" has no leading \b since the "n" in "don't"/"isn't" isn't preceded by
+# a word boundary.
 NEGATION_RE = re.compile(
     r"\b(?:not|no|never|without)\b|n't\b"
-    # Apostrophe-less contractions, as an explicit closed list. This cannot be
-    # written as `n'?t\b`: that also matches the "nt" ending "want", "print",
-    # "garment" and "different", so every "i want black" would read as
-    # negated. Typed input drops the apostrophe constantly, and without these
-    # "i dont want black" left `black` un-negated -- and since
-    # extract_disclosed_value scans MATERIALS/COLORS in *vocab* order rather
-    # than text order, "i dont want black i want white" returned the
-    # *retracted* value.
+    # Apostrophe-less contractions as a closed list -- `n'?t\b` would also
+    # match "want"/"print"/"garment", and typed input drops apostrophes often
+    # enough that missing these left "i dont want black" un-negated.
     r"|\b(?:dont|doesnt|didnt|isnt|arent|wasnt|werent|wont|cant|cannot"
     r"|couldnt|wouldnt|shouldnt|havent|hasnt|hadnt)\b"
 )
 CLAUSE_BREAK_RE = re.compile(r"[.,;!?]")
 
-# Discourse markers that open a pivot. The negation word inside them is
-# retracting *the previous turn*, not the attribute that follows, so
-# "never mind i want white" states white -- it does not decline it. Written
-# out because punctuation is what normally stops the leak ("never mind, i
-# want white" already works, the comma being a clause break) and typed input
-# frequently has none.
-#
-# Closed list on purpose, per the #26 finding: a hand-listed set of function
-# words is safe here where a corpus-derived one is not.
+# Discourse markers that open a pivot: the negation inside them retracts the
+# previous turn, not what follows, so "never mind i want white" states white
+# rather than declining it.
 PIVOT_CUE_RE = re.compile(
     r"\b(?:never ?mind|no wait|wait no|nope|scratch that|forget (?:that|it)"
     r"|on second thought|come to think of it)\b"
@@ -107,10 +79,8 @@ PIVOT_CUE_RE = re.compile(
 def _is_negated(text: str, match_start: int) -> bool:
     """True if a negation marker precedes match_start within the same clause.
 
-    E.g. "not exactly what I had in mind" -- the "exactly" cue sits inside
-    a negated clause, so it should not count as a buying signal. Bounded by
-    the nearest clause break so negation doesn't leak across sentences
-    ("I'm not picky. Exactly this color, please." should still count).
+    Bounded by the nearest clause break so negation doesn't leak across
+    sentences ("I'm not picky. Exactly this color." still counts).
     """
     window = text[max(0, match_start - NEGATION_WINDOW_CHARS):match_start]
     # A pivot cue ends the negating span exactly the way punctuation does:
@@ -165,10 +135,7 @@ class IntentSignal:
 def detected_attributes(text: str) -> set[str]:
     """Attribute buckets already evidenced by concrete vocabulary in `text`.
 
-    Used to avoid re-asking about an attribute the customer already stated
-    (e.g. a buying session's turn-1 message naming a material) -- narrower
-    than classify_intent, since it only fires on the same fixed vocab lists,
-    not the necessity/hedge phrasing.
+    Used to avoid re-asking about an attribute the customer already stated.
     """
     if not isinstance(text, str):
         text = "" if text is None else str(text)
@@ -190,12 +157,12 @@ def classify_intent(text: str) -> IntentSignal:
         text = "" if text is None else str(text)
     lowered = text.lower()
 
-    buying_hits = (
+    buying_hits = max(
         _phrase_hits(BUYING_PHRASES, lowered)
-        + _vocab_hits(COLORS, lowered)
-        + _vocab_hits(MATERIALS, lowered)
-        + (1 if SIZE_RE.search(lowered) else 0)
-        + (1 if PRICE_RE.search(lowered) else 0)
+        , _vocab_hits(COLORS, lowered)
+        , _vocab_hits(MATERIALS, lowered)
+        , (1 if SIZE_RE.search(lowered) else 0)
+        , (1 if PRICE_RE.search(lowered) else 0)
     )
     browsing_hits = _phrase_hits(BROWSING_PHRASES, lowered)
 
@@ -271,11 +238,8 @@ PROTOTYPE_CONTINUATION = (
     "Sure, size medium works for me.",
     "It should also be waterproof.",
     "None of these quite fit, but keep the same style.",
-    # "Declining to state a preference" is semantically close to override
-    # cues (both use negation/"don't") but means the opposite here -- it's
-    # a very common reply shape (any question with nothing new to disclose
-    # gets answered this way), so it needs explicit coverage or the
-    # negation alone drags these toward the override centroid.
+    # Declining to state a preference reads as override-ish (negation/"don't")
+    # but isn't, and is common enough to need explicit coverage here.
     "I don't have a particular preference for that, up to you.",
     "No preference there, whatever you think is best.",
     "I'm not picky about that detail, it's fine either way.",
@@ -298,30 +262,10 @@ def lead_clause(text: str) -> str:
     return match.group(1) if match else text
 
 
-# Explicit discard cues, as a closed list. The embedding rule is a similarity
-# comparison, so a terse pivot whose whole content is the cue ("never mind,
-# white shoes") is judged mostly on its request half -- the same shape
-# pathology TOP_PROTOTYPES was tuned against. A literal cue is
-# not a similarity at all, so it cannot be outvoted by the rest of the
-# sentence.
-#
-# Two rules keep this from becoming query pruning's failure mode (#19/#26):
-#
-#   1. Closed list. Every alternative below is a phrase that discards a prior
-#      statement and nothing else. "actually" and "no" are not cues on their
-#      own -- "actually I also need it waterproof" and "no preference there"
-#      are ordinary continuations, and the latter is the evaluator's own
-#      non-answer template shape.
-#   2. Clause-initial only. A cue is a *prefix* to the new request; matched
-#      anywhere it would fire on catalog copy carried in a reply ("For that,
-#      what matters is: ..."). CLAUSE_SPLIT_RE cuts on the same punctuation
-#      LEAD_CLAUSE_RE uses, and each clause is anchored with match().
-#
-# The false-positive cost is no longer symmetric with a missed override, so
-# the list is deliberately narrow: respond() now also clears state.shown on a
-# detection, and in an intent_override session the evaluator keeps scoring a
-# re-shown item, so a spurious clear costs re-offered dead slates. See the
-# EXCLUDE_SHOWN note in config.py.
+# Explicit discard cues, as a closed list matched clause-initial only (a cue
+# is a prefix to the new request, not something that can appear mid-sentence
+# in ordinary catalog copy). Backs up the embedding similarity rule, which
+# loses terse pivots like "never mind, white shoes" to the request half.
 CLAUSE_SPLIT_RE = re.compile(r"[.,;:!?]+")
 
 OVERRIDE_CUE_RE = re.compile(
@@ -367,33 +311,9 @@ def _top_prototype_similarity(query_vec: np.ndarray, prototypes: np.ndarray) -> 
 class EmbeddingOverrideDetector:
     """Trimmed nearest-prototype detection of a mid-session preference reset.
 
-    Same mechanism as EmbeddingIntentClassifier (shares the caller's loaded
-    bge-small instance, no retrieval-style prefix -- utterance-to-utterance
-    similarity), separate class because it answers a different question:
-    not "is this buying or browsing" but "did the customer just discard
-    what they said earlier." A false positive here (wrongly clearing state
-    on a normal turn) costs a few wasted turns re-asking; a false negative
-    leaves stale disclosed-attribute state in place for the rest of the
-    session, which is a whole-session failure -- so the two errors are not
-    symmetric and the rule is tuned toward recall. Note the caller clears
-    state *before* extracting the current message's disclosures, so a false
-    positive discards only prior turns, never the one it fired on.
-
-    Scoring compares the mean similarity to each class's `TOP_PROTOTYPES`
-    closest members, evaluated on both the full message and its lead clause
-    (whichever looks more override-like wins). Measured against the local
-    simulator's own turns plus hand-written out-of-distribution pivots
-    (`scripts/eval_override.py`):
-
-        rule                 sim recall  sim FPR  probe recall
-        centroid (previous)       0.900    0.000         0.800
-        nearest prototype         0.933    0.151         1.000
-        this rule                 1.000    0.007         1.000
-
-    The simulator emits exactly one override template, near-verbatim
-    PROTOTYPE_OVERRIDE[0], so its recall column is easy by construction and
-    its FPR column is the honest one; the probe column is hand-picked and is
-    a smoke test, not a measurement.
+    A false negative leaves stale disclosed-attribute state for the rest of
+    the session, worse than a false positive's few wasted turns, so this is
+    tuned toward recall (mean similarity to each class's closest prototypes).
     """
 
     def __init__(self, model) -> None:
@@ -420,11 +340,9 @@ class EmbeddingOverrideDetector:
     def is_override(self, text: str) -> bool:
         if not isinstance(text, str) or not text.strip():
             return False
-        # Union, not a vote: the two rules fail on disjoint inputs. The
-        # closed list catches terse pivots the similarity comparison loses
-        # in the request half; the similarity catches paraphrases the list
-        # has no entry for ("my priorities changed"). It also runs before
-        # the encoder, so an explicit cue is decided without an embed call.
+        # Union, not a vote: the closed list catches terse pivots, the
+        # similarity catches paraphrases like "my priorities changed", and
+        # the cue check runs first so it skips the embed call when it fires.
         if matches_override_cue(text):
             return True
         variants = [text]
@@ -460,10 +378,8 @@ PROTOTYPE_NON_ANSWER = (
 )
 
 # The contrast class: a reply that *does* carry new constraint content. Kept
-# separate from PROTOTYPE_CONTINUATION rather than slicing it, because that
-# tuple is load-bearing for EmbeddingOverrideDetector and its composition is
-# pinned by a measured table -- editing it would silently
-# invalidate those numbers.
+# separate from PROTOTYPE_CONTINUATION since that tuple's composition is
+# load-bearing for EmbeddingOverrideDetector's measured numbers.
 PROTOTYPE_INFORMATIVE = (
     "I also need it to be machine washable.",
     "For that, what matters is a waterproof outer shell.",
@@ -477,16 +393,9 @@ PROTOTYPE_INFORMATIVE = (
     "Something with a zip pocket on the inside.",
     "I want a crew neck rather than a v-neck.",
     "Stainless steel, nothing that tarnishes.",
-    # Terse catalog-jargon fragments, added after a measured failure: the
-    # evaluator's own "feature" and "style" bucket answers are frequently a
-    # bare spec term lifted straight from the product listing (attribute
-    # bucket data, not customer prose), which read as closer to the
-    # non-answer prototypes above than to any of this tuple's full sentences
-    # -- so a real disclosure like "For that, what matters is: Imported."
-    # was being scored a non-answer and silently dropped from the query
-    # (agent.py's SKIP_NON_ANSWERS_IN_QUERY). Confirmed directly against
-    # scripts/eval_failures.py output: 8 of 11 persistent misses on the
-    # public set had exactly this shape in their transcript.
+    # Terse catalog-jargon fragments: bare spec terms like these were reading
+    # closer to the non-answer prototypes than to full-sentence disclosures,
+    # so real answers like "Imported." were silently dropped from the query.
     "Imported.",
     "Button closure.",
     "Hand Wash Only.",
@@ -520,17 +429,9 @@ _DECLINE_RE = re.compile(
 )
 
 
-# The hand-back: a non-answer that additionally asks *us* to decide. This is
-# the boundary scenario's signature and the only evidence the agent gets that
-# it is in one -- the agent API carries no scenario field, and the local
-# evaluator's boundary reply ("I don't have a preference for X; please use your
-# judgment.") differs from its ordinary non-answer ("I don't have an additional
-# preference for X.") in exactly this clause.
-#
-# Deliberately narrower than _DECLINE_RE, which matches any decline. Widening
-# this to all non-answers would fire on roughly three replies in five (#19) and
-# put every session into boundary mode, which is not a boundary behaviour --
-# it is a global one, and would need measuring as such.
+# The hand-back: a non-answer that also asks *us* to decide -- the only
+# signal the agent gets that it's in a boundary scenario. Narrower than
+# _DECLINE_RE, which would fire on most non-answers and put every session in it.
 DEFER_CUE_RE = re.compile(
     r"\b(?:"
     r"(?:please )?(?:use|trust) your (?:own )?(?:judgment|judgement|discretion|expertise)"
@@ -554,12 +455,8 @@ def matches_defer_cue(text: str) -> bool:
 def classify_reply_lexically(text: str) -> str:
     """Lexical floor: "non_answer" or "answer".
 
-    A reply that names concrete attribute vocabulary is informative whatever
-    else it says -- "I don't have a preference, but black is fine" discloses a
-    colour. Concrete content therefore overrides the decline cue rather than
-    the other way round, which is the safe direction: a false "non_answer"
-    would drop a real disclosure out of the query (the asymmetry that
-    the override detector's discard-cue rule shares, in the same shape).
+    Concrete attribute vocabulary always overrides a decline cue -- "I don't
+    have a preference, but black is fine" still discloses a colour.
     """
     if not isinstance(text, str) or not text.strip():
         return "answer"
@@ -571,25 +468,8 @@ def classify_reply_lexically(text: str) -> str:
 class EmbeddingNonAnswerDetector:
     """Trimmed nearest-prototype detection of a contentless clarifying reply.
 
-    Answers "did that question actually buy us anything?" -- the observation
-    the agent has never had. `Agent.respond` appends every customer message to
-    `SessionState.recent_messages`, which `_build_query` joins into the BM25
-    and dense query, so a reply carrying no constraint is searched against the
-    catalog as though it were customer content.
-
-    That is not a rare edge case on this benchmark. Derived from the
-    evaluator's own reply policy over all 200 public samples, a session has a
-    mean of **2.09** distinct answerable attribute buckets left after turn 1,
-    against a measured MTTC of ~5 -- so roughly three questions in five come
-    back empty.
-
-    Same trimmed-prototype scoring as EmbeddingOverrideDetector (see
-    TOP_PROTOTYPES), and the same error asymmetry argument, pointing the other
-    way: a false positive here *discards a real disclosure*, which is the
-    expensive direction, while a false negative merely leaves today's
-    behaviour unchanged. So this rule is tuned toward precision, not recall --
-    the opposite of the override detector -- and concrete attribute vocabulary
-    vetoes a non-answer verdict outright.
+    Tuned toward precision, not recall (opposite of EmbeddingOverrideDetector),
+    since a false positive here discards a real disclosure from the query.
     """
 
     def __init__(self, model) -> None:
@@ -623,10 +503,8 @@ class EmbeddingNonAnswerDetector:
 class EmbeddingIntentClassifier:
     """Nearest-centroid buying-vs-browsing classification via sentence embeddings.
 
-    Shares the caller's already-loaded SentenceTransformer instance (the
-    same bge-small model used for dense retrieval) rather than loading a
-    second copy. Centroids use no retrieval-style instruction prefix --
-    this is utterance-to-utterance similarity, not query-to-passage.
+    Shares the caller's already-loaded bge-small instance rather than loading
+    a second copy. No retrieval-style prefix -- utterance-to-utterance similarity.
     """
 
     def __init__(self, model) -> None:

@@ -1,31 +1,11 @@
 """Dynamic, entropy-based attribute-question selection.
 
-Replaces a fixed ask order with a Generalized-Binary-Search-style choice:
-among the attributes we can structurally extract a value for (material,
-color, price bucket), ask about whichever one has the highest value
-diversity across the *current candidate pool* -- i.e. whichever question's
-answer is most likely to split the pool, regardless of which answer comes
-back. This needs zero labeled data: it's computed live from catalog text
-and the retriever's own candidate ranking (see Zou & Kanoulas, "Learning to
+The agent picks and chooses the best attribute based on which attribute can
+ split the search space the most (see Zou & Kanoulas, "Learning to
 Ask: Question-based Sequential Bayesian Product Search", CIKM 2019, whose
 core selection term is exactly a candidate-set relevance-mass split -- their
 optional learned "reward" term needs purchase history we don't have, so we
 only implement the data-free half).
-
-Attributes without a structural extractor here (style, size, use_case,
-feature) aren't scored -- the caller falls back to a fixed order for those.
-
-The vocabularies below are calibrated against this competition's actual
-frozen catalog (data/catalog.jsonl), not guessed. Price is missing on 79.2%
-of products (measured directly -- the published Amazon Reviews 2023 dataset
-page documents "some items lack metadata" but no per-field coverage stats),
-which is why budget is compared as a numeric bound against the ~21% that do
-have one, with the rest scoring neutral rather than mismatched. Materials were checked against actual title/
-feature word frequency in the catalog: the original hand-picked list
-covered 58.3% of products; adding the five terms that showed up most in a
-frequency scan (lace, rubber, sterling silver, stainless steel, metal)
-raised that to 78.1%. Colors were already close to saturated (58.6%) and
-weren't worth expanding further.
 """
 from __future__ import annotations
 
@@ -51,20 +31,12 @@ COLORS = (
     "purple", "yellow", "orange", "navy", "beige", "tan", "gold", "silver", "multicolor",
 )
 # Attributes the dynamic (entropy-based) question selector is allowed to ask
-# about. `budget` deliberately excluded: measured against the local
-# evaluator's own customer-reply logic (evaluator/local_evaluator.py's
-# classify_constraint), 0 of 800 sampled disclosed constraint values across
-# the full public set ever bucket as "budget" -- price info almost never
-# survives intent_card()'s constraint-list truncation, so asking about it
-# reliably wastes a turn for zero information. It's kept as a low-priority
-# fallback question in agent.py instead of dropped outright, since this is a
-# local-simulator-measured behavior that may not hold for the hidden grader.
+# about. `budget` deliberately excluded most of the items are unlabelled
+# this is unhelpful for the agent.
 STRUCTURAL_ATTRIBUTES = ("material", "color")
 
 # Attributes we can extract a structured value for and use to filter/rerank
-# the candidate pool once disclosed -- wider than STRUCTURAL_ATTRIBUTES since
-# a user can volunteer a price constraint in free text even though we don't
-# proactively ask about it.
+# the candidate pool once disclosed.
 FILTERABLE_ATTRIBUTES = ("material", "color", "budget")
 
 
@@ -81,18 +53,8 @@ def _vocab_matcher(vocab: tuple[str, ...]) -> tuple[re.Pattern[str], dict[str, i
     return pattern, {word: rank for rank, word in enumerate(vocab)}
 
 
-# Word-boundary matched, NOT substring matched. This is load-bearing: with a
-# bare `word in text` the catalog extractor read "red" out of "embroidered",
-# "tan" out of "titanium"/"instant", and "lace" out of "necklace". Measured
-# over the 50k catalog, that mislabeled 21.6% of products on color (10,824
-# products, 9,312 of them a value invented where no color word occurs at all)
-# and 4.7% on material. It also explains the disagreement recorded in
-# the retrieval-experiments skill's #1 -- 16.3% of material and 37.0% of color
-# disclosures conflicting with the extractor's value for the *true target* --
-# because `extract_disclosed_value` below (the customer-text side) has always
-# used \b, so only the catalog side was loose. Two extractors over different
-# text will still disagree sometimes; they should not disagree because one of
-# them is matching inside unrelated words.
+# Word-boundary matched, NOT substring matched. so words like red
+# dont get matched to 'embroidered'
 _MATERIAL_RE, _MATERIAL_RANK = _vocab_matcher(MATERIALS)
 _COLOR_RE, _COLOR_RANK = _vocab_matcher(COLORS)
 
@@ -157,61 +119,19 @@ class AttributeIndex:
         return self._values.get(parent_asin, {}).get(attribute)
 
     def price_for(self, parent_asin: str) -> float | None:
-        """Raw catalog price, or None for the 79.2% of products without one.
-
-        Budget is compared numerically rather than by bucket equality (see the
-        budget-parsing block comment above), so the boost needs the real price.
-        None is genuinely absent here, unlike the "unknown" *string* that
-        value_for("budget", ...) reports for the same products -- that string
-        is a known value and comparing it for equality is what made a budget
-        disclosure penalize every unpriced product.
-        """
+        """Raw catalog price, or None for the 79.2% of products without one."""
         return self._prices.get(parent_asin)
 
     def popularity_for(self, parent_asin: str) -> float:
-        """Review count, the only 100%-covered catalog field.
-
-        0.0 for an id absent from the catalog rather than None: this feeds a
-        sort key, and a missing product should rank last, not raise.
-        """
+        """Review count, the only 100%-covered catalog field."""
         return self._popularity.get(parent_asin, 0.0)
 
     def by_popularity(self, candidate_ids: list[str]) -> list[str]:
-        """`candidate_ids` reordered most-reviewed first.
-
-        Deliberately a re-ranking of a pool the other legs produced, never a
-        ranking of the catalog: a leg that orders all 50k products by review
-        count injects the same constant bias into every session and cannot
-        discriminate between them.
-        """
+        """`candidate_ids` reordered most-reviewed first."""
         return sorted(candidate_ids, key=self.popularity_for, reverse=True)
 
 
-# Budget parsing. Three separate defects motivated this (all measured, none
-# visible to the local evaluator -- classify_constraint() never buckets a
-# disclosed value as "budget", so nothing below can be validated on the public
-# set and it is justified on the hidden grader's behalf):
-#
-#   1. The amount pattern was `\$\s?(\d+)`, requiring a literal dollar sign,
-#      so "less than 80 dollars" / "around fifty dollars" disclosed nothing.
-#   2. The comparator was discarded and the amount mapped to the single bucket
-#      containing it, then compared for *equality*. "Keep it under $80"
-#      resolved to the top bucket ("$48+"), so a budget ceiling boosted the
-#      most expensive products and penalized every cheap one -- sign-inverted.
-#   3. The catalog-side extractor labelled the 79.2% of products with no price
-#      as the literal string "unknown". That is a known value, not None, so
-#      under equality it scored a full mismatch: any budget disclosure
-#      penalized 39,590 of 50,000 products.
-#
-# A budget statement is now parsed into a *constraint* ("<=80" / ">=80")
-# rather than a bucket, and Agent._boost_by_disclosed compares it against the
-# candidate's real price via AttributeIndex.price_for, treating an unpriced
-# product as neutral. The whole price-bucket machinery (quantile breakpoints,
-# a per-product bucket label) went with the old scheme -- nothing read it once
-# the comparison became numeric. Bare and
-# approximate amounts ("my budget is $80", "around $80") read as ceilings:
-# that is the dominant sense of a stated shopping budget, and the floor
-# reading is taken only on an explicit "over"/"at least"/"more than".
+# Budget parsing.
 _UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
           "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
           "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
@@ -219,9 +139,6 @@ _UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
 _TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
          "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
 
-# "$80" | "80 dollars" | "80 bucks" | "80 usd" -- the currency marker may
-# precede or follow, but one of the two must be present so that a bare number
-# ("size 80") is never read as money.
 _AMOUNT_RE = re.compile(
     r"\$\s?(\d+(?:\.\d+)?)|\b(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?|usd)\b",
     re.IGNORECASE,
@@ -257,12 +174,7 @@ def _word_to_number(head: str, tail: str | None) -> float | None:
 
 
 def parse_budget_constraint(text: str) -> str | None:
-    """Parse a stated budget into a comparison token, e.g. "<=80" or ">=80".
-
-    Returns None when no monetary amount is present. The comparator is read
-    from the words leading up to the amount; anything that is not an explicit
-    floor cue is treated as a ceiling (see the block comment above).
-    """
+    """Parse a stated budget into a comparison token, e.g. "<=80" or ">=80"."""
     lowered = text.lower()
     match = _AMOUNT_RE.search(lowered)
     if match:
@@ -285,12 +197,7 @@ def parse_budget_constraint(text: str) -> str | None:
 
 
 def budget_constraint_satisfied(constraint: str, price: float) -> bool | None:
-    """Test a price against a parse_budget_constraint token.
-
-    None means "not decidable" -- an unparseable token. An unpriced product is
-    the caller's concern, since a missing price is neutral evidence rather
-    than a failed test.
-    """
+    """Test a price against a parse_budget_constraint token."""
     if constraint.startswith("<="):
         return price <= float(constraint[2:])
     if constraint.startswith(">="):
@@ -299,17 +206,8 @@ def budget_constraint_satisfied(constraint: str, price: float) -> bool | None:
 
 
 def extract_disclosed_value(attribute: str, text: str) -> str | None:
-    """Best-effort extraction of a concrete attribute value from free text
+    """Best-effort extraction of a concrete attribute value from FIRST query
     (a customer's answer to a question, or an unprompted mention).
-
-    Vocab-matched against the same MATERIALS/COLORS lists AttributeIndex uses
-    to extract catalog values, so a match here is directly comparable to a
-    candidate's extracted value. `budget` is the exception: it returns a
-    *constraint* token from parse_budget_constraint ("<=80"), not a value to
-    compare for equality, because a stated budget is a bound and not a target.
-    Negation-aware (via the same clause-scoped
-    check the intent classifier uses) so "no leather" doesn't get read as a
-    request for leather.
     """
     if not isinstance(text, str) or not text.strip():
         return None
@@ -327,13 +225,7 @@ def extract_disclosed_value(attribute: str, text: str) -> str | None:
 
 
 def normalized_entropy(values: list[str | None]) -> float:
-    """Shannon entropy over `values`, normalized to [0, 1] by log2(n_unique).
-
-    None counts as its own bucket ("we don't know") -- a pool where every
-    candidate's material is unextractable is itself a reason not to trust
-    asking about material, and this reflects that as low/zero entropy only
-    when unknowns dominate uniformly, same as any other value.
-    """
+    """Shannon entropy over `values`, normalized to [0, 1] by log2(n_unique)."""
     if len(values) < 2:
         return 0.0
     counts = Counter(values)
@@ -351,17 +243,7 @@ def _entropy_component(
     attribute_index: AttributeIndex,
     min_entropy: float,
 ) -> float | None:
-    """Normalized pool entropy for `attribute`, or None when there isn't one.
-
-    None means "entropy has nothing to say here", and there are three ways to
-    get it. The attribute has no catalog labels at all (everything outside
-    STRUCTURAL_ATTRIBUTES -- feature, style, size, use_case, budget), the pool
-    is empty, or the pool already agrees closely enough that the split would
-    be uninformative. That last case is the old `min_entropy` gate, kept so
-    the intent-conditioned thresholds in routing_params still mean something:
-    below it, entropy stops being a reason to ask rather than becoming a small
-    negative one.
-    """
+    """Normalized pool entropy for `attribute`, or None when there isn't one."""
     if attribute not in STRUCTURAL_ATTRIBUTES or not candidate_ids:
         return None
     score = normalized_entropy(attribute_index.values_for(attribute, candidate_ids))
@@ -379,28 +261,7 @@ def select_weighted_attribute(
 ) -> str | None:
     """Pick the next question by a weighted mean of informativeness and answerability.
 
-    Replaces the entropy-gate-then-fallback-list structure, where entropy
-    decided alone for material/color and answerability decided alone for
-    everything else. Two attributes could be compared only if they happened to
-    land in the same branch. Here every attribute gets one score on [0, 1] and
-    they compete directly:
-
         score = (we * H + wa * A) / (we + wa)
-
-    H is normalized pool entropy and A is this session's answerability belief.
-    **When either component is None the score is the other one on its own**,
-    already normalized to [0, 1] and therefore comparable with the two-term
-    case -- which is why this is a weighted mean rather than a weighted sum.
-    Inventing a stand-in value for a missing component would be the thing this
-    is built to avoid: `feature` has no entropy because the catalog carries no
-    feature labels, not because its entropy is low.
-
-    An attribute missing both components is not askable and is skipped.
-    Returns None when nothing is left to ask.
-
-    Iteration order is `answerability`'s (ANSWERABILITY_PRIOR is written
-    answerability-descending), so exact ties resolve toward the attribute the
-    customer is likelier to answer.
     """
     denominator = entropy_weight + answerability_weight
     if denominator <= 0.0:

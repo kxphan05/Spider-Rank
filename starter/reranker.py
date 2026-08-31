@@ -1,47 +1,12 @@
 """Cross-encoder reranking of the fused candidate pool (spec Pillar I).
 
-The competition spec's Pillar I names a "Multi-Route Retrieval -> LLM Semantic
-Ranking" pipeline, and until now this project had only the first half:
-retrieval is BM25 + dense fused by weighted RRF, then reordered by categorical
-attribute agreement and MMR. Nothing learned or generative ever looked at a
-(query, product) pair jointly, until this module.
+Two backends: `CrossEncoderReranker` (ms-marco-MiniLM-L-6-v2, ~90MB) is the
+shipped, measured stage. `QwenReranker` (Qwen3-Reranker-0.6B, scores "yes" vs
+"no" in one forward pass) is kept for the report -- at ~27s/pair on this
+hardware it's too slow to sweep or A/B, so it doesn't ship by default.
 
-`Qwen/Qwen3-Reranker-0.6B` fills it. It is a causal LM repurposed as a binary
-relevance judge: the pair is formatted into a chat template ending at the
-assistant turn, and the score is the model's probability of emitting "yes"
-rather than "no" at the next position. That means **one forward pass per pair
-and no token generation**, which is the only reason this is tractable here --
-generation on this hardware runs at under 2 tokens/second, while a
-prefill-only pass over a few hundred tokens is roughly a second.
-
-Two backends ship, and the split is a measured decision rather than
-indecision.
-
-`CrossEncoderReranker` (ms-marco-MiniLM-L-6-v2, 22M parameters, ~90 MB) is the
-**shipped, measured** stage. `QwenReranker` (Qwen3-Reranker-0.6B) is kept for
-the report and the demo as the LLM-scale variant.
-
-The reason is arithmetic, not preference. Measured on the target machine
-(i5-8365U, no CUDA, ~4.6 GB free RAM), the Qwen reranker scores a
-(query, product) pair in **~27 s** loaded as fp32 through `transformers`. Its
-judgements are good -- 0.999 for an exact match, 0.679 for a same-category
-alternative, 0.001 for off-category -- but reranking a 10-item slate across
-~1000 evaluation turns is roughly 75 hours for a *single* configuration, so it
-cannot be A/B'd, let alone swept. An unmeasurable component is one this
-project will not ship on by default -- plausible retrieval changes have gone
-unverified here before and cost score.
-
-The same argument already excluded larger models: an 8B generative model
-implies ~180 hours per evaluation on this hardware.
-
-A classic cross-encoder is the version of this idea that can actually be
-measured, and it closes the same structural gap -- nothing in the pipeline
-previously scored a (query, product) pair *jointly*, which is what
-distinguishes a reranker from the bi-encoder dense leg.
-
-Degrades like every other optional component here: if the
-weights are missing the agent logs and runs without reranking, rather than
-failing to start.
+Degrades like every other optional component: missing weights log and run
+without reranking rather than failing to start.
 """
 from __future__ import annotations
 
@@ -75,9 +40,8 @@ def _format_pair(query: str, document: str) -> str:
 class QwenReranker:
     """Binary-relevance cross-encoder over (query, product) pairs.
 
-    Raises on construction if the weights are unavailable, so `Agent.__init__`
-    can catch and degrade the same way it does for the dense index and the
-    masked LM.
+    Raises on construction if weights are unavailable, so Agent.__init__ can
+    catch and degrade the same way it does for the dense index/masked LM.
     """
 
     def __init__(self, model_name: str = RERANK_MODEL_NAME, cache_dir: str | None = None) -> None:
@@ -116,15 +80,8 @@ class QwenReranker:
 class CrossEncoderReranker:
     """Classic cross-encoder relevance scoring (ms-marco-MiniLM-L-6-v2).
 
-    Same interface as QwenReranker and the same structural role -- query and
-    document go through the model *together*, so the score can depend on their
-    interaction, unlike the dense leg where each is embedded independently and
-    compared by cosine. That joint scoring is the whole point of a reranking
-    stage, and this project ran without one for most of its life.
-
-    Trained on MS MARCO passage ranking, so it is a purpose-built reranker
-    rather than a general LM steered into the role, which is also why it is
-    roughly three orders of magnitude cheaper per pair than the Qwen backend.
+    Query and document go through the model together, unlike the dense leg
+    where each is embedded independently and compared by cosine.
     """
 
     def __init__(self, model_name: str = MINILM_MODEL_NAME, cache_dir: str | None = None) -> None:

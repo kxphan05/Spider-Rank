@@ -12,61 +12,22 @@ _FUNCTION_STOPWORDS = {
     "that", "the", "this", "to", "want", "with", "would", "you", "looking",
 }
 
-# Request verbs and discourse markers -- the words a customer wraps a request
-# in ("I want to *buy* shoes", "*actually*, *forget* that, *show* me X").
-#
-# These are stopwords for the opposite reason to the list above, and the
-# distinction matters: they are not common in this catalog, they are RARE.
-# Measured document frequencies over the 50k catalog:
-#
-#     actually 0.0018   forget 0.0032   buy 0.0261   find 0.0318
-#     need 0.0404       show 0.0428     give 0.0453  get 0.0576
-#
-# A rare term is a high-IDF term, so BM25 hands the ranking to it. "i want to
-# buy shoes" reduced to the terms {buy, shoes}, and since "shoes" sits in the
-# catalog-universal root category (df 1.000, i.e. zero IDF -- see
-# CATALOG_ROOT_MIN_SHARE in retrieval.py) the whole query was decided by "buy",
-# which returned products from the store "Buy Caps and Hats". Conversational
-# framing was outranking the only content word in the sentence.
-#
-# This is deliberately a list of ways to *ask*, never of things to ask about.
-# Measured: pruning contentful customer text costs 0.041,
-# because 89.7% of it is a verbatim substring of the target's own record; none
-# of the words below can be part of a product description of anything.
+# Request verbs and discourse markers -- words a customer wraps a request in
+# ("I want to *buy* shoes"). These are rare in the catalog, so BM25 (high
+# IDF) let them outrank the actual content word -- "buy shoes" once matched
+# the store "Buy Caps and Hats" instead of any shoe. Never a thing to ask about.
 _REQUEST_STOPWORDS = {
     "actually", "anything", "buy", "buying", "find", "forget", "get", "give",
     "hello", "hey", "hi", "instead", "need", "needs", "nevermind", "purchase",
     "recommend", "scratch", "show", "shopping", "something", "suggest",
     "thanks", "thank",
-    # Pivot discourse. "nevermind" was already here as one word, but a
-    # customer typing "never mind i want yellow" produces the tokens `never`
-    # and `mind`, and both are *rarer* in a product catalog than the colour
-    # they were retracting with:
-    #
-    #     mind 0.0169   never 0.0278   yellow 0.0251   wait 0.0022
-    #
-    # so BM25 ranked "never mind" as the most informative thing in the
-    # sentence. Same shape as the "Buy Caps and Hats" bug, one layer up.
+    # Pivot discourse -- "never mind i want yellow" tokenizes to "never"/
+    # "mind", both rarer in the catalog than "yellow", same failure shape.
     "mind", "never", "nope", "wait",
 
-    # Literal wrapper words from the local evaluator's own reply templates
-    # (`evaluator/local_evaluator.py`: "I'm looking for X. A *key
-    # *requirement* is: ...", "For that, *what matters* is: ...", "I don't
-    # have an *additional* *preference* ...", "Ask me about one *specific*
-    # *attribute*."). These frame the real constraint text but are never part
-    # of it, and like the rest of this list they are rare in the catalog --
-    # measured document frequency over the 50k catalog:
-    #
-    #     key 0.0122        requirement 0.0007   matters 0.0006
-    #     what 0.0393       preference 0.0013    additional 0.0152
-    #     specific 0.0365   attribute 0.0001      options 0.0188
-    #     yet 0.0220        quite 0.0029          ignore 0.0011
-    #     earlier 0.0002    judgment 0.0001
-    #
-    # so left in, they hand the ranking to whichever of them the query
-    # happens to contain -- same "Buy Caps and Hats" shape as the rest of
-    # this set, this time from "A key requirement is: blue" surfacing
-    # products keyed on "key" instead of "blue".
+    # Wrapper words from the local evaluator's own reply templates ("A key
+    # requirement is: ...", "For that, what matters is: ...") -- rare enough
+    # in the catalog to hijack ranking if left in.
     "key", "requirement", "requirements", "matters", "what", "preference",
     "additional", "specific", "attribute", "options", "yet", "quite",
     "ignore", "earlier", "judgment", "judgement",
@@ -75,15 +36,10 @@ _REQUEST_STOPWORDS = {
 STOPWORDS = _FUNCTION_STOPWORDS | _REQUEST_STOPWORDS
 
 
-# en-GB spellings mapped onto the catalog's en-US ones. The catalog is a US
-# Amazon export, so a British spelling is not a rare term, it is a *wrong*
-# term: "jewellery" matches 146 products (0.29%) while "jewelry" matches all
-# 50,000, so "show me jewellery" searched the catalog for the 146 products
-# that happen to spell it the British way and found no jewelry at all.
-#
-# Only genuine variants where the US form is the catalog's dominant one are
-# listed. "grey" is deliberately absent: it occurs in 2,017 products against
-# "gray"'s 751, so normalizing it would be the wrong direction.
+# en-GB spellings mapped onto the catalog's en-US ones -- "jewellery" matches
+# only 146 of 50k products, so a British spelling searches the wrong term
+# entirely. Only variants where the US form dominates are listed ("grey" is
+# omitted: it outnumbers "gray" in this catalog).
 SPELLING_VARIANTS = {
     "jewellery": "jewelry",
     "jewelery": "jewelry",

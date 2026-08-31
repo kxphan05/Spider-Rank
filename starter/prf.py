@@ -1,37 +1,16 @@
 """Pseudo-relevance feedback (Rocchio / RM3-style query expansion).
 
-The idea is classical: assume the top few documents an initial query
-retrieves are relevant, harvest the terms that distinguish them from the
-collection, and search again with those terms added. No model, no training,
-no extra asset -- it reads the index this repo already builds.
+Assume the top few documents an initial query retrieves are relevant,
+harvest the terms that distinguish them from the collection, and search
+again with those added -- the one direction available that adds vocabulary
+rather than just re-weighting existing legs, which matters since a buying
+session's turn-1 signal is often a single material word.
 
-Why it is worth trying on *this* task specifically. A buying session's entire
-turn-1 signal is usually one very common material word: the median hard
-constraint is one token, and the modal values are `cotton` (9,414 catalog
-products, 18.8%), `polyester` (13.8%) and `leather` (12.6%). Buying scores
-0.688 hit rate against browsing's 0.825 for exactly that reason -- the
-bottleneck is *information*, not retrieval tolerance, and no amount of
-re-weighting the existing legs manufactures signal the query never carried.
-PRF is the one direction available that adds vocabulary rather than
-redistributing weight: it turns "cotton" plus a category into the words that
-actually co-occur in the products that query already ranks well.
-
-Two honest caveats, stated before the measurement.
-
-**PRF drifts when the initial results are wrong.** The classic failure mode is
-query drift, and it is worse on a benchmark where the target is often already
-in the top handful -- there is more to lose than to gain on the sessions that
-were already working. This is why the expansion ships as its own fusion leg
-with a sweepable weight whose 0.0 is the exact identity, rather than as an
-edit to the existing BM25 query: a leg can be turned down continuously, and a
-rewritten query cannot.
-
-**This is RM3-flavoured, not textbook RM3.** True RM3 interpolates an
-expansion language model into the original query model with weight lambda,
-which needs per-term query weighting; FTS5's MATCH has no such thing. Fusing a
-separate expansion leg by weighted RRF is the adaptation that fits the engine,
-and the RRF weight plays lambda's role. Recorded as an adaptation so nobody
-later reads a citation match into it.
+Ships as its own fusion leg (sweepable weight, 0.0 = identity) rather than
+rewriting the BM25 query, since PRF drifts when initial results are already
+wrong and a leg can be turned down continuously where a rewrite can't.
+RM3-flavoured, not textbook RM3: FTS5 has no per-term query weighting, so the
+RRF weight plays lambda's role instead of true interpolation.
 """
 from __future__ import annotations
 
@@ -54,10 +33,8 @@ from .config import (EXPANSION_TERMS, FEEDBACK_DOCS, MIN_FEEDBACK_DF,  # noqa: F
 def _catalog_df(connection: sqlite3.Connection, term: str, cache: dict[str, int]) -> int:
     """Number of catalog products containing `term`, memoised per index.
 
-    One COUNT per distinct term, cached for the process lifetime. The cache is
-    what makes this affordable: expansion candidates repeat heavily across
-    turns and sessions, so the query count amortises to near zero over a full
-    evaluation even though a cold turn issues a few dozen.
+    Expansion candidates repeat heavily across turns/sessions, so the cache
+    is what makes the per-term COUNT query affordable.
     """
     hit = cache.get(term)
     if hit is not None:
@@ -85,10 +62,9 @@ def expansion_terms(
 ) -> list[str]:
     """Pick the terms that distinguish the feedback documents from the catalog.
 
-    Scored as `feedback_df * idf`: a term must be common among the assumed-
-    relevant documents *and* rare in the collection overall. Either half alone
-    fails -- raw frequency returns "cotton" and "shirt" (already in the query,
-    or ubiquitous), raw rarity returns each document's own serial number.
+    Scored as `feedback_df * idf`: must be common among the assumed-relevant
+    docs *and* rare overall. Either alone fails -- raw frequency returns
+    ubiquitous words, raw rarity returns each doc's serial number.
     """
     if not documents:
         return []

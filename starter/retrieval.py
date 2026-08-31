@@ -70,25 +70,13 @@ class BM25Index:
     """FTS5-backed keyword retrieval over catalog text fields."""
 
     def __init__(self, catalog_path: Path) -> None:
-        # check_same_thread=False because the index is read-only after
-        # _build() and callers are not guaranteed to be single-threaded. The
-        # evaluator is, but any server front-end is not: Streamlit caches one
-        # Agent and serves turns from a pool of worker threads, which made
-        # every BM25 and phrase query raise ProgrammingError and silently fall
-        # back to the dense leg alone. The failure was invisible in the score
-        # because _retrieve catches per-leg exceptions and continues.
-        #
-        # sqlite3 itself is built serialized here, but the guard below makes
-        # the invariant explicit rather than relying on the build flag: every
-        # query holds the lock, so concurrent readers cannot interleave on one
-        # connection. Contention is irrelevant -- queries are sub-millisecond
-        # and the evaluator never contends at all.
+        # check_same_thread=False: a server front-end (unlike the evaluator)
+        # serves turns from a worker-thread pool, so the connection is shared.
+        # The lock below makes that safe explicitly rather than relying on sqlite3's build flag.
         self.connection = sqlite3.connect(":memory:", check_same_thread=False)
         self._lock = threading.Lock()
         self.size = 0
-        # Catalog document frequencies, memoised across the process for the
-        # PRF leg (prf.py). Lives on the index rather than in prf.py so it is
-        # scoped to the index it describes, not to the module.
+        # Catalog document frequencies, memoised for the PRF leg (prf.py).
         self._df_cache: dict[str, int] = {}
         self._build(catalog_path)
 
@@ -178,13 +166,8 @@ class BM25Index:
     def names_category(self, text: str) -> set[str]:
         """Category words the text names, excluding attribute vocabulary.
 
-        Used to tell a pivot that changes *what the customer is shopping for*
-        ("show me jewellery") from one that changes an attribute of it
-        ("what I need is: leather"). Material and colour words are excluded
-        because several of them are also category path elements -- "Leather"
-        is a node under handbags -- and treating an attribute as a category
-        change is precisely the mistake that made a whole-history rewrite
-        measure -0.058.
+        Tells a pivot that changes *what* the customer shops for from one
+        that changes an attribute ("Leather" can be both a color and category).
         """
         found = set()
         for term in terms(normalize_query(text)):
@@ -207,10 +190,8 @@ class BM25Index:
     def document_text(self, parent_asins: list[str]) -> dict[str, str]:
         """Title + categories + features for the given products.
 
-        The cross-encoder needs the product text, and the FTS table is already
-        the one place it lives in memory -- rereading the catalog file per turn
-        would be the only alternative. Ordered title-first because the reranker
-        truncates, and the title is the strongest disambiguator.
+        Read from the in-memory FTS table. Ordered title-first since the
+        reranker truncates and the title is the strongest disambiguator.
         """
         if not parent_asins:
             return {}
@@ -226,22 +207,8 @@ class BM25Index:
     def phrase_search(self, query: str, top_n: int) -> list[str]:
         """Rank products by how much of the query they contain *verbatim*.
 
-        Motivation is a measured property of this task, not a general IR
-        preference: 89.7% of the local simulator's turn-1 hard constraints are
-        verbatim substrings of the target product's own catalog text
-        (measured directly). `search()` above dissolves that structure -- it ORs
-        the query's unique tokens, so "Buckle closure" is two independent
-        terms against 50k products and any item mentioning either scores.
-        FTS5 can match the span itself, which is a far sharper signal when the
-        span is genuinely present.
-
-        Each contiguous n-gram is run as an FTS5 phrase query and contributes
-        `len(gram) ** 2` to every product containing it, so a five-word span
-        outweighs six unrelated two-word ones. A phrase matching more than
-        `PHRASE_MAX_MATCHES` products is discarded as non-discriminative
-        rather than counted, which is what keeps common filler ("shoes and",
-        "for the") from drowning the rare spans that actually identify a
-        product.
+        89.7% of turn-1 constraints are verbatim substrings of the target's
+        catalog text, so phrase n-grams (weighted `len(gram) ** 2`) beat search()'s OR-of-tokens.
         """
         clauses = ([phrase_tokens(query)])
         grams: list[tuple[str, ...]] = []
@@ -271,9 +238,8 @@ class BM25Index:
                         (expression, PHRASE_MAX_MATCHES + 1),
                     ).fetchall()
             except sqlite3.OperationalError:
-                # A gram can still form an invalid MATCH expression (an FTS5
-                # keyword like NEAR/AND/OR as a bare token). Skip it rather
-                # than lose the whole leg.
+                # A gram can form an invalid MATCH expression (e.g. an FTS5
+                # keyword like NEAR/AND/OR as a bare token) -- skip it.
                 continue
             if len(rows) > PHRASE_MAX_MATCHES:
                 continue
@@ -301,10 +267,8 @@ class BM25Index:
     def prf_search(self, query: str, top_n: int, seed: list[str]) -> list[str]:
         """Re-retrieve with terms harvested from the top `seed` results.
 
-        `seed` is the ranking an earlier leg already produced, so the feedback
-        round costs no extra retrieval -- only the expansion query itself.
-        Returns [] whenever expansion finds nothing worth adding, which makes
-        the caller's fusion leg simply absent rather than degenerate.
+        `seed` is a ranking an earlier leg already produced, so this costs no
+        extra retrieval beyond the expansion query itself.
         """
         if not seed:
             return []
@@ -318,14 +282,8 @@ class BM25Index:
             )
         if not expansion:
             return []
-        # Anchor the expansion to the original query rather than replacing it.
-        # Searching the expansion terms alone drifts badly and visibly: for
-        # "Men's Shoes ... leather" the harvested terms are `coats, jackets,
-        # faux, jacket, genuine, collar, zipper`, because leather in this
-        # catalog is dominated by outerwear -- so the leg would retrieve
-        # jackets for a shoe query. RM3 interpolates the expansion *into* the
-        # original query model for exactly this reason; ORing both term sets
-        # is the FTS5-shaped version of that.
+        # Anchor to the original query rather than replacing it -- expansion
+        # terms alone can drift onto an unrelated category (RM3-style).
         original = list(dict.fromkeys(terms(query)))[:40]
         expression = " OR ".join(f'"{term}"' for term in original + expansion)
         try:
@@ -365,13 +323,9 @@ class DenseIndex:
                 meta.get("model_name"), DENSE_MODEL_NAME,
             )
         if catalog_path is not None and catalog_path.exists():
-            # Prefer the content hash. mtime is a property of *this* filesystem
-            # and says nothing once the index travels to another machine -- a
-            # prebuilt index shipped with a submission is always "older" than
-            # the catalog the organizer checked out, so the mtime rule warned
-            # on every correct setup while still missing a genuinely different
-            # catalog. mtime remains the fallback for indexes built before the
-            # hash was recorded.
+            # Prefer the content hash: mtime doesn't survive the index
+            # traveling to another machine. Kept as a fallback for indexes
+            # built before the hash was recorded.
             built_sha = meta.get("catalog_sha256")
             if built_sha is not None:
                 current_sha = catalog_fingerprint(catalog_path)
@@ -411,9 +365,7 @@ class DenseIndex:
         """Cosine-rank a caller-supplied candidate set, not the whole catalog.
 
         Used after a structural-attribute filter has already narrowed the
-        pool: fusion's rank-position blend doesn't apply to a subset this
-        small/pre-selected, so this re-scores by raw dense cosine similarity
-        directly instead.
+        pool, where fusion's rank-position blend no longer applies.
         """
         if not query.strip() or not candidate_ids:
             return list(candidate_ids)
@@ -447,10 +399,9 @@ class DenseIndex:
         return [self.ids[i] for i in top_idx]
 
     def vectors_for(self, candidate_ids: list[str]) -> tuple[list[str], np.ndarray]:
-        """Return (known_ids, embeddings) for the ids present in the index,
-        preserving `candidate_ids` order. Ids not in the index are dropped
-        rather than erroring, same "skip what's missing" contract as
-        `rank_subset`'s known/missing split.
+        """(known_ids, embeddings) for ids present in the index, order preserved.
+
+        Ids not in the index are dropped, same as `rank_subset`.
         """
         known = [(cid, self._id_to_idx[cid]) for cid in candidate_ids if cid in self._id_to_idx]
         if not known:
@@ -464,11 +415,8 @@ def reciprocal_rank_fusion(
 ) -> list[str]:
     """Merge ranked id lists by rank position: score = sum(weight / (k + rank)).
 
-    Equal weights let a leg that's absent/weak on a given query (e.g. dense
-    missing an item entirely) get outvoted by a competitor both legs rank
-    only moderately -- measured empirically on this catalog: BM25 is the
-    higher-precision leg on these near-exact-match queries, so it gets
-    weighted higher by default.
+    BM25 is the higher-precision leg on these near-exact-match queries, so
+    it's weighted higher by default.
     """
     if weights is None:
         weights = [1.0] * len(rank_lists)
