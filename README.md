@@ -30,15 +30,19 @@ cd tiktok-jam-hackathon-track-4
 ## 2. Install dependencies
 
 ```bash
-# Option A -- uv
+# Option A -- uv (recommended; same commands on Linux, macOS, and Windows)
 uv sync
 
-# Option B -- pip
+# Option B -- pip (Linux/macOS)
 python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Option B -- pip (Windows)
+python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-CPU-only PyTorch, no CUDA. Using pip? Drop the `uv run` prefix below.
+CPU-only PyTorch, no CUDA. Using pip? Drop the `uv run` prefix below and use `python` (or `python3` on Linux/macOS) directly.
 
 ---
 
@@ -47,9 +51,13 @@ CPU-only PyTorch, no CUDA. Using pip? Drop the `uv run` prefix below.
 Not included in the repo.
 
 ```bash
-gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
-wc -l data/catalog.jsonl   # expect 50000
+uv run python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('catalog.jsonl.gz', 'rb'), open('data/catalog.jsonl', 'wb'))"
+```
+
+Works the same on Linux, macOS, and Windows -- no `gzip`/`mv` required. Then confirm the row count:
+
+```bash
+uv run python -c "print(sum(1 for _ in open('data/catalog.jsonl', encoding='utf-8')))"   # expect 50000
 ```
 
 ---
@@ -59,7 +67,7 @@ wc -l data/catalog.jsonl   # expect 50000
 Only step that touches the network.
 
 ```bash
-uv run python3 scripts/fetch_assets.py
+uv run python scripts/fetch_assets.py
 ```
 
 | stage | what | size |
@@ -76,7 +84,7 @@ uv run python3 scripts/fetch_assets.py
 ## 5. Run the evaluator
 
 ```bash
-uv run python3 -m evaluator.local_evaluator
+uv run python -m evaluator.local_evaluator
 ```
 
 Writes results to `results.json`, including per-scenario metrics and token usage. The evaluator is organizer-provided and unmodified.
@@ -86,7 +94,7 @@ Writes results to `results.json`, including per-scenario metrics and token usage
 ## 6. Optional: check the submission bundle
 
 ```bash
-uv run python3 scripts/build_submission.py --verify
+uv run python scripts/build_submission.py --verify
 ```
 
 Assembles `dist/submission/`, imports `Agent` from it in a neutral directory, and scores it.
@@ -100,8 +108,8 @@ git clone git@github.com:kxphan05/tiktok-jam-hackathon-track-4.git
 cd tiktok-jam-hackathon-track-4
 uv sync
 #    ... download catalog.jsonl to data/
-uv run python3 scripts/fetch_assets.py
-uv run python3 -m evaluator.local_evaluator
+uv run python scripts/fetch_assets.py
+uv run python -m evaluator.local_evaluator
 ```
 
 ---
@@ -109,7 +117,7 @@ uv run python3 -m evaluator.local_evaluator
 ## Try it interactively
 
 ```bash
-uv run python3 scripts/repl.py
+uv run python scripts/repl.py
 ```
 
 `/reset`, `/debug`, `/topk N`, `/quit`.
