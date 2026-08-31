@@ -61,6 +61,10 @@ Requires no network at scoring time once setup has run
 ## Team
 
 **Phan Kang Xun** — architecture, retrieval design, all experiments and
-measurement, this report. **Lloyd Wang** — registered team member. Built
+measurement, this report. 
+
+**Lloyd Wang** — Team Leader, Testing, Quality Assurance, Presentation.
+
+Built
 with heavy use of Claude Code for implementation and documentation;
 permitted per `docs/submission_rules.md` § Model Policy.
