@@ -288,8 +288,8 @@ def slide_title(prs):
         run.text = text
         _set(run, size=size, color=MUTED)
 
-    metrics = (("0.794", "TechnicalScore"), ("0.945", "HitRate@10"),
-               ("0.553", "MRR"), ("3.25", "turns to find"))
+    metrics = (("0.822", "TechnicalScore"), ("0.965", "HitRate@10"),
+               ("0.598", "MRR"), ("2.99", "turns to find"))
     for index, (value, label) in enumerate(metrics):
         left = Inches(0.9) + Inches(2.7) * index
         box(slide, left, Inches(5.2), Inches(2.4), Inches(1.0), value, label,
@@ -473,11 +473,15 @@ def slide_scoreboard(prs):
          ("+0.084", GOOD), ("SHIPPED", GOOD)),
         ("Exact-phrase retrieval leg", "89.7% of shopper text is verbatim from the target's own record.",
          ("+0.018", GOOD), ("SHIPPED", GOOD)),
+        ("Cover catalog jargon in non-answer prototypes", "\"Imported.\" is a real disclosure, not a decline, just because it isn't a full sentence.",
+         ("+0.022", GOOD), ("SHIPPED", GOOD)),
         ("Boost instead of filter", "Our own labels disagree with the target 16–37% of the time.",
          ("+0.013", GOOD), ("SHIPPED", GOOD)),
         ("Ask answerable questions first", "A question that gets no answer burns a whole turn.",
          ("+0.011", GOOD), ("SHIPPED", GOOD)),
         ("Popularity prior leg", "63% of the hidden targets sit in the catalog's top 1% by review count.",
+         ("+0.006", GOOD), ("SHIPPED", GOOD)),
+        ("Cap the phrase leg's span at 6, not 5", "A longer verbatim span should be strictly more specific.",
          ("+0.006", GOOD), ("SHIPPED", GOOD)),
         ("Boundary mode on a hand-back", "\"Use your judgment\" is a request for exactly the prior we hold.",
          ("bundled", MUTED), ("SHIPPED", GOOD)),
